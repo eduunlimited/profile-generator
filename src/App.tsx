@@ -533,9 +533,13 @@ function App() {
 
                 initialMasterId={generateMasterId ?? activeMasterId}
 
+                profileCategories={profileCategories}
+
                 jigPresets={jigPresets}
 
                 creditCards={creditCards}
+
+                onSaveCategory={upsertProfileCategory}
 
                 onClose={() => setShowGenerateModal(false)}
 
@@ -563,6 +567,10 @@ function App() {
 
                 profileIds={rejigIds}
 
+                profiles={profiles}
+
+                masterProfiles={masterProfiles}
+
                 jigPresets={jigPresets}
 
                 onClose={() => setShowRejigModal(false)}
@@ -575,13 +583,13 @@ function App() {
 
                     setRejigStatus(
 
-                      `Re-jigged ${result.updatedCount} profile(s). ${result.failedCount} could not get a unique jig.`,
+                      `Re-jigged ${result.updatedCount} profile(s). ${result.failedCount} could not get a unique street line 1.`,
 
                     );
 
                   } else {
 
-                    setRejigStatus(`Re-jigged ${result.updatedCount} profile(s) with no duplicate jigs.`);
+                    setRejigStatus(`Re-jigged ${result.updatedCount} profile(s).`);
 
                   }
 

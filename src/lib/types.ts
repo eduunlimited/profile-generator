@@ -259,11 +259,23 @@ export interface GenerateOptions {
 
 export type CreditCardAssignMode = "none" | "random" | "selected";
 
+export type NameMisspellScope = "both" | "first";
+
+export interface StreetRandomLettersJigOptions {
+  enabled: boolean;
+  affixMode: StreetAffixMode;
+  charCount: number;
+}
+
 export interface GenerateFromMasterOptions {
   count: number;
+  categoryId: string;
   nameJigPresetId?: string;
+  nameMisspellScope?: NameMisspellScope;
   addressJigPresetId?: string;
   addressJigPresetIds?: string[];
+  streetRandomLetters?: StreetRandomLettersJigOptions;
+  phoneJigLastFour?: boolean;
   creditCardMode: CreditCardAssignMode;
   creditCardId?: string;
 }
@@ -271,8 +283,11 @@ export interface GenerateFromMasterOptions {
 export interface RejigProfilesOptions {
   profileIds: string[];
   nameJigPresetId?: string;
+  nameMisspellScope?: NameMisspellScope;
   addressJigPresetId?: string;
   addressJigPresetIds?: string[];
+  streetRandomLetters?: StreetRandomLettersJigOptions;
+  phoneJigLastFour?: boolean;
 }
 
 export interface RejigProfilesResult {

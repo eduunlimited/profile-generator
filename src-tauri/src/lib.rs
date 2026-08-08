@@ -32,6 +32,7 @@ pub fn run() {
             commands::list_master_profiles,
             commands::save_master_profile,
             commands::delete_master_profile,
+            commands::openai_chat_completion,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

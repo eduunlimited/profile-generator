@@ -4,8 +4,8 @@ export const BUILTIN_JIG_PRESETS: JigPreset[] = [
   {
     id: "builtin-name-misspell",
     name: "Name misspell",
-    description: "Typos, extra letters, and phonetic swaps (w/u, ph/f, etc.) on the full name.",
-    nameRules: [{ type: "nameMisspell", charCount: 2 }],
+    description: "Light OpenAI misspell on first/last name (keyboard-style typos, letters only).",
+    nameRules: [{ type: "nameMisspell", charCount: 1 }],
     addressRules: [],
   },
   {
@@ -48,10 +48,10 @@ export const BUILTIN_JIG_PRESETS: JigPreset[] = [
   {
     id: "builtin-address-misspell",
     name: "Street misspell",
-    description: "Misspells the street with typos, extra letters, and phonetic swaps.",
+    description: "OpenAI light misspell on street line 1: one variant swap (SE/Southeast, St/Street) plus one typo.",
     nameRules: [],
     addressRules: [
-      { type: "misspellField", field: "street", charCount: 2 },
+      { type: "misspellField", field: "street", charCount: 1 },
       { type: "splitLines" },
     ],
   },

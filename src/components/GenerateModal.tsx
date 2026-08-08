@@ -10,6 +10,8 @@ import type {
 
   MasterProfile,
 
+  ProfileCategory,
+
 } from "../lib/types";
 
 
@@ -22,9 +24,15 @@ interface GenerateModalProps {
 
   initialMasterId: string | null;
 
+  initialCategoryId?: string | null;
+
+  profileCategories: ProfileCategory[];
+
   jigPresets: JigPreset[];
 
   creditCards: CreditCard[];
+
+  onSaveCategory: (category: ProfileCategory) => Promise<void>;
 
   onClose: () => void;
 
@@ -44,9 +52,15 @@ export function GenerateModal({
 
   initialMasterId,
 
+  initialCategoryId,
+
+  profileCategories,
+
   jigPresets,
 
   creditCards,
+
+  onSaveCategory,
 
   onClose,
 
@@ -64,7 +78,7 @@ export function GenerateModal({
 
     <div className="modal-overlay" onClick={onClose}>
 
-      <div className="modal-dialog" onClick={(event) => event.stopPropagation()}>
+      <div className="modal-dialog modal-dialog-generate" onClick={(event) => event.stopPropagation()}>
 
         <div className="modal-header">
 
@@ -84,9 +98,15 @@ export function GenerateModal({
 
           initialMasterId={initialMasterId}
 
+          initialCategoryId={initialCategoryId}
+
+          profileCategories={profileCategories}
+
           jigPresets={jigPresets}
 
           creditCards={creditCards}
+
+          onSaveCategory={onSaveCategory}
 
           onGenerate={onGenerate}
 

@@ -1,4 +1,4 @@
-import type { AddressRule, NameRule, StreetAffixMode } from "./types";
+import type { AddressRule, NameMisspellScope, NameRule, StreetAffixMode } from "./types";
 
 export const NAME_RULE_LABELS: Record<NameRule["type"], string> = {
   truncate: "Truncate",
@@ -7,8 +7,8 @@ export const NAME_RULE_LABELS: Record<NameRule["type"], string> = {
   toUpperCase: "UPPERCASE",
   toTitleCase: "Title Case",
   addHyphen: "Hyphenate",
-  misspell: "Misspell (typos + phonetic)",
-  nameMisspell: "Name misspell",
+  misspell: "Misspell (OpenAI)",
+  nameMisspell: "Name misspell (OpenAI)",
   prefixRandom: "Random prefix letters",
   suffixRandom: "Random suffix letters",
   insertRandomLetters: "Insert random letters",
@@ -32,6 +32,11 @@ export const AFFIX_MODE_LABELS: Record<StreetAffixMode, string> = {
   prefix: "Beginning only",
   suffix: "End only",
   both: "Beginning and end",
+};
+
+export const NAME_MISSPELL_SCOPE_LABELS: Record<NameMisspellScope, string> = {
+  both: "First and last name",
+  first: "First name only",
 };
 
 export const RECOMMENDED_NAME_JIG_IDS = ["builtin-name-misspell"] as const;

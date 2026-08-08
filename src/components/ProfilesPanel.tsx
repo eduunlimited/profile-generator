@@ -1033,6 +1033,7 @@ export function ProfilesPanel({
         masterProfiles={masterProfiles}
         profiles={profiles}
         categories={categories}
+        credentials={credentials}
         initialMasterId={selectedMasterId}
         initialCategoryId={selectedProfileCategoryId}
         onSaveCategory={onSaveCategory}

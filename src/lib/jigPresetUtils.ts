@@ -1,5 +1,77 @@
 import { getJigPresetById } from "./presets";
-import type { JigPreset } from "./types";
+import { AFFIX_MODE_LABELS } from "./jigRuleLabels";
+import type { AddressRule, GenerateFromMasterOptions, JigPreset, RejigProfilesOptions, StreetAffixMode } from "./types";
+
+export const STREET_RANDOM_LETTER_PRESET_IDS = [
+  "builtin-street-random-letters",
+  "builtin-street-prefix-letters",
+  "builtin-street-suffix-letters",
+] as const;
+
+export function isStreetRandomLetterPresetId(id: string): boolean {
+  return (STREET_RANDOM_LETTER_PRESET_IDS as readonly string[]).includes(id);
+}
+
+export interface ResolvedAddressJig {
+  rules: AddressRule[];
+  label: string | undefined;
+  presetIds: string[];
+}
+
+export function streetRandomLettersLabel(options: {
+  affixMode: StreetAffixMode;
+  charCount: number;
+}): string {
+  return `Street random letters (${AFFIX_MODE_LABELS[options.affixMode].toLowerCase()}, ${options.charCount})`;
+}
+
+export function resolveAddressJigFromGenerateOptions(
+  options: Pick<
+    GenerateFromMasterOptions | RejigProfilesOptions,
+    "streetRandomLetters" | "addressJigPresetIds" | "addressJigPresetId"
+  >,
+  catalog: JigPreset[],
+): ResolvedAddressJig {
+  const rules: AddressRule[] = [];
+  const labelParts: string[] = [];
+
+  if (options.streetRandomLetters?.enabled) {
+    const charCount = Math.max(1, Math.min(8, options.streetRandomLetters.charCount));
+    rules.push({
+      type: "streetRandomLetters",
+      field: "street",
+      charCount,
+      affixMode: options.streetRandomLetters.affixMode,
+    });
+    labelParts.push(
+      streetRandomLettersLabel({
+        affixMode: options.streetRandomLetters.affixMode,
+        charCount,
+      }),
+    );
+  }
+
+  const presetIds = resolveAddressJigPresetIds(options).filter((id) => !isStreetRandomLetterPresetId(id));
+  const presets = resolveJigPresetsByIds(presetIds, catalog);
+  for (const preset of presets) {
+    for (const rule of preset.addressRules) {
+      if (rule.type !== "splitLines") {
+        rules.push(rule);
+      }
+    }
+    labelParts.push(preset.name);
+  }
+
+  if (rules.length > 0) {
+    rules.push({ type: "splitLines" });
+  }
+
+  return {
+    rules,
+    label: labelParts.length > 0 ? labelParts.join(" + ") : undefined,
+    presetIds,
+  };
+}
 
 export function sortJigPresets(items: JigPreset[], recommended: readonly string[]): JigPreset[] {
   const rank = new Map(recommended.map((id, index) => [id, index]));

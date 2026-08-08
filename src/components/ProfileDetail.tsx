@@ -58,7 +58,8 @@ export function ProfileDetail({
 
   const applyPreset = (presetId: string) => {
     const preset = jigPresets.find((item) => item.id === presetId) ?? null;
-    setProfile((current) => (current ? reapplyJigPreset(current, preset) : current));
+    if (!profile) return;
+    void reapplyJigPreset(profile, preset).then((next) => setProfile(next));
   };
 
   return (

@@ -1,7 +1,7 @@
 use crate::db;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use tauri::{AppHandle, State};
 use std::sync::Mutex;
 
@@ -319,6 +319,60 @@ pub fn delete_master_profile(state: State<DbState>, id: String) -> Result<(), St
             .map_err(|error| error.to_string())?;
         Ok(())
     })
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChatMessageInput {
+    role: String,
+    content: String,
+}
+
+#[tauri::command]
+pub async fn openai_chat_completion(
+    messages: Vec<ChatMessageInput>,
+    model: Option<String>,
+) -> Result<String, String> {
+    let api_key =
+        std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY is not set.".to_string())?;
+    let model = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
+
+    let payload = json!({
+        "model": model,
+        "messages": messages,
+        "temperature": 0.9,
+        "response_format": { "type": "json_object" }
+    });
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post("https://api.openai.com/v1/chat/completions")
+        .bearer_auth(api_key)
+        .json(&payload)
+        .send()
+        .await
+        .map_err(|error| format!("OpenAI request failed: {error}"))?;
+
+    let status = response.status();
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|error| format!("OpenAI response parse failed: {error}"))?;
+
+    if !status.is_success() {
+        let detail = body
+            .pointer("/error/message")
+            .and_then(|item| item.as_str())
+            .unwrap_or("Unknown OpenAI error");
+        return Err(format!("OpenAI API error ({status}): {detail}"));
+    }
+
+    body.pointer("/choices/0/message/content")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|content| !content.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "OpenAI returned an empty response.".to_string())
 }
 
 pub fn init_db(app: &AppHandle, state: &DbState) -> Result<(), String> {

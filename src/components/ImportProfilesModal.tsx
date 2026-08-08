@@ -12,8 +12,9 @@ import {
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
   sortProfileCategories,
 } from "../lib/profileCategoryUtils";
-import type { MasterProfile, Profile, ProfileCategory, ProfileSummary } from "../lib/types";
+import type { Credential, MasterProfile, Profile, ProfileCategory, ProfileSummary } from "../lib/types";
 import { AccountCategorySelect, resolveCategorySelection, type CategorySelection } from "./AccountCategorySelect";
+import { AccountSiteSelect } from "./AccountSiteSelect";
 import { Field } from "./ui";
 
 interface ImportProfilesModalProps {
@@ -21,6 +22,7 @@ interface ImportProfilesModalProps {
   masterProfiles: MasterProfile[];
   profiles: ProfileSummary[];
   categories: ProfileCategory[];
+  credentials?: Credential[];
   initialMasterId?: string | null;
   initialCategoryId?: string | null;
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
@@ -78,6 +80,7 @@ export function ImportProfilesModal({
   masterProfiles,
   profiles,
   categories,
+  credentials = [],
   initialMasterId = null,
   initialCategoryId = null,
   onSaveCategory,
@@ -93,6 +96,7 @@ export function ImportProfilesModal({
     kind: "existing",
     categoryId: PROFILE_UNCATEGORIZED_CATEGORY_ID,
   }));
+  const [accountSite, setAccountSite] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -102,6 +106,16 @@ export function ImportProfilesModal({
   );
 
   const selectedMaster = masterProfiles.find((master) => master.id === masterProfileId) ?? null;
+
+  const credentialSites = useMemo(
+    () => [...new Set(credentials.map((credential) => credential.site.trim()).filter(Boolean))],
+    [credentials],
+  );
+
+  useEffect(() => {
+    if (!open) return;
+    setAccountSite("");
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -201,6 +215,7 @@ export function ImportProfilesModal({
     const { profiles: importedProfiles, errors: buildErrors } = buildImportedProfiles(items, {
       masterProfileId,
       categoryId,
+      accountSite,
     });
 
     if (buildErrors.length > 0) {
@@ -249,9 +264,13 @@ export function ImportProfilesModal({
             </p>
           ) : null}
 
-          <div className="form-grid two-col">
+          <div className="import-profiles-form-grid">
             {masterProfiles.length > 0 ? (
-              <Field label="Master profile" hint="Required — imported profiles become jig children of this master">
+              <Field
+                className="import-field-master"
+                label="Master profile"
+                hint="Required — imported profiles become jig children of this master"
+              >
                 <select value={masterProfileId} onChange={(event) => setMasterProfileId(event.target.value)} required>
                   {masterProfiles.map((master) => (
                     <option key={master.id} value={master.id}>
@@ -263,6 +282,7 @@ export function ImportProfilesModal({
             ) : null}
 
             <Field
+              className="import-field-category"
               label="Category"
               hint={
                 selectedMaster
@@ -275,6 +295,19 @@ export function ImportProfilesModal({
                 selection={categorySelection}
                 onSelectionChange={setCategorySelection}
                 uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
+              />
+            </Field>
+
+            <Field
+              className="import-field-site"
+              label="Account site"
+              hint="Email + site account link for imported profiles"
+            >
+              <AccountSiteSelect
+                site={accountSite}
+                onSiteChange={setAccountSite}
+                extraSites={credentialSites}
+                allowNone
               />
             </Field>
           </div>

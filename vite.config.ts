@@ -4,6 +4,8 @@ import { localDataPlugin } from "./vite-plugin-local-data";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
+// @ts-expect-error process is a nodejs global
+const openAiApiKey = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_KEY;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
@@ -29,5 +31,17 @@ export default defineConfig(async () => ({
       // 3. tell Vite to ignore watching `src-tauri`
       ignored: ["**/src-tauri/**"],
     },
+    proxy: openAiApiKey
+      ? {
+          "/openai": {
+            target: "https://api.openai.com",
+            changeOrigin: true,
+            rewrite: (path) => path.replace(/^\/openai/, ""),
+            headers: {
+              Authorization: `Bearer ${openAiApiKey}`,
+            },
+          },
+        }
+      : undefined,
   },
 }));

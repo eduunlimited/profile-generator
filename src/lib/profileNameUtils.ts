@@ -1,4 +1,9 @@
-import type { MasterProfile, Profile } from "./types";
+import type { MasterProfile, Profile, ProfileName } from "./types";
+
+export function resolveProfileNameBase(name: ProfileName): string {
+  const fromParts = `${name.first} ${name.last}`.trim();
+  return fromParts || name.full.trim();
+}
 
 export function defaultProfileName(first: string, last: string, index: number): string {
   const f = first.trim() || "First";
@@ -21,7 +26,7 @@ export function resolveGeneratedProfileName(master: MasterProfile, index: number
 }
 
 export function billingFullName(profile: Profile): string {
-  return (profile.name.jig || profile.name.full || `${profile.name.first} ${profile.name.last}`).trim();
+  return (profile.name.jig || resolveProfileNameBase(profile.name)).trim();
 }
 
 export function billingAddressLines(profile: Profile): {

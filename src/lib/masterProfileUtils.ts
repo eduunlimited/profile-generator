@@ -76,9 +76,7 @@ export function updateMasterField(
   cursor[parts[parts.length - 1]] = value;
 
   if (path.startsWith("name.first") || path.startsWith("name.last")) {
-    if (!next.name.full.trim()) {
-      next.name.full = `${next.name.first} ${next.name.last}`.trim();
-    }
+    next.name.full = `${next.name.first} ${next.name.last}`.trim();
   }
 
   if (path === "profileName") {

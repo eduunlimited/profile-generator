@@ -10,7 +10,6 @@ import type {
   ProfileLogin,
   ProfilePayment,
 } from "./types";
-import { applyJigPreset } from "./jigEngine";
 import { getJigPresetById } from "./presets";
 
 const LOCALE_FAKERS: Record<Locale, Faker> = {
@@ -183,7 +182,8 @@ export function generateProfile(options: Partial<GenerateOptions> = {}): Profile
   if (options.jigPresetId) {
     const preset = getJigPresetById(options.jigPresetId);
     if (preset) {
-      profile = applyJigPreset(profile, preset);
+      profile.jigPresetId = preset.id;
+      profile.jigPresetName = preset.name;
     }
   }
 

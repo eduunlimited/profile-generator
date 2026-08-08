@@ -38,6 +38,7 @@ export interface StellarAioImportItem {
 export interface ProfileImportOptions {
   masterProfileId: string;
   categoryId?: string;
+  accountSite?: string;
 }
 
 function fromStellarCountry(code: string): string {
@@ -332,6 +333,7 @@ export function buildImportedProfiles(
 ): { profiles: Profile[]; errors: string[] } {
   const now = new Date().toISOString();
   const categoryId = options.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+  const accountSite = options.accountSite?.trim() ?? "";
   const masterProfileId = options.masterProfileId?.trim();
   if (!masterProfileId) {
     return { profiles: [], errors: ["A master profile is required to import jig profiles."] };
@@ -361,6 +363,7 @@ export function buildImportedProfiles(
       profileName: item.profileName.trim() || `Imported profile ${index + 1}`,
       phone: normalizeUsPhone(item.phone),
       categoryId,
+      accountSite,
       accountStatus: "good",
       notes: "",
       jigPresetName: "Imported (Stellar AIO)",

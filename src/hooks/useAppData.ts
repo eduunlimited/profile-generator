@@ -49,10 +49,10 @@ import {
   syncAllProfileCreditCardLinks,
 } from "../lib/profileUtils";
 import { masterProfileLabel, sortMasterProfiles } from "../lib/masterProfileUtils";
-import { resolveAddressJigPresetsFromOptions } from "../lib/jigPresetUtils";
+import { resolveAddressJigFromGenerateOptions } from "../lib/jigPresetUtils";
 import { sortAccountCategories } from "../lib/accountCategoryUtils";
 import { sortCardCategories } from "../lib/cardCategoryUtils";
-import { sortProfileCategories } from "../lib/profileCategoryUtils";
+import { PROFILE_UNCATEGORIZED_CATEGORY_ID, sortProfileCategories } from "../lib/profileCategoryUtils";
 import { BUILTIN_EXPORT_TEMPLATES, BUILTIN_JIG_PRESETS, getJigPresetById, registerJigPreset } from "../lib/presets";
 import { rejigProfiles } from "../lib/rejigProfiles";
 import type {
@@ -180,18 +180,30 @@ export function useAppData() {
       if (!master) {
         throw new Error("Master profile not found.");
       }
+      if (!options.categoryId?.trim()) {
+        throw new Error("Select a category.");
+      }
 
       const namePreset = options.nameJigPresetId
         ? jigPresets.find((p) => p.id === options.nameJigPresetId) ?? getJigPresetById(options.nameJigPresetId) ?? null
         : null;
-      const addressPresets = resolveAddressJigPresetsFromOptions(options, jigPresets);
+      const addressJig = resolveAddressJigFromGenerateOptions(options, jigPresets);
+      const categoryId = options.categoryId.trim();
+      const existingInCategory = await Promise.all(
+        profiles
+          .filter(
+            (profile) => (profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID) === categoryId,
+          )
+          .map((profile) => getProfile(profile.id)),
+      );
       const existingChildCount = profiles.filter((profile) => profile.masterProfileId === masterId).length;
-      const generated = generateProfilesFromMaster(
+      const generated = await generateProfilesFromMaster(
         master,
         options,
         namePreset,
-        addressPresets,
+        addressJig,
         creditCards,
+        existingInCategory,
         existingChildCount,
       );
       const linked = syncAllProfileCredentialLinks(generated, credentials);
@@ -211,7 +223,7 @@ export function useAppData() {
       const namePreset = options.nameJigPresetId
         ? jigPresets.find((p) => p.id === options.nameJigPresetId) ?? getJigPresetById(options.nameJigPresetId) ?? null
         : null;
-      const addressPresets = resolveAddressJigPresetsFromOptions(options, jigPresets);
+      const addressJig = resolveAddressJigFromGenerateOptions(options, jigPresets);
 
       const allProfiles = await Promise.all(profiles.map((summary) => getProfile(summary.id)));
       const profilesToUpdate = allProfiles.filter((profile) => options.profileIds.includes(profile.id));
@@ -241,7 +253,10 @@ export function useAppData() {
 
       for (const [masterId, bucket] of profilesByMaster) {
         const master = masterMap.get(masterId)!;
-        const result = rejigProfiles(master, bucket, allProfiles, namePreset, addressPresets);
+        const result = await rejigProfiles(master, bucket, allProfiles, namePreset, addressJig, {
+          nameMisspellScope: options.nameMisspellScope,
+          phoneJigLastFour: options.phoneJigLastFour,
+        });
         updated.push(...result.updated);
         failedIds.push(...result.failedIds);
       }

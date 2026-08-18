@@ -4,8 +4,9 @@ import {
   isAllUppercaseLetterToken,
   isHouseNumberToken,
   isShortDirectionToken,
-  keyboardFatFingerOnce,
+  isValidNameFatFingerTypo,
   keyboardFatFingerOncePreserveFirst,
+  keyboardNameFatFingerOnce,
 } from "./keyboardFatFinger";
 import type { NameMisspellScope } from "./types";
 
@@ -44,13 +45,15 @@ CRITICAL:
 - In a batch, every returned street MUST be a different string from every other street in that batch.
 
 NAME RULES (when requested):
-Typo styles (pick at most ONE per name part):
-- Extra letter: Eduardo → Eduarado, Camacho → Camachoo
-- Missed letter: Eduardo → Eduado, Camacho → Camaco
-- Double letter: Eduardo → Eduarddo, Camacho → Camachho
-- Adjacent-key swap/substitution: Eduardo → Eduarfo (o→i neighbor), Camacho → Camavho
+Exactly ONE fat-finger typo per requested name part (first and last are separate). Looks like a user mistyped.
+Allowed styles only:
+- Extra letter (including a double): Eduardo → Eduarddo / Eduarado, Camacho → Camachoo
+- Adjacent-key replacement: Eduardo → Eduatdo (r→t), Camacho → Canacho (m→n)
+Hard limits:
+- The first letter of each name part MUST stay the same (Eduardo stays E…, Camacho stays C…).
+- Never delete a letter (not Eduado / Camaco).
+- Never transpose letters, never phonetic rewrites, never change more than one character.
 - Letters only. Never add, remove, or change digits.
-- Do not rewrite the whole name. Change one small thing.
 
 STREET ADDRESS RULES (when requested — street line 1 only):
 The line looks like: [optional random block] [house number] [street name words] [suffix] [direction]
@@ -136,7 +139,9 @@ function buildMisspellUserPrompt(request: OpenAiMisspellRequest): string {
 
   lines.push("Every returned value must differ from the input above.");
   if (request.firstName !== undefined || request.lastName !== undefined) {
-    lines.push("For names: use one extra letter, missed letter, double letter, or adjacent-key typo.");
+    lines.push(
+      "For names: exactly one fat-finger per requested part — extra letter or adjacent-key replacement. Keep the first letter. No deletions.",
+    );
   }
   if (request.street !== undefined) {
     lines.push(
@@ -407,18 +412,14 @@ function localNameMisspellFallback(original: string): string {
   if (!base) return original;
 
   for (let attempt = 0; attempt < 24; attempt += 1) {
-    const candidate = keyboardFatFingerOnce(base).trim();
-    if (candidate && candidate !== base) {
+    const candidate = keyboardNameFatFingerOnce(base).trim();
+    if (isValidNameFatFingerTypo(base, candidate)) {
       return candidate;
     }
   }
 
-  if (base.length >= 2) {
-    const index = Math.max(1, base.length - 1);
-    return `${base.slice(0, index)}${base[index]}${base.slice(index)}`;
-  }
-
-  return `${base}${base}`;
+  const last = base[base.length - 1] ?? "e";
+  return `${base}${last}`;
 }
 
 function streetResultFingerprint(street: string): string {
@@ -533,7 +534,7 @@ function validateNamePart(original: string, result: string, label: string): stri
   if (!trimmed) {
     throw new Error(`OpenAI returned an empty ${label}.`);
   }
-  if (trimmed === original.trim()) {
+  if (!isValidNameFatFingerTypo(original, trimmed)) {
     trimmed = localNameMisspellFallback(original);
   }
   if (/\d/.test(trimmed) && !/\d/.test(original)) {
@@ -741,7 +742,7 @@ export function buildMisspellRequest(
   if (firstName !== undefined && (nameMisspellScope === "both" || nameMisspellScope === "first")) {
     request.firstName = firstName;
   }
-  if (lastName !== undefined && nameMisspellScope === "both") {
+  if (lastName !== undefined && (nameMisspellScope === "both" || nameMisspellScope === "last")) {
     request.lastName = lastName;
   }
   if (street !== undefined) {
@@ -846,7 +847,7 @@ function buildBatchMisspellUserPrompt(
 
   lines.push("Every returned value must differ from its input.");
   lines.push(
-    "Names: one typo each (extra letter, missed letter, double letter, or adjacent-key). Vary typos across profiles.",
+    "Names: exactly one fat-finger per requested part (extra letter or adjacent-key replacement). Keep the first letter. No deletions. Vary typos across profiles.",
   );
   lines.push(
     "Streets: follow each profile's street variation hint. Do NOT expand Ave→Avenue or SE→Southeast on every profile. Mix short forms (Ave SE), exact long forms (Avenue, Southeast), and typo'd long forms (Avenuue, Southest, Souftheast). Never change the first letter of a street name word. Every street in results must be unique.",

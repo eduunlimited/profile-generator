@@ -49,12 +49,78 @@ export function preserveCase(original: string, replacement: string): string {
   return replacement.toLowerCase();
 }
 
+export function isKeyboardLetterNeighbor(a: string, b: string): boolean {
+  if (a.length !== 1 || b.length !== 1) return false;
+  const neighbors = KEYBOARD_NEIGHBORS[a.toLowerCase()];
+  return Boolean(neighbors?.includes(b.toLowerCase()));
+}
+
 function keyboardLetterNeighbor(char: string): string | null {
   const neighbors = KEYBOARD_NEIGHBORS[char.toLowerCase()];
   if (!neighbors) return null;
   const letters = neighbors.split("").filter((candidate) => /[a-z]/i.test(candidate));
   if (letters.length === 0) return null;
   return pickRandom(letters);
+}
+
+/** True when result is exactly one fat-finger on a name part: extra letter or adjacent-key swap, first letter unchanged. */
+export function isValidNameFatFingerTypo(original: string, result: string): boolean {
+  const source = original.trim();
+  const typed = result.trim();
+  if (!source || !typed || source === typed) return false;
+  if (source[0]?.toLowerCase() !== typed[0]?.toLowerCase()) return false;
+  if (/\d/.test(typed) && !/\d/.test(source)) return false;
+
+  if (typed.length === source.length) {
+    let diffIndex = -1;
+    for (let index = 0; index < source.length; index += 1) {
+      if (source[index] === typed[index]) continue;
+      if (diffIndex !== -1 || index === 0) return false;
+      diffIndex = index;
+    }
+    if (diffIndex < 1) return false;
+    return isKeyboardLetterNeighbor(source[diffIndex], typed[diffIndex]);
+  }
+
+  if (typed.length !== source.length + 1) return false;
+  for (let index = 1; index < typed.length; index += 1) {
+    if (typed.slice(0, index) + typed.slice(index + 1) === source) {
+      return /[a-z]/i.test(typed[index]);
+    }
+  }
+  return false;
+}
+
+/** One name typo: extra letter or adjacent-key replacement. Never changes the first letter, never deletes. */
+export function keyboardNameFatFingerOnce(text: string): string {
+  const base = text.trim();
+  if (!base) return text;
+
+  const editableIndexes = base
+    .split("")
+    .map((char, index) => (/[a-z]/i.test(char) && index > 0 ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (editableIndexes.length === 0) {
+    const seed = base[0];
+    const neighbor = seed ? keyboardLetterNeighbor(seed) : null;
+    const extra = neighbor ? preserveCase(seed, neighbor) : seed;
+    return extra ? `${base}${extra}` : base;
+  }
+
+  const index = pickRandom(editableIndexes);
+  const char = base[index];
+  const neighbor = keyboardLetterNeighbor(char);
+
+  if (neighbor && Math.random() < 0.55) {
+    return base.slice(0, index) + preserveCase(char, neighbor) + base.slice(index + 1);
+  }
+
+  if (neighbor && Math.random() < 0.5) {
+    return base.slice(0, index) + preserveCase(char, neighbor) + base.slice(index);
+  }
+
+  return base.slice(0, index) + char + base.slice(index);
 }
 
 /** One realistic typo on a single token — letters only, never digits, never the first letter. */

@@ -1,5 +1,6 @@
 import type { MasterProfile, ProfileSummary } from "./types";
 import { masterProfileLabel } from "./masterProfileUtils";
+import { sortProfilesByName } from "./profileNameUtils";
 
 export type ProfileAssignCategory = {
   id: string;
@@ -8,9 +9,7 @@ export type ProfileAssignCategory = {
 };
 
 export function sortProfilesForAssign(profiles: ProfileSummary[]): ProfileSummary[] {
-  return [...profiles].sort(
-    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.name.localeCompare(b.name),
-  );
+  return sortProfilesByName(profiles);
 }
 
 export function masterAssignCategoryId(masterProfileId: string): string {

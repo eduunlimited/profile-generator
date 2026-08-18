@@ -1,13 +1,16 @@
 {
   "name": "profile-generator",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.2.23",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:ui": "vite",
     "dev:app": "tauri dev",
+    "dev:app:once": "tauri dev --no-watch",
     "build": "tsc && vite build",
+    "build:portable-python": "powershell -ExecutionPolicy Bypass -File scripts/build-portable-python.ps1",
+    "build:release": "powershell -ExecutionPolicy Bypass -File scripts/build-release.ps1",
     "preview": "vite preview",
     "tauri": "tauri"
   },
@@ -17,6 +20,8 @@
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-fs": "^2.5.1",
     "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
     "uuid": "^14.0.1",

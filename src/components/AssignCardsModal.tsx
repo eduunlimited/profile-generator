@@ -1,9 +1,10 @@
 import { AssignCardsPanel } from "./AssignCardsPanel";
-import type { AssignCardsOptions, CreditCard, MasterProfile, ProfileSummary } from "../lib/types";
+import type { AssignCardsOptions, CardCategory, CreditCard, MasterProfile, ProfileSummary } from "../lib/types";
 
 interface AssignCardsModalProps {
   open: boolean;
   cards: CreditCard[];
+  cardCategories: CardCategory[];
   profiles: ProfileSummary[];
   masterProfiles: MasterProfile[];
   lockedProfileIds?: string[];
@@ -16,6 +17,7 @@ interface AssignCardsModalProps {
 export function AssignCardsModal({
   open,
   cards,
+  cardCategories,
   profiles,
   masterProfiles,
   lockedProfileIds,
@@ -31,7 +33,7 @@ export function AssignCardsModal({
     (lockedCreditCardIds?.length ?? 0) > 1;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal-dialog modal-dialog-assign" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <strong>{bulkCards ? "Assign cards" : "Assign card"}</strong>
@@ -41,6 +43,7 @@ export function AssignCardsModal({
         </div>
         <AssignCardsPanel
           cards={cards}
+          cardCategories={cardCategories}
           profiles={profiles}
           masterProfiles={masterProfiles}
           lockedProfileIds={lockedProfileIds}

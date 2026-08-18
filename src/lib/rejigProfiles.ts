@@ -1,8 +1,12 @@
 import {
+  addressRulesChangeStreetLine,
   applyJigRulesBatchToMasterAsync,
-  applyLocalJigRulesToMaster,
+  applyLocalJigRulesToProfile,
+  buildStreetUseCounts,
+  canAssignStreetLine,
   collectUniqueStreetLines,
-  finalizeJigFromLocalAndMisspell,
+  finalizeRejigFromLocalAndMisspell,
+  incrementStreetUse,
   streetLineFingerprint,
   type LocalJigSlot,
 } from "./jigEngine";
@@ -14,6 +18,7 @@ import {
   phoneLastFour,
   randomUniquePhoneLastFour,
 } from "./phoneUtils";
+import { billingFullName } from "./profileNameUtils";
 import type { JigPreset, MasterProfile, NameMisspellScope, Profile } from "./types";
 import type { OpenAiMisspellResult } from "./openaiMisspell";
 
@@ -29,19 +34,27 @@ function profileCategoryId(profile: Profile): string {
   return profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID;
 }
 
-function buildOccupiedStreetsByCategory(
+function buildStreetUseCountsByCategory(
   allProfiles: Profile[],
   reJigIds: Set<string>,
-): Map<string, Set<string>> {
-  const byCategory = new Map<string, Set<string>>();
+): Map<string, Map<string, number>> {
+  const byCategory = new Map<string, Profile[]>();
   for (const profile of allProfiles) {
     if (reJigIds.has(profile.id)) continue;
     const categoryId = profileCategoryId(profile);
-    const occupied = byCategory.get(categoryId) ?? new Set<string>();
-    occupied.add(streetLineFingerprint(profile.address.street));
-    byCategory.set(categoryId, occupied);
+    const bucket = byCategory.get(categoryId) ?? [];
+    bucket.push(profile);
+    byCategory.set(categoryId, bucket);
   }
-  return byCategory;
+
+  const countsByCategory = new Map<string, Map<string, number>>();
+  for (const [categoryId, profiles] of byCategory) {
+    countsByCategory.set(
+      categoryId,
+      buildStreetUseCounts(profiles.map((profile) => profile.address)),
+    );
+  }
+  return countsByCategory;
 }
 
 function collectCategoryReservedStreetLines(
@@ -64,18 +77,28 @@ function collectCategoryReservedStreetLines(
     streets.push(street);
   }
 
-  return collectUniqueStreetLines(streets);
+  const counts = buildStreetUseCounts(streets.map((street) => ({ street })));
+  return collectUniqueStreetLines(
+    streets.filter((street) => !canAssignStreetLine(counts, streetLineFingerprint(street))),
+  );
 }
 
-function isStreetDuplicateInCategory(
+function isStreetAtCapInCategory(
   fingerprint: string,
   categoryId: string,
-  occupiedByCategory: Map<string, Set<string>>,
-  batchByCategory: Map<string, Set<string>>,
+  occupiedByCategory: Map<string, Map<string, number>>,
 ): boolean {
-  if (occupiedByCategory.get(categoryId)?.has(fingerprint)) return true;
-  if (batchByCategory.get(categoryId)?.has(fingerprint)) return true;
-  return false;
+  return !canAssignStreetLine(occupiedByCategory.get(categoryId) ?? new Map(), fingerprint);
+}
+
+function incrementCategoryStreetUse(
+  countsByCategory: Map<string, Map<string, number>>,
+  categoryId: string,
+  fingerprint: string,
+): void {
+  const counts = countsByCategory.get(categoryId) ?? new Map<string, number>();
+  incrementStreetUse(counts, fingerprint);
+  countsByCategory.set(categoryId, counts);
 }
 
 export async function rejigProfiles(
@@ -89,7 +112,7 @@ export async function rejigProfiles(
 ): Promise<{ updated: Profile[]; failedIds: string[] }> {
   const reJigIds = new Set(profilesToUpdate.map((profile) => profile.id));
   const nameMisspellScope = params.nameMisspellScope ?? "both";
-  const occupiedByCategory = buildOccupiedStreetsByCategory(allProfiles, reJigIds);
+  const occupiedByCategory = buildStreetUseCountsByCategory(allProfiles, reJigIds);
   const categoryIds = new Set(profilesToUpdate.map(profileCategoryId));
   const now = new Date().toISOString();
 
@@ -100,10 +123,14 @@ export async function rejigProfiles(
       .filter((suffix) => suffix.length === 4),
   );
 
-  const slots: LocalJigSlot[] = profilesToUpdate.map(() =>
-    applyLocalJigRulesToMaster(master, namePreset, [], addressJig.rules, nameMisspellScope),
+  const hasAddressJig = addressJig.rules.some((rule) => rule.type !== "splitLines");
+  const changesStreetLine = addressRulesChangeStreetLine(addressJig.rules);
+  const slots: LocalJigSlot[] = profilesToUpdate.map((profile) =>
+    applyLocalJigRulesToProfile(profile, master, namePreset, [], addressJig.rules, nameMisspellScope),
   );
-  const needsMisspell = slots.some((slot) => slot.needsNameMisspell || slot.needsStreetMisspell);
+  const needsNameMisspell = slots.some((slot) => slot.needsNameMisspell);
+  const needsStreetMisspell = slots.some((slot) => slot.needsStreetMisspell);
+  const needsMisspell = needsNameMisspell || needsStreetMisspell;
   let misspellResults: OpenAiMisspellResult[] = slots.map(() => ({}));
 
   if (needsMisspell) {
@@ -113,9 +140,16 @@ export async function rejigProfiles(
       const indexedPending = pendingIndexes.map((originalIndex) => ({
         index: originalIndex,
         slot: slots[originalIndex],
+        nameSource: profilesToUpdate[originalIndex].name,
       }));
-      const jiggedSoFar = slots.map((slot, index) =>
-        finalizeJigFromLocalAndMisspell(master, slot, misspellResults[index], namePreset),
+      const jiggedSoFar = slots.map((slot, slotIndex) =>
+        finalizeRejigFromLocalAndMisspell(
+          profilesToUpdate[slotIndex],
+          master,
+          slot,
+          misspellResults[slotIndex],
+          namePreset,
+        ),
       );
       const pendingSet = new Set(pendingIndexes);
       const reservedStreetLines = collectCategoryReservedStreetLines(
@@ -144,25 +178,37 @@ export async function rejigProfiles(
         misspellResults[originalIndex] = batchMisspellMap.get(originalIndex) ?? misspellResults[originalIndex];
       }
 
-      const jigged = slots.map((slot, index) =>
-        finalizeJigFromLocalAndMisspell(master, slot, misspellResults[index], namePreset),
+      const jigged = slots.map((slot, slotIndex) =>
+        finalizeRejigFromLocalAndMisspell(
+          profilesToUpdate[slotIndex],
+          master,
+          slot,
+          misspellResults[slotIndex],
+          namePreset,
+        ),
       );
-      const duplicateIndexes = jigged
-        .map((item, index) => ({
-          index,
-          fingerprint: streetLineFingerprint(item.address.street),
-          categoryId: profileCategoryId(profilesToUpdate[index]),
-        }))
-        .filter(({ fingerprint, categoryId }, index, list) => {
-          const occupied = occupiedByCategory.get(categoryId) ?? new Set<string>();
-          if (occupied.has(fingerprint)) return true;
-          return (
-            list.findIndex(
-              (entry) => entry.categoryId === categoryId && entry.fingerprint === fingerprint,
-            ) !== index
-          );
-        })
-        .map(({ index }) => index);
+      const runningByCategory = new Map<string, Map<string, number>>();
+      for (const [categoryId, counts] of occupiedByCategory) {
+        runningByCategory.set(categoryId, new Map(counts));
+      }
+      const duplicateIndexes = needsStreetMisspell
+        ? jigged
+            .map((item, index) => ({
+              index,
+              fingerprint: streetLineFingerprint(item.address.street),
+              categoryId: profileCategoryId(profilesToUpdate[index]),
+            }))
+            .filter(({ fingerprint, categoryId }) => {
+              const running = runningByCategory.get(categoryId) ?? new Map<string, number>();
+              if (!canAssignStreetLine(running, fingerprint)) {
+                return true;
+              }
+              incrementStreetUse(running, fingerprint);
+              runningByCategory.set(categoryId, running);
+              return false;
+            })
+            .map(({ index }) => index)
+        : [];
 
       if (duplicateIndexes.length === 0 || pass === MAX_BATCH_MISSPELL_PASSES - 1) {
         break;
@@ -174,8 +220,6 @@ export async function rejigProfiles(
 
   const updated: Profile[] = [];
   const failedIds: string[] = [];
-  const batchByCategory = new Map<string, Set<string>>();
-
   for (let index = 0; index < profilesToUpdate.length; index += 1) {
     const profile = profilesToUpdate[index];
     const categoryId = profileCategoryId(profile);
@@ -185,7 +229,8 @@ export async function rejigProfiles(
       const slot =
         attempt === 0
           ? slots[index]
-          : applyLocalJigRulesToMaster(
+          : applyLocalJigRulesToProfile(
+              profile,
               master,
               namePreset,
               [],
@@ -193,20 +238,21 @@ export async function rejigProfiles(
               nameMisspellScope,
             );
       const misspell = needsMisspell ? misspellResults[index] : undefined;
-      const jigged = finalizeJigFromLocalAndMisspell(master, slot, misspell, namePreset);
-      const fingerprint = streetLineFingerprint(jigged.address.street);
+      const jigged = finalizeRejigFromLocalAndMisspell(profile, master, slot, misspell, namePreset);
+      const address = hasAddressJig ? jigged.address : profile.address;
+      const fingerprint = streetLineFingerprint(address.street);
 
-      if (
-        isStreetDuplicateInCategory(fingerprint, categoryId, occupiedByCategory, batchByCategory) &&
-        attempt < maxAttempts - 1
-      ) {
-        continue;
+      if (changesStreetLine && isStreetAtCapInCategory(fingerprint, categoryId, occupiedByCategory)) {
+        if (attempt < maxAttempts - 1) {
+          continue;
+        }
+        failedIds.push(profile.id);
+        break;
       }
 
-      const categoryBatch = batchByCategory.get(categoryId) ?? new Set<string>();
-      categoryBatch.add(fingerprint);
-      batchByCategory.set(categoryId, categoryBatch);
-      occupiedByCategory.get(categoryId)?.add(fingerprint);
+      if (changesStreetLine) {
+        incrementCategoryStreetUse(occupiedByCategory, categoryId, fingerprint);
+      }
 
       let phone = profile.phone ?? master.phone ?? "";
       if (params.phoneJigLastFour) {
@@ -238,12 +284,14 @@ export async function rejigProfiles(
         addressJigPresetName: addressJig.label,
         jigPresetName:
           [namePreset?.name, addressJig.label].filter(Boolean).join(" + ") || undefined,
-        name: namePreset ? jigged.name : profile.name,
-        address: jigged.address,
+        name: jigged.name,
+        address,
         phone,
         cardHolderName: namePreset
           ? `${jigged.name.first} ${jigged.name.last}`.trim()
-          : profile.cardHolderName,
+          : profile.cardHolderSameAsShipping !== false
+            ? billingFullName({ ...profile, name: jigged.name })
+            : profile.cardHolderName,
         updatedAt: now,
       };
       break;

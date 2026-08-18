@@ -115,6 +115,98 @@ function csvRecordToStellarItem(record: Record<string, string>): StellarAioImpor
   };
 }
 
+function splitPersonName(fullName: string): { firstName: string; lastName: string } {
+  const trimmed = fullName.trim();
+  if (!trimmed) {
+    return { firstName: "", lastName: "" };
+  }
+  const parts = trimmed.split(/\s+/);
+  if (parts.length === 1) {
+    return { firstName: parts[0], lastName: "" };
+  }
+  return { firstName: parts[0], lastName: parts.slice(1).join(" ") };
+}
+
+function normalizeAycdAddress(
+  value: unknown,
+): { address: StellarAddressImport; email: string; phone: string } | null {
+  if (!value || typeof value !== "object") return null;
+  const addr = value as Record<string, unknown>;
+  const line1 = String(addr.line1 ?? addr.line_1 ?? "").trim();
+  if (!line1) return null;
+
+  const line2 = String(addr.line2 ?? addr.line_2 ?? "").trim();
+  const line3 = String(addr.line3 ?? addr.line_3 ?? "").trim();
+  const unit = [line2, line3].filter(Boolean).join(", ") || undefined;
+  const { firstName, lastName } = splitPersonName(String(addr.name ?? ""));
+
+  return {
+    email: String(addr.email ?? "").trim(),
+    phone: normalizeUsPhone(String(addr.phone ?? "")),
+    address: {
+      firstName,
+      lastName,
+      country: String(addr.country ?? "United States").trim() || "United States",
+      address: line1,
+      address2: unit,
+      city: String(addr.city ?? "").trim(),
+      state: String(addr.state ?? "").trim(),
+      zipcode: String(addr.postCode ?? addr.postalCode ?? addr.zip ?? "").trim(),
+    },
+  };
+}
+
+function normalizeAycdItem(value: unknown): StellarAioImportItem | null {
+  if (!value || typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
+
+  const billingParsed = normalizeAycdAddress(item.billingAddress ?? item.billing_address);
+  const shippingParsed = normalizeAycdAddress(item.shippingAddress ?? item.shipping_address);
+  if (!billingParsed && !shippingParsed) return null;
+
+  const billing = billingParsed ?? shippingParsed!;
+  const shipping = shippingParsed ?? billingParsed!;
+  const profileName = String(item.name ?? item.profileName ?? "").trim();
+  const email = billing.email || shipping.email || String(item.email ?? "").trim();
+  if (!profileName && !email) return null;
+
+  const paymentDetails =
+    item.paymentDetails && typeof item.paymentDetails === "object"
+      ? (item.paymentDetails as Record<string, unknown>)
+      : {};
+
+  return {
+    profileName: profileName || email,
+    email,
+    phone: billing.phone || shipping.phone || normalizeUsPhone(String(item.phone ?? "")),
+    shipping: shipping.address,
+    billing: billing.address,
+    billingAsShipping: item.sameBillingAndShippingAddress !== false,
+    payment: {
+      cardName: String(
+        paymentDetails.nameOnCard ??
+          (`${billing.address.firstName} ${billing.address.lastName}`.trim() || profileName),
+      ).trim(),
+      cardType: String(paymentDetails.cardType ?? "").trim(),
+      cardNumber: String(paymentDetails.cardNumber ?? "").trim(),
+      cardMonth: String(paymentDetails.cardExpMonth ?? paymentDetails.cardMonth ?? "").trim(),
+      cardYear: String(paymentDetails.cardExpYear ?? paymentDetails.cardYear ?? "").trim(),
+      cardCvv: String(paymentDetails.cardCvv ?? paymentDetails.cardCvv ?? "").trim(),
+    },
+    oneCheckoutPerProfile: item.onlyCheckoutOnce !== false && item.oneCheckoutPerProfile !== false,
+  };
+}
+
+function normalizeImportItem(value: unknown): StellarAioImportItem | null {
+  if (!value || typeof value !== "object") return null;
+  const item = value as Record<string, unknown>;
+  if (item.billingAddress || item.shippingAddress || item.paymentDetails) {
+    const aycd = normalizeAycdItem(value);
+    if (aycd) return aycd;
+  }
+  return normalizeStellarItem(value);
+}
+
 function normalizeStellarAddress(value: unknown): StellarAddressImport | null {
   if (!value || typeof value !== "object") return null;
   const address = value as Record<string, unknown>;
@@ -239,7 +331,7 @@ export function parseStellarAioJson(text: string): { items: StellarAioImportItem
     const items: StellarAioImportItem[] = [];
     const errors: string[] = [];
     rawItems.forEach((entry, index) => {
-      const item = normalizeStellarItem(entry);
+      const item = normalizeImportItem(entry);
       if (item) {
         items.push(item);
         return;
@@ -253,7 +345,7 @@ export function parseStellarAioJson(text: string): { items: StellarAioImportItem
 
     return { items, errors };
   } catch {
-    return { items: [], errors: ["Invalid JSON. Paste a Stellar AIO profile export array."] };
+    return { items: [], errors: ["Invalid JSON. Paste an AYCD or Stellar AIO profile export array."] };
   }
 }
 
@@ -331,13 +423,13 @@ export function buildImportedProfiles(
   items: StellarAioImportItem[],
   options: ProfileImportOptions,
 ): { profiles: Profile[]; errors: string[] } {
-  const now = new Date().toISOString();
   const categoryId = options.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID;
   const accountSite = options.accountSite?.trim() ?? "";
   const masterProfileId = options.masterProfileId?.trim();
   if (!masterProfileId) {
     return { profiles: [], errors: ["A master profile is required to import jig profiles."] };
   }
+  const now = new Date().toISOString();
   const profiles: Profile[] = [];
   const errors: string[] = [];
 

@@ -15,10 +15,13 @@ import {
 } from "../lib/jigRuleLabels";
 import { isStreetRandomLetterPresetId, sortJigPresets } from "../lib/jigPresetUtils";
 import {
+  assertProfileCategoryUnlocked,
+  isProfileCategoryLocked,
   nextProfileCategorySortOrder,
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
   sortProfileCategories,
 } from "../lib/profileCategoryUtils";
+import { filterAssignablePoolCards } from "../lib/creditCardUtils";
 import type {
   CreditCard,
   GenerateFromMasterOptions,
@@ -82,7 +85,7 @@ export function GeneratePanel({
   const [streetRandomCharCount, setStreetRandomCharCount] = useState(3);
   const [addressJigPresetIds, setAddressJigPresetIds] = useState<string[]>(["builtin-random-unit-line"]);
   const [phoneJigLastFour, setPhoneJigLastFour] = useState(false);
-  const [creditCardMode, setCreditCardMode] = useState<GenerateFromMasterOptions["creditCardMode"]>("random");
+  const [creditCardMode, setCreditCardMode] = useState<GenerateFromMasterOptions["creditCardMode"]>("none");
   const [creditCardId, setCreditCardId] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -94,6 +97,7 @@ export function GeneratePanel({
 
   const sortedNamePresets = sortJigPresets(namePresets, RECOMMENDED_NAME_JIG_IDS);
   const sortedAddressPresets = sortJigPresets(addressPresets, RECOMMENDED_ADDRESS_JIG_IDS);
+  const assignableCreditCards = useMemo(() => filterAssignablePoolCards(creditCards), [creditCards]);
 
   const selectedMaster =
     masterProfiles.find((master) => master.id === masterId) ?? masterProfiles[0] ?? null;
@@ -126,7 +130,10 @@ export function GeneratePanel({
     categorySelection.kind === "existing" ||
     (categorySelection.kind === "new" && categorySelection.name.trim().length > 0);
 
-  const canGenerate = Boolean(selectedMaster && categoryReady && masterProfiles.length > 0);
+  const selectedCategoryLocked =
+    categorySelection.kind === "existing" &&
+    isProfileCategoryLocked(profileCategories, categorySelection.categoryId);
+  const canGenerate = Boolean(selectedMaster && categoryReady && masterProfiles.length > 0 && !selectedCategoryLocked);
 
   const createCategory = async (name: string): Promise<ProfileCategory> => {
     const category: ProfileCategory = {
@@ -147,6 +154,7 @@ export function GeneratePanel({
     let categoryId: string;
     try {
       categoryId = await resolveCategorySelection(categorySelection, createCategory);
+      assertProfileCategoryUnlocked(profileCategories, categoryId, "generate profiles into it");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Category is required.");
       return;
@@ -222,6 +230,9 @@ export function GeneratePanel({
             onSelectionChange={setCategorySelection}
             uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
           />
+          {selectedCategoryLocked ? (
+            <p className="muted">This category is locked. Unlock it or choose another.</p>
+          ) : null}
         </Field>
 
         <Field label="Count">
@@ -234,7 +245,7 @@ export function GeneratePanel({
             onChange={(e) => setCreditCardMode(e.target.value as GenerateFromMasterOptions["creditCardMode"])}
           >
             <option value="none">No card</option>
-            <option value="random">Random ({creditCards.length})</option>
+            <option value="random">Random ({assignableCreditCards.length})</option>
             <option value="selected">Selected</option>
           </select>
         </Field>
@@ -243,7 +254,7 @@ export function GeneratePanel({
           <Field label="Pool card">
             <select value={creditCardId} onChange={(e) => setCreditCardId(e.target.value)}>
               <option value="">Choose card</option>
-              {creditCards.map((card) => (
+              {assignableCreditCards.map((card) => (
                 <option key={card.id} value={card.id}>
                   {card.profileName}
                 </option>
@@ -257,7 +268,7 @@ export function GeneratePanel({
         <div className="generate-modal-settings">
           <div className="generate-modal-jig-row">
             <div className="generate-modal-name-jigs">
-              <Field label="Name jig" hint="OpenAI light misspell on first/last name">
+              <Field label="Name jig" hint="One fat-finger typo per selected name part">
                 <div className="jig-option-block">
                   <select value={nameJigPresetId} onChange={(e) => setNameJigPresetId(e.target.value)}>
                     <option value="">None (use master name)</option>
@@ -281,7 +292,7 @@ export function GeneratePanel({
 
             <Field
               label="Address jigs"
-              hint="Street letters, apt/suite line 2, misspell"
+              hint="Street letters, type combo, apt/suite line 2, misspell"
               className="generate-modal-address-jigs"
             >
               <div className="address-jig-options">

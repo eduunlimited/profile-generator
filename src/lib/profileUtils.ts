@@ -1,18 +1,22 @@
 import { loginFromCredential } from "./credentialUtils";
-import { resolveProfileEmail, setProfileEmail, generateUniqueProfileEmail } from "./profileEmailUtils";
+import { resolveProfileEmail, setProfileEmail } from "./profileEmailUtils";
 import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
 import type { Credential, CreditCard, Profile, ProfileLogin, ProfileName, ProfilePayment } from "./types";
-import { cardNumbersMatch, findPoolCardByPayment } from "./creditCardUtils";
+import { cardNumbersMatch, findPoolCardByPayment, isAssignablePoolCard, parseCardNumberDigits } from "./creditCardUtils";
 import { generateProfile } from "./generator";
 import { normalizeUsPhone } from "./phoneUtils";
 export function syncProfileName(profile: Profile): Profile {
   const full = `${profile.name.first} ${profile.name.last}`.trim();
+  const name = {
+    ...profile.name,
+    full,
+  };
+  if (billingSameAsShipping(profile)) {
+    name.jig = full;
+  }
   return {
     ...profile,
-    name: {
-      ...profile.name,
-      full,
-    },
+    name,
   };
 }
 
@@ -49,7 +53,7 @@ export function resolveShippingNameParts(profile: Profile): ProfileName {
 
 export function shippingFullName(profile: Profile): string {
   const parts = resolveShippingNameParts(profile);
-  return `${parts.first} ${parts.last}`.trim() || parts.full.trim();
+  return (parts.jig || `${parts.first} ${parts.last}`.trim() || parts.full.trim());
 }
 
 export function syncCardHolderFromShipping(profile: Profile): Profile {
@@ -96,15 +100,17 @@ export function emptyProfileAddress(): Profile["address"] {
 
 export function ensureProfileEditorFields(profile: Profile): Profile {
   const sameAsBilling = billingSameAsShipping(profile);
-  return syncCardHolderFromShipping({
-    ...profile,
-    cardHolderName: profile.cardHolderName ?? "",
-    cardHolderSameAsShipping: profile.cardHolderSameAsShipping ?? true,
-    billingSameAsShipping: sameAsBilling,
-    oneCheckoutPerProfile: oneCheckoutPerProfile(profile),
-    shippingName: sameAsBilling ? profile.shippingName : (profile.shippingName ?? emptyProfileName()),
-    shippingAddress: sameAsBilling ? profile.shippingAddress : (profile.shippingAddress ?? emptyProfileAddress()),
-  });
+  return normalizeProfilePayment(
+    syncCardHolderFromShipping({
+      ...profile,
+      cardHolderName: profile.cardHolderName ?? "",
+      cardHolderSameAsShipping: profile.cardHolderSameAsShipping ?? true,
+      billingSameAsShipping: sameAsBilling,
+      oneCheckoutPerProfile: oneCheckoutPerProfile(profile),
+      shippingName: sameAsBilling ? profile.shippingName : (profile.shippingName ?? emptyProfileName()),
+      shippingAddress: sameAsBilling ? profile.shippingAddress : (profile.shippingAddress ?? emptyProfileAddress()),
+    }),
+  );
 }
 
 export function setBillingSameAsShipping(profile: Profile, value: boolean): Profile {
@@ -174,7 +180,7 @@ export function syncProfileCreditCardLink(profile: Profile, cards: CreditCard[])
   }
 
   const matched = findPoolCardByPayment(profile.payment, cards);
-  if (!matched) {
+  if (!matched || !isAssignablePoolCard(matched)) {
     return profile;
   }
 
@@ -196,7 +202,11 @@ export function updateProfilePaymentField(
   cards: CreditCard[],
 ): Profile {
   const next = updateProfileField(profile, path, value);
-  return syncProfileCreditCardLink(next, cards);
+  let linked = syncProfileCreditCardLink(next, cards);
+  if (path === "payment.number" && parseCardNumberDigits(value).length === 0) {
+    linked = clearProfileCreditCardAssignment(linked);
+  }
+  return linked;
 }
 
 export function regeneratePayment(_profile: Profile): ProfilePayment {
@@ -240,7 +250,7 @@ export function applyCreditCardFromPool(
   cards: CreditCard[],
 ): Profile {
   if (!cardId) {
-    return { ...profile, creditCardId: undefined };
+    return clearProfileCreditCardAssignment(profile);
   }
   const card = cards.find((item) => item.id === cardId);
   if (!card) return profile;
@@ -256,15 +266,38 @@ export function applyCreditCardFromPool(
   };
 }
 
+export function clearProfileCreditCardAssignment(profile: Profile): Profile {
+  return {
+    ...profile,
+    creditCardId: undefined,
+    payment: {
+      number: "",
+      expiry: "",
+      cvv: "",
+      brand: "",
+    },
+  };
+}
+
+/** Drop orphan payment brand/details when no card number or pool link remains. */
+export function normalizeProfilePayment(profile: Profile): Profile {
+  const hasNumber = parseCardNumberDigits(profile.payment.number).length > 0;
+  if (hasNumber || profile.creditCardId) {
+    return profile;
+  }
+  const { number, expiry, cvv, brand } = profile.payment;
+  if (!number && !expiry && !cvv && !brand) {
+    return profile;
+  }
+  return clearProfileCreditCardAssignment(profile);
+}
+
 export function syncProfileCredentials(
   profile: Profile,
   credentialIds: string[],
   credentials: Credential[],
 ): Profile {
-  let profileEmail = resolveProfileEmail(profile);
-  if (!profileEmail) {
-    profileEmail = generateUniqueProfileEmail(profile.name, new Set());
-  }
+  const profileEmail = resolveProfileEmail(profile);
 
   const logins = credentialIds
     .map((id) => credentials.find((item) => item.id === id))

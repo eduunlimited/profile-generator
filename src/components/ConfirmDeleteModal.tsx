@@ -20,7 +20,7 @@ export function ConfirmDeleteModal({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="modal-dialog modal-dialog-sm confirm-delete-modal"
         onClick={(event) => event.stopPropagation()}

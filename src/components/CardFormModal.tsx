@@ -38,6 +38,7 @@ interface CardFormModalProps {
   importCategorySelection: CategorySelection;
   importFormat: CardImportFormat;
   importText: string;
+  importCsvText?: string;
   importCsvFileName?: string;
   importCsvHeaders?: string[] | null;
   importColumnMapping?: CardImportColumnMapping;
@@ -49,6 +50,7 @@ interface CardFormModalProps {
   onImportCategorySelectionChange: (selection: CategorySelection) => void;
   onImportFormatChange: (format: CardImportFormat) => void;
   onImportTextChange: (text: string) => void;
+  onImportCsvTextChange: (text: string) => void;
   onCsvFileUpload: (file: File | null) => void;
   onClearCsvImport: () => void;
   onImportColumnMappingChange?: (mapping: CardImportColumnMapping) => void;
@@ -75,6 +77,7 @@ export function CardFormModal({
   importCategorySelection,
   importFormat,
   importText,
+  importCsvText = "",
   importCsvFileName = "",
   importCsvHeaders = null,
   importColumnMapping = [],
@@ -86,6 +89,7 @@ export function CardFormModal({
   onImportCategorySelectionChange,
   onImportFormatChange,
   onImportTextChange,
+  onImportCsvTextChange,
   onCsvFileUpload,
   onClearCsvImport,
   onImportColumnMappingChange,
@@ -130,6 +134,7 @@ export function CardFormModal({
   const showAddSection = isEditing || isMassEditing || initialSection === "add";
   const showImportSection = !isEditing && !isMassEditing && initialSection === "import";
   const showCsvMapping = importFormat === "csv" && Boolean(importCsvHeaders?.length);
+  const hasCsvData = Boolean(importCsvText.trim() || importCsvFileName);
 
   const handleCsvFileChange = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] ?? null;
@@ -157,7 +162,7 @@ export function CardFormModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="modal-dialog modal-dialog-wide account-form-modal"
         onClick={(event) => event.stopPropagation()}
@@ -339,6 +344,32 @@ export function CardFormModal({
                     </select>
                   )}
                 </Field>
+                <Field
+                  label="Assignment"
+                  className="form-grid-span"
+                  hint="When unchecked, the card may be shared across Target/Walmart account groups (one profile per site)."
+                >
+                  <label className={`checkbox-row${showMixed("assignmentScope") ? " mass-edit-mixed" : ""}`}>
+                    <input
+                      type="checkbox"
+                      checked={
+                        showMixed("assignmentScope")
+                          ? false
+                          : draft.assignmentScope === "single_profile"
+                      }
+                      onChange={(event) => {
+                        if (isMassEditing) touch("assignmentScope");
+                        updateDraft({
+                          assignmentScope: event.target.checked ? "single_profile" : "account_group",
+                        });
+                      }}
+                    />
+                    <span>
+                      Assign only to 1 profile
+                      {showMixed("assignmentScope") ? ` (${MASS_EDIT_PLACEHOLDER})` : ""}
+                    </span>
+                  </label>
+                </Field>
               </div>
               {canDeleteDraftCategory && !isMassEditing ? (
                 <div className="button-row compact">
@@ -398,7 +429,7 @@ export function CardFormModal({
                   className={importFormat === "csv" ? "import-format-option active" : "import-format-option"}
                   onClick={() => onImportFormatChange("csv")}
                 >
-                  CSV upload
+                  CSV
                 </button>
                 <button
                   type="button"
@@ -414,8 +445,8 @@ export function CardFormModal({
               {importFormat === "csv" ? (
                 <>
                   <Field
-                    label="CSV file"
-                    hint="Upload a file with a header row, then map columns to app fields"
+                    label="Upload file"
+                    hint="Optional — or paste CSV below"
                   >
                     <div className="import-file-row">
                       <input
@@ -454,6 +485,19 @@ export function CardFormModal({
                         <span className="muted import-file-placeholder">No file selected</span>
                       )}
                     </div>
+                  </Field>
+                  <Field
+                    label="Paste CSV"
+                    hint="Header row optional. Without headers, use: card name, number, exp month, exp year, CVV, card type"
+                  >
+                    <textarea
+                      rows={8}
+                      value={importCsvText}
+                      onChange={(event) => onImportCsvTextChange(event.target.value)}
+                      placeholder={
+                        "profileName,number,expiryMonth,expiryYear,cvv,cardType\nVisa A,4111111111111111,12,2028,123,Visa"
+                      }
+                    />
                   </Field>
                   {showCsvMapping ? (
                     <div className="import-column-mapping">
@@ -510,7 +554,12 @@ export function CardFormModal({
                 </Field>
               )}
               <div className="button-row">
-                <button type="button" className="btn-secondary" onClick={() => void onImport()}>
+                <button
+                  type="button"
+                  className="btn-secondary"
+                  disabled={importFormat === "csv" ? !hasCsvData : !importText.trim()}
+                  onClick={() => void onImport()}
+                >
                   {importFormat === "csv" ? "Import CSV" : "Import JSON"}
                 </button>
               </div>
@@ -533,6 +582,7 @@ export function emptyCard(categoryId?: string): CreditCard {
     brand: "Visa",
     categoryId: categoryId ?? CARD_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: "good",
+    assignmentScope: "account_group",
     notes: "",
     createdAt: new Date().toISOString(),
   };

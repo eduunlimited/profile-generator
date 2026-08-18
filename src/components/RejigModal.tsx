@@ -37,7 +37,7 @@ export function RejigModal({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal-dialog modal-dialog-generate" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <strong>Re-jig profiles</strong>

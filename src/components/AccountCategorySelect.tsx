@@ -8,7 +8,7 @@ export type CategorySelection =
   | { kind: "existing"; categoryId: string }
   | { kind: "new"; name: string };
 
-export type CategoryOption = Pick<AccountCategory, "id" | "name">;
+export type CategoryOption = Pick<AccountCategory, "id" | "name"> & { locked?: boolean };
 
 interface AccountCategorySelectProps {
   categories: CategoryOption[];
@@ -63,8 +63,8 @@ export function AccountCategorySelect({
       }}
     >
       {categories.map((category) => (
-        <option key={category.id} value={category.id}>
-          {category.name}
+        <option key={category.id} value={category.id} disabled={Boolean(category.locked)}>
+          {category.locked ? `🔒 ${category.name}` : category.name}
         </option>
       ))}
       <option value={ADD_CATEGORY_OPTION}>+ Add category</option>

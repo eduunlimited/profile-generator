@@ -19,7 +19,7 @@ export function MassDistributeModal({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal-dialog modal-dialog-wide mass-distribute-modal" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <strong>Mass distribute</strong>

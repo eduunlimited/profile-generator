@@ -48,7 +48,7 @@ export function MoveAccountsModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal-dialog modal-dialog-sm" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <strong>Move {selectedCount} account{selectedCount === 1 ? "" : "s"}</strong>

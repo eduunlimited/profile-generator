@@ -52,6 +52,8 @@ export interface ProfileCategory {
   name: string;
   createdAt: string;
   sortOrder?: number;
+  /** When true, profiles in this category cannot be edited until unlocked. */
+  locked?: boolean;
 }
 
 export interface MasterProfile {
@@ -64,6 +66,11 @@ export interface MasterProfile {
   updatedAt: string;
 }
 
+export type AccountReviewStatus = "good" | "not_good";
+
+/** How many profiles may share a pool card. */
+export type CardAssignmentScope = "account_group" | "single_profile";
+
 export interface CreditCard {
   id: string;
   profileName: string;
@@ -73,6 +80,8 @@ export interface CreditCard {
   brand: string;
   categoryId: string;
   accountStatus: AccountReviewStatus;
+  /** When `single_profile`, unavailable after any assignment. Default shares per account site. */
+  assignmentScope?: CardAssignmentScope;
   notes: string;
   createdAt: string;
 }
@@ -87,8 +96,6 @@ export interface Credential {
   notes: string;
   createdAt: string;
 }
-
-export type AccountReviewStatus = "good" | "not_good";
 
 export interface Profile {
   id: string;
@@ -189,7 +196,8 @@ export type AddressRuleType =
   | "misspellField"
   | "prefixRandom"
   | "suffixRandom"
-  | "streetRandomLetters";
+  | "streetRandomLetters"
+  | "streetTypeCombo";
 
 export interface NameRule {
   type: NameRuleType;
@@ -259,7 +267,7 @@ export interface GenerateOptions {
 
 export type CreditCardAssignMode = "none" | "random" | "selected";
 
-export type NameMisspellScope = "both" | "first";
+export type NameMisspellScope = "both" | "first" | "last";
 
 export interface StreetRandomLettersJigOptions {
   enabled: boolean;
@@ -347,11 +355,52 @@ export interface MassDistributeResult {
   message: string;
 }
 
+export interface ImapSettings {
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+  mailbox: string;
+}
+
+export interface ImapAccount extends ImapSettings {
+  id: string;
+  name: string;
+  createdAt: string;
+  lastFetchedAt?: string;
+}
+
+export interface ImapTestResult {
+  ok: boolean;
+  mailbox: string;
+  messageCount: number;
+  message: string;
+}
+
+export interface ImapMessage {
+  uid: number;
+  messageId?: string;
+  date: string;
+  from: string;
+  to: string;
+  recipients: string[];
+  subject: string;
+  snippet: string;
+  body: string;
+}
+
+export interface StoredImapMessage extends ImapMessage {
+  dateMs: number;
+  fetchedAt: string;
+}
+
 export type AppTab =
   | "profiles"
   | "master"
   | "cards"
   | "credentials"
-  | "jigs";
+  | "jigs"
+  | "sessions"
+  | "mail";
 
 export type ProfileEditorSection = "profile" | "addresses" | "creditCard" | "logins";

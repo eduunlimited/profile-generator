@@ -1,4 +1,4 @@
-import type { AccountReviewStatus, CreditCard, Profile, ProfilePayment, ProfileSummary } from "./types";
+import type { AccountReviewStatus, CardAssignmentScope, CreditCard, Profile, ProfilePayment, ProfileSummary } from "./types";
 import { CARD_UNCATEGORIZED_CATEGORY_ID } from "./cardCategoryUtils";
 
 export type CardBrandKind = "visa" | "mastercard" | "amex" | "discover" | "unknown";
@@ -14,6 +14,27 @@ export function normalizeCardBrand(brand: string): CardBrandKind {
 
 export function parseCardNumberDigits(value: string): string {
   return value.replace(/\D/g, "");
+}
+
+export function profileHasPaymentCard(
+  profile: Pick<Profile, "creditCardId" | "payment">,
+): boolean {
+  if (profile.creditCardId) {
+    return true;
+  }
+  return parseCardNumberDigits(profile.payment.number).length > 0;
+}
+
+export function profileSummaryHasPaymentCard(
+  profile: Pick<ProfileSummary, "creditCardId" | "paymentNumber" | "creditCardLabel">,
+): boolean {
+  if (profile.creditCardId) {
+    return true;
+  }
+  if (profile.paymentNumber && profile.paymentNumber.length > 0) {
+    return true;
+  }
+  return Boolean(profile.creditCardLabel?.trim());
 }
 
 function isAmexNumber(value: string, brand?: string): boolean {
@@ -86,16 +107,33 @@ export function parseCardExpiry(expiry: string): { month: string; year: string }
   if (slashMatch) {
     return {
       month: normalizeExpiryMonth(slashMatch[1]),
-      year: expandExpiryYearToFourDigits(slashMatch[2]),
+      year: normalizeExpiryYear(slashMatch[2]),
     };
+  }
+
+  const yearOnlyMatch = trimmed.match(/^\/(\d{1,4})$/);
+  if (yearOnlyMatch) {
+    return { month: "", year: normalizeExpiryYear(yearOnlyMatch[1]) };
   }
 
   const compactMatch = trimmed.match(/^(\d{2})(\d{2,4})$/);
   if (compactMatch) {
     return {
       month: normalizeExpiryMonth(compactMatch[1]),
-      year: expandExpiryYearToFourDigits(compactMatch[2]),
+      year: normalizeExpiryYear(compactMatch[2]),
     };
+  }
+
+  const bareMatch = trimmed.match(/^(\d{1,4})$/);
+  if (bareMatch) {
+    const digits = bareMatch[1];
+    if (digits.length === 2) {
+      const monthNum = Number(digits);
+      if (monthNum >= 1 && monthNum <= 12) {
+        return { month: normalizeExpiryMonth(digits), year: "" };
+      }
+    }
+    return { month: "", year: normalizeExpiryYear(digits) };
   }
 
   return { month: "", year: "" };
@@ -118,13 +156,8 @@ export function formatCardExpiry(month: string, year: string): string {
   const normalizedMonth = normalizeExpiryMonth(month);
   const yearDigits = normalizeExpiryYear(year);
   if (!normalizedMonth && !yearDigits) return "";
-  if (!normalizedMonth) {
-    return yearDigits.length >= 2 ? `/${expandExpiryYearToFourDigits(yearDigits)}` : "";
-  }
+  if (!normalizedMonth) return `/${yearDigits}`;
   if (!yearDigits) return normalizedMonth;
-  if (yearDigits.length === 4 || yearDigits.length === 2) {
-    return `${normalizedMonth}/${expandExpiryYearToFourDigits(yearDigits)}`;
-  }
   return `${normalizedMonth}/${yearDigits}`;
 }
 
@@ -133,7 +166,11 @@ export function normalizeCardExpiryString(expiry: string): string {
   const trimmed = expiry.trim();
   if (!trimmed) return "";
   const parts = parseCardExpiry(trimmed);
-  return formatCardExpiry(parts.month, parts.year);
+  if (!parts.month && !parts.year) return "";
+  const year = parts.year ? expandExpiryYearToFourDigits(parts.year) : "";
+  if (!parts.month) return year;
+  if (!year) return parts.month;
+  return `${parts.month}/${year}`;
 }
 
 export function formatExpiryMonthInput(value: string): string {
@@ -173,6 +210,18 @@ export function cardNumbersMatch(left: string, right: string): boolean {
   const leftDigits = parseCardNumberDigits(left);
   const rightDigits = parseCardNumberDigits(right);
   return leftDigits.length > 0 && leftDigits === rightDigits;
+}
+
+export function normalizeCardCvv(value: string): string {
+  return value.trim();
+}
+
+/** Stable import duplicate key: number + normalized MM/YYYY expiry + CVV. */
+export function cardImportFingerprint(number: string, expiry: string, cvv: string): string {
+  const digits = parseCardNumberDigits(number);
+  const normalizedExpiry = normalizeCardExpiryString(expiry);
+  const normalizedCvv = normalizeCardCvv(cvv);
+  return `${digits}|${normalizedExpiry}|${normalizedCvv}`;
 }
 
 export function findPoolCardByPayment(
@@ -216,12 +265,26 @@ export type StoredCreditCard = {
   brand: string;
   categoryId?: string;
   accountStatus?: AccountReviewStatus;
+  assignmentScope?: CardAssignmentScope;
   notes?: string;
   createdAt: string;
 };
 
 function normalizeCardReviewStatus(value: unknown): AccountReviewStatus {
   return value === "not_good" ? "not_good" : "good";
+}
+
+/** Pool cards marked "Not good" cannot be assigned to profiles. */
+export function isAssignablePoolCard(card: Pick<CreditCard, "accountStatus">): boolean {
+  return card.accountStatus !== "not_good";
+}
+
+export function filterAssignablePoolCards(cards: CreditCard[]): CreditCard[] {
+  return cards.filter(isAssignablePoolCard);
+}
+
+function normalizeCardAssignmentScope(value: unknown): CardAssignmentScope {
+  return value === "single_profile" ? "single_profile" : "account_group";
 }
 
 export function normalizeCreditCard(card: StoredCreditCard): CreditCard {
@@ -234,6 +297,7 @@ export function normalizeCreditCard(card: StoredCreditCard): CreditCard {
     brand: card.brand || detectCardBrand(card.number),
     categoryId: card.categoryId?.trim() || CARD_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: normalizeCardReviewStatus(card.accountStatus),
+    assignmentScope: normalizeCardAssignmentScope(card.assignmentScope),
     notes: card.notes?.trim() ?? "",
     createdAt: card.createdAt,
   };

@@ -1,5 +1,15 @@
-import type { AddressRule, JigPreset, MasterProfile, NameRule, ProfileAddress, ProfileName, NameMisspellScope } from "./types";
-import { resolveProfileNameBase } from "./profileNameUtils";
+import type {
+  AddressRule,
+  AddressRuleType,
+  JigPreset,
+  MasterProfile,
+  NameRule,
+  Profile,
+  ProfileAddress,
+  ProfileName,
+  NameMisspellScope,
+} from "./types";
+import { cloneProfileName, namePartsForMisspell, resolveProfileNameBase } from "./profileNameUtils";
 import { buildMisspellRequest, buildStreetVariationHint, misspellBatchWithOpenAi, misspellWithOpenAi } from "./openaiMisspell";
 import type { OpenAiMisspellResult } from "./openaiMisspell";
 const STREET_ABBREVIATIONS: Record<string, string> = {
@@ -13,17 +23,140 @@ const STREET_ABBREVIATIONS: Record<string, string> = {
   place: "Pl",
 };
 
-const UNIT_LINE_TEMPLATES = [  "Apt {n}",
+const UNIT_LINE_TEMPLATES = [
+  "Apt {n}",
   "Apt. {n}",
   "Apartment {n}",
   "Ste {n}",
   "Suite {n}",
   "# {n}",
   "Unit {n}",
+  "Room {n}",
+  "Door {n}",
+  "1{letter}",
 ];
+
+const UNIT_NUMBER_MIN = 1;
+const UNIT_NUMBER_MAX = 100;
+
+/** Same jigged line 1 may be used on this many profiles per category. */
+export const MAX_STREET_LINE1_USES = 3;
+
+const STREET_TYPE_PAIRS = [
+  { key: "street", long: "Street", short: "St", match: /^(street|str\.?|st\.?)$/i },
+  { key: "drive", long: "Drive", short: "Dr", match: /^(drive|dr\.?)$/i },
+  { key: "avenue", long: "Avenue", short: "Ave", match: /^(avenue|ave\.?)$/i },
+  { key: "place", long: "Place", short: "Pl", match: /^(place|pl\.?)$/i },
+] as const;
+
+const DIRECTION_GROUPS = [
+  {
+    key: "SE",
+    match: /^(se|s\.e\.?|southeast|south[\s-]+east)$/i,
+    variants: ["SE", "S.E.", "Southeast", "South East"],
+  },
+  {
+    key: "NE",
+    match: /^(ne|n\.e\.?|northeast|north[\s-]+east)$/i,
+    variants: ["NE", "N.E.", "Northeast", "North East"],
+  },
+  {
+    key: "NW",
+    match: /^(nw|n\.w\.?|northwest|north[\s-]+west)$/i,
+    variants: ["NW", "N.W.", "Northwest", "North West"],
+  },
+  {
+    key: "SW",
+    match: /^(sw|s\.w\.?|southwest|south[\s-]+west)$/i,
+    variants: ["SW", "S.W.", "Southwest", "South West"],
+  },
+] as const;
 
 function randomInt(min: number, max: number): number {
   return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function randomUnitNumber(): string {
+  return randomInt(UNIT_NUMBER_MIN, UNIT_NUMBER_MAX).toString();
+}
+
+function randomUnitLetter(): string {
+  return randomUpperLetters(1);
+}
+
+function substituteUnitFormat(template: string): string {
+  return template
+    .replace(/\{random\}/gi, () => randomUnitNumber())
+    .replace(/\{n\}/gi, () => randomUnitNumber())
+    .replace(/\{letter\}/gi, () => randomUnitLetter());
+}
+
+function pickRandom<T>(items: readonly T[]): T {
+  return items[Math.floor(Math.random() * items.length)];
+}
+
+function tokenizeStreet(street: string): string[] {
+  return street.trim().split(/\s+/).filter(Boolean);
+}
+
+function titleCaseStreetName(value: string): string {
+  return value
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function matchStreetType(token: string): (typeof STREET_TYPE_PAIRS)[number] | null {
+  return STREET_TYPE_PAIRS.find((pair) => pair.match.test(token)) ?? null;
+}
+
+function matchDirection(value: string): (typeof DIRECTION_GROUPS)[number] | null {
+  return DIRECTION_GROUPS.find((group) => group.match.test(value.trim())) ?? null;
+}
+
+function consumeTrailingDirection(tokens: string[]): {
+  group: (typeof DIRECTION_GROUPS)[number];
+  remaining: string[];
+} | null {
+  if (tokens.length === 0) return null;
+  if (tokens.length >= 2) {
+    const two = `${tokens[tokens.length - 2]} ${tokens[tokens.length - 1]}`;
+    const group = matchDirection(two);
+    if (group) {
+      return { group, remaining: tokens.slice(0, -2) };
+    }
+  }
+  const group = matchDirection(tokens[tokens.length - 1] ?? "");
+  if (group) {
+    return { group, remaining: tokens.slice(0, -1) };
+  }
+  return null;
+}
+
+function applyStreetTypeCombo(street: string): string {
+  const tokens = tokenizeStreet(street);
+  if (tokens.length === 0) return street;
+
+  const direction = consumeTrailingDirection(tokens);
+  const afterDirection = direction?.remaining ?? tokens;
+  const typeToken = afterDirection[afterDirection.length - 1];
+  const matchedType = typeToken ? matchStreetType(typeToken) : null;
+  const coreTokens = matchedType ? afterDirection.slice(0, -1) : afterDirection;
+
+  if (!matchedType && !direction) {
+    return street;
+  }
+
+  const house = coreTokens[0] && /^\d/.test(coreTokens[0]) ? coreTokens[0] : "";
+  const nameTokens = house ? coreTokens.slice(1) : coreTokens;
+  const name = titleCaseStreetName(nameTokens.join(" "));
+
+  const typePair = matchedType ? pickRandom(STREET_TYPE_PAIRS) : null;
+  const typeText = typePair ? (Math.random() < 0.5 ? typePair.short : typePair.long) : "";
+  const directionText = direction ? pickRandom(direction.group.variants) : "";
+
+  return [house, name, typeText, directionText].filter(Boolean).join(" ");
 }
 
 function randomLetters(count: number): string {
@@ -37,6 +170,18 @@ function isNameMisspellRule(rule: NameRule): boolean {
 
 function isStreetMisspellRule(rule: AddressRule): boolean {
   return rule.type === "misspellField";
+}
+
+const LINE2_ADDRESS_RULE_TYPES = new Set<AddressRuleType>([
+  "randomUnitLine",
+  "addUnit",
+  "addSuite",
+  "splitLines",
+]);
+
+/** True when any rule changes street line 1 (not apt/suite line 2). */
+export function addressRulesChangeStreetLine(rules: AddressRule[]): boolean {
+  return rules.some((rule) => !LINE2_ADDRESS_RULE_TYPES.has(rule.type));
 }
 
 function stripMisspellFromNameRules(rules: NameRule[]): NameRule[] {
@@ -72,7 +217,7 @@ function applyStreetRandomLetters(street: string, rule: AddressRule): string {
 
 function applyRandomUnitLine(): string {
   const template = UNIT_LINE_TEMPLATES[Math.floor(Math.random() * UNIT_LINE_TEMPLATES.length)];
-  return template.replace("{n}", randomInt(1, 999).toString());
+  return substituteUnitFormat(template);
 }
 
 function applyNameRulesForProfile(
@@ -167,17 +312,14 @@ export function applyAddressRules(address: ProfileAddress, rules: AddressRule[])
       case "abbreviate":
         next.street = abbreviateStreet(next.street);
         break;
+      case "streetTypeCombo":
+        next.street = applyStreetTypeCombo(next.street);
+        break;
       case "addUnit":
-        next.unit = (rule.unitFormat ?? "Apt {random}").replace(
-          "{random}",
-          randomInt(1, 20).toString(),
-        );
+        next.unit = substituteUnitFormat(rule.unitFormat ?? "Apt {random}");
         break;
       case "addSuite":
-        next.unit = (rule.unitFormat ?? "Suite {random}").replace(
-          "{random}",
-          randomInt(100, 999).toString(),
-        );
+        next.unit = substituteUnitFormat(rule.unitFormat ?? "Suite {random}");
         break;
       case "randomUnitLine":
         next.unit = applyRandomUnitLine();
@@ -233,7 +375,29 @@ export function collectUniqueStreetLines(streets: string[]): string[] {
   return lines;
 }
 
-/** Streets already used in the category plus non-pending streets from the current batch. */
+export function streetUseCount(counts: Map<string, number>, fingerprint: string): number {
+  return counts.get(fingerprint) ?? 0;
+}
+
+export function canAssignStreetLine(
+  counts: Map<string, number>,
+  fingerprint: string,
+  maxUses = MAX_STREET_LINE1_USES,
+): boolean {
+  return streetUseCount(counts, fingerprint) < maxUses;
+}
+
+export function incrementStreetUse(counts: Map<string, number>, fingerprint: string): number {
+  const next = streetUseCount(counts, fingerprint) + 1;
+  counts.set(fingerprint, next);
+  return next;
+}
+
+export function cloneStreetUseCounts(counts: Map<string, number>): Map<string, number> {
+  return new Map(counts);
+}
+
+/** Streets already at the line-1 cap, plus non-pending batch streets that would hit the cap. */
 export function buildReservedStreetLinesForMisspell(
   categoryStreets: string[],
   batchStreetsByIndex: Array<{ index: number; street: string }>,
@@ -244,7 +408,10 @@ export function buildReservedStreetLinesForMisspell(
     if (excludeBatchIndexes.has(index)) continue;
     streets.push(street);
   }
-  return collectUniqueStreetLines(streets);
+  const counts = buildStreetUseCounts(streets.map((street) => ({ street })));
+  return collectUniqueStreetLines(
+    streets.filter((street) => !canAssignStreetLine(counts, streetLineFingerprint(street))),
+  );
 }
 
 /** Uniqueness within a category is based on jigged street line 1 only — not unit line 2. */
@@ -319,14 +486,15 @@ function resolveAddressRules(
   return [];
 }
 
-export function applyLocalJigRulesToMaster(
-  master: MasterProfile,
+function buildLocalJigSlot(
+  name: ProfileName,
+  addressBase: ProfileAddress,
   namePreset: JigPreset | null,
   addressPresets: JigPreset[],
   addressRulesOverride?: AddressRule[],
   nameMisspellScope: NameMisspellScope = "both",
 ): LocalJigSlot {
-  const baseName = resolveProfileNameBase(master.name);
+  const baseName = resolveProfileNameBase(name);
   const addressRules = resolveAddressRules(addressPresets, addressRulesOverride);
   const nameRules = namePreset?.nameRules ?? [];
   const nonMisspellNameRules = stripMisspellFromNameRules(nameRules);
@@ -337,7 +505,7 @@ export function applyLocalJigRulesToMaster(
   let jigName = baseName;
   if (namePreset) {
     if (nonMisspellNameRules.length > 0) {
-      jigName = applyNameRulesForProfile(master.name, nonMisspellNameRules, nameMisspellScope);
+      jigName = applyNameRulesForProfile(name, nonMisspellNameRules, nameMisspellScope);
     } else if (!needsNameMisspell) {
       jigName = baseName;
     }
@@ -345,8 +513,8 @@ export function applyLocalJigRulesToMaster(
 
   const jigAddress =
     nonMisspellAddressRules.length > 0
-      ? applyAddressRules({ ...master.address }, nonMisspellAddressRules)
-      : { ...master.address, formatted: formatAddress(master.address) };
+      ? applyAddressRules({ ...addressBase }, nonMisspellAddressRules)
+      : { ...addressBase, formatted: formatAddress(addressBase) };
 
   return {
     jigName,
@@ -358,13 +526,72 @@ export function applyLocalJigRulesToMaster(
   };
 }
 
+export function applyLocalJigRulesToMaster(
+  master: MasterProfile,
+  namePreset: JigPreset | null,
+  addressPresets: JigPreset[],
+  addressRulesOverride?: AddressRule[],
+  nameMisspellScope: NameMisspellScope = "both",
+): LocalJigSlot {
+  return buildLocalJigSlot(
+    master.name,
+    master.address,
+    namePreset,
+    addressPresets,
+    addressRulesOverride,
+    nameMisspellScope,
+  );
+}
+
+/** Re-jig: keep the profile name. Line-2 jigs stay on the current address; line-1 jigs start from the master. */
+export function applyLocalJigRulesToProfile(
+  profile: Profile,
+  master: MasterProfile,
+  namePreset: JigPreset | null,
+  addressPresets: JigPreset[],
+  addressRulesOverride?: AddressRule[],
+  nameMisspellScope: NameMisspellScope = "both",
+): LocalJigSlot {
+  const addressRules = resolveAddressRules(addressPresets, addressRulesOverride);
+  const addressBase = addressRulesChangeStreetLine(addressRules) ? master.address : profile.address;
+  return buildLocalJigSlot(
+    profile.name,
+    addressBase,
+    namePreset,
+    addressPresets,
+    addressRulesOverride,
+    nameMisspellScope,
+  );
+}
+
+function stripNameFieldsFromMisspell(
+  misspell: OpenAiMisspellResult | undefined,
+  slot: LocalJigSlot,
+): OpenAiMisspellResult | undefined {
+  if (!misspell) return undefined;
+  if (slot.needsNameMisspell) return misspell;
+  if (misspell.street === undefined) return undefined;
+  return { street: misspell.street };
+}
+
+function applyNameMisspell(
+  name: ProfileName,
+  jigName: string,
+  misspell: OpenAiMisspellResult | undefined,
+): { first: string; last: string; full: string; jig: string } {
+  const parts = namePartsForMisspell(name);
+  const first = misspell?.firstName?.trim() || parts.first;
+  const last = misspell?.lastName?.trim() || parts.last;
+  const full = `${first} ${last}`.trim() || jigName || name.full;
+  return { first, last, full, jig: full };
+}
+
 export function finalizeJigFromLocalAndMisspell(
   master: MasterProfile,
   local: LocalJigSlot,
   misspell: OpenAiMisspellResult | undefined,
   namePreset: JigPreset | null,
 ): { name: MasterProfile["name"]; address: ProfileAddress } {
-  const baseName = resolveProfileNameBase(master.name);
   let jigName = local.jigName;
   let jigAddress = local.jigAddress;
 
@@ -383,16 +610,61 @@ export function finalizeJigFromLocalAndMisspell(
     }
   }
 
+  const nameParts = namePreset ? applyNameMisspell(master.name, jigName, misspell) : null;
+
   return {
     name: {
       ...master.name,
-      full: baseName,
-      jig: namePreset ? jigName : undefined,
+      ...(nameParts ?? { full: resolveProfileNameBase(master.name) }),
+      jig: namePreset ? (nameParts?.jig ?? jigName) : undefined,
     },
     address: {
       ...jigAddress,
       jig: local.addressRules.length > 0 ? jigAddress.formatted : undefined,
     },
+  };
+}
+
+/** Re-jig merge: preserve profile name when no name jig; otherwise jig from the profile's name base. */
+export function finalizeRejigFromLocalAndMisspell(
+  profile: Profile,
+  master: MasterProfile,
+  local: LocalJigSlot,
+  misspell: OpenAiMisspellResult | undefined,
+  namePreset: JigPreset | null,
+): { name: ProfileName; address: ProfileAddress } {
+  const scopedMisspell = stripNameFieldsFromMisspell(misspell, local);
+  const jiggedAddress = finalizeJigFromLocalAndMisspell(
+    master,
+    local,
+    scopedMisspell,
+    namePreset,
+  ).address;
+
+  if (!namePreset) {
+    return {
+      name: cloneProfileName(profile.name),
+      address: jiggedAddress,
+    };
+  }
+
+  let jigName = local.jigName;
+  if (scopedMisspell) {
+    if (scopedMisspell.firstName !== undefined || scopedMisspell.lastName !== undefined) {
+      const first = scopedMisspell.firstName ?? profile.name.first.trim();
+      const last = scopedMisspell.lastName ?? profile.name.last.trim();
+      jigName = `${first} ${last}`.trim();
+    }
+  }
+
+  const nameParts = applyNameMisspell(profile.name, jigName, scopedMisspell);
+
+  return {
+    name: {
+      ...profile.name,
+      ...nameParts,
+    },
+    address: jiggedAddress,
   };
 }
 
@@ -421,9 +693,10 @@ export async function applyJigRulesToMasterAsync(
       variationHint = buildStreetVariationHint(Number.isFinite(previewSeed) ? previewSeed : 0, local.jigAddress.street);
     }
 
+    const parts = namePartsForMisspell(master.name);
     const request = buildMisspellRequest(
-      local.needsNameMisspell ? master.name.first.trim() : undefined,
-      local.needsNameMisspell ? master.name.last.trim() : undefined,
+      local.needsNameMisspell ? parts.first : undefined,
+      local.needsNameMisspell ? parts.last : undefined,
       local.needsStreetMisspell ? local.jigAddress.street : undefined,
       nameMisspellScope,
       variationHint,
@@ -444,17 +717,19 @@ export async function applyJigRulesBatchToMasterAsync(
   _addressPresets: JigPreset[],
   _addressRulesOverride: AddressRule[] | undefined,
   nameMisspellScope: NameMisspellScope,
-  indexedSlots: Array<{ index: number; slot: LocalJigSlot }>,
+  indexedSlots: Array<{ index: number; slot: LocalJigSlot; nameSource?: ProfileName }>,
   reservedStreets: string[],
 ): Promise<Map<number, OpenAiMisspellResult>> {
   const indexedRequests = indexedSlots
-    .map(({ index, slot }) => {
+    .map(({ index, slot, nameSource }) => {
       if (!slot.needsNameMisspell && !slot.needsStreetMisspell) {
         return null;
       }
+      const name = nameSource ?? master.name;
+      const parts = namePartsForMisspell(name);
       const request = buildMisspellRequest(
-        slot.needsNameMisspell ? master.name.first.trim() : undefined,
-        slot.needsNameMisspell ? master.name.last.trim() : undefined,
+        slot.needsNameMisspell ? parts.first : undefined,
+        slot.needsNameMisspell ? parts.last : undefined,
         slot.needsStreetMisspell ? slot.jigAddress.street : undefined,
         nameMisspellScope,
         buildStreetVariationHint(index, slot.jigAddress.street),
@@ -484,19 +759,16 @@ export async function applyJigPresetToProfile(
   const needsStreetMisspell = preset.addressRules.some(isStreetMisspellRule);
 
   if (needsNameMisspell || needsStreetMisspell) {
+    const parts = namePartsForMisspell(profile.name);
     const request = buildMisspellRequest(
-      needsNameMisspell ? profile.name.first.trim() : undefined,
-      needsNameMisspell ? profile.name.last.trim() : undefined,
+      needsNameMisspell ? parts.first : undefined,
+      needsNameMisspell ? parts.last : undefined,
       needsStreetMisspell ? jigAddress.street : undefined,
       "both",
       buildStreetVariationHint(0, jigAddress.street),
     );
     if (request) {
       const misspelled = await misspellWithOpenAi(request);
-      const jiggedName =
-        misspelled.firstName !== undefined || misspelled.lastName !== undefined
-          ? `${misspelled.firstName ?? profile.name.first.trim()} ${misspelled.lastName ?? profile.name.last.trim()}`.trim()
-          : jigName;
       if (misspelled.street !== undefined) {
         jigAddress = {
           ...jigAddress,
@@ -508,7 +780,7 @@ export async function applyJigPresetToProfile(
         ...profile,
         jigPresetId: preset.id,
         jigPresetName: preset.name,
-        name: { ...profile.name, jig: jiggedName },
+        name: { ...profile.name, ...applyNameMisspell(profile.name, jigName, misspelled) },
         address: { ...jigAddress, jig: jigAddress.formatted },
         updatedAt: new Date().toISOString(),
       };
@@ -519,7 +791,10 @@ export async function applyJigPresetToProfile(
     ...profile,
     jigPresetId: preset.id,
     jigPresetName: preset.name,
-    name: { ...profile.name, jig: jigName },
+    name: {
+      ...profile.name,
+      ...(needsNameMisspell ? applyNameMisspell(profile.name, jigName, undefined) : { jig: jigName }),
+    },
     address: { ...jigAddress, jig: jigAddress.formatted },
     updatedAt: new Date().toISOString(),
   };

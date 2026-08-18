@@ -6,6 +6,7 @@ import { Field } from "./ui";
 
 interface MoveProfilesModalProps {
   open: boolean;
+  mode?: "move" | "copy";
   selectedCount: number;
   categories: ProfileCategory[];
   selection: CategorySelection;
@@ -16,6 +17,7 @@ interface MoveProfilesModalProps {
 
 export function MoveProfilesModal({
   open,
+  mode = "move",
   selectedCount,
   categories,
   selection,
@@ -42,25 +44,29 @@ export function MoveProfilesModal({
       await onMove();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not move profiles.");
+      setError(err instanceof Error ? err.message : `Could not ${mode} profiles.`);
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal-dialog modal-dialog-sm" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <strong>
-            Move {selectedCount} profile{selectedCount === 1 ? "" : "s"}
+            {mode === "copy" ? "Copy" : "Move"} {selectedCount} profile{selectedCount === 1 ? "" : "s"}
           </strong>
           <button type="button" className="tool-btn tool-btn-cyan" onClick={onClose}>
             Close
           </button>
         </div>
         <div className="modal-body">
-          <p className="muted move-accounts-hint">Choose a category to move the selected profiles into.</p>
+          <p className="muted move-accounts-hint">
+            {mode === "copy"
+              ? "Choose a category to copy the selected profiles into. You can add a new category from the list."
+              : "Choose a category to move the selected profiles into."}
+          </p>
           <Field label="Category">
             <AccountCategorySelect
               categories={categories}
@@ -72,7 +78,7 @@ export function MoveProfilesModal({
           {error ? <p className="status-inline">{error}</p> : null}
           <div className="button-row compact">
             <button type="button" className="btn-primary" disabled={busy} onClick={() => void handleMove()}>
-              Move
+              {mode === "copy" ? "Copy" : "Move"}
             </button>
             <button type="button" className="btn-secondary" disabled={busy} onClick={onClose}>
               Cancel

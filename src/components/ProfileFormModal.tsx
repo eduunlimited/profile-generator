@@ -135,6 +135,9 @@ export function ProfileFormModal({
   const displayedCardholderName = cardholderMatchesShipping
     ? shippingFullName(profile)
     : (profile.cardHolderName ?? "");
+  const paymentNumberDigits = parseCardNumberDigits(profile.payment.number);
+  const cardNumberFormatBrand = profile.payment.brand || "Visa";
+  const canSelectCardType = paymentNumberDigits.length > 0 || Boolean(profile.creditCardId);
 
   const setField = (path: string, value: string, field?: ProfileEditField) => {
     if (field && isMassEditing) touch(field);
@@ -151,7 +154,7 @@ export function ProfileFormModal({
   const mixedTextValue = (field: ProfileEditField, value: string) => (showMixed(field) ? "" : value);
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="modal-dialog account-form-modal profile-form-modal"
         onClick={(event) => event.stopPropagation()}
@@ -316,47 +319,19 @@ export function ProfileFormModal({
                   />
                 </Field>
                 <div className="profile-edit-row profile-edit-row-inline">
-                  <Field label="Card Type" className="field-w-md">
-                    {showMixed("paymentBrand") ? (
-                      <input
-                        className="mass-edit-mixed"
-                        readOnly
-                        value=""
-                        placeholder={MASS_EDIT_PLACEHOLDER}
-                        onFocus={() => {
-                          touch("paymentBrand");
-                          onProfileDraftChange({
-                            ...profile,
-                            payment: { ...profile.payment, brand: "Visa" },
-                          });
-                        }}
-                      />
-                    ) : (
-                      <select
-                        value={profile.payment.brand}
-                        onChange={(event) => setField("payment.brand", event.target.value, "paymentBrand")}
-                      >
-                        {CARD_BRANDS.map((brand) => (
-                          <option key={brand} value={brand}>
-                            {brand}
-                          </option>
-                        ))}
-                      </select>
-                    )}
-                  </Field>
                   <Field label="Card Number" className="field-w-grow">
                     <input
                       className={`card-pool-number${showMixed("paymentNumber") ? " mass-edit-mixed" : ""}`}
                       value={
                         showMixed("paymentNumber")
                           ? ""
-                          : formatCardNumberDisplay(profile.payment.number, profile.payment.brand)
+                          : formatCardNumberDisplay(profile.payment.number, cardNumberFormatBrand)
                       }
                       onChange={(event) =>
                         setField(
                           "payment.number",
                           parseCardNumberDigits(
-                            formatCardNumberInput(event.target.value, profile.payment.brand),
+                            formatCardNumberInput(event.target.value, cardNumberFormatBrand),
                           ),
                           "paymentNumber",
                         )
@@ -398,6 +373,39 @@ export function ProfileFormModal({
                       inputMode="numeric"
                       placeholder={showMixed("paymentCvv") ? MASS_EDIT_PLACEHOLDER : ""}
                     />
+                  </Field>
+                  <Field label="Card Type" className="field-w-md">
+                    {showMixed("paymentBrand") ? (
+                      <input
+                        className="mass-edit-mixed"
+                        readOnly
+                        value=""
+                        placeholder={MASS_EDIT_PLACEHOLDER}
+                        onFocus={() => {
+                          touch("paymentBrand");
+                          onProfileDraftChange({
+                            ...profile,
+                            payment: { ...profile.payment, brand: "" },
+                          });
+                        }}
+                      />
+                    ) : !canSelectCardType ? (
+                      <select value="" disabled aria-label="Card type">
+                        <option value="">—</option>
+                      </select>
+                    ) : (
+                      <select
+                        value={profile.payment.brand || ""}
+                        onChange={(event) => setField("payment.brand", event.target.value, "paymentBrand")}
+                      >
+                        <option value="">—</option>
+                        {CARD_BRANDS.map((brand) => (
+                          <option key={brand} value={brand}>
+                            {brand}
+                          </option>
+                        ))}
+                      </select>
+                    )}
                   </Field>
                 </div>
               </div>

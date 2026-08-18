@@ -6,18 +6,23 @@ interface ProfilesToolbarProps {
   tableQuery: string;
   onTableQueryChange: (value: string) => void;
   canDeleteSelectedCategory: boolean;
+  canUnassignCards?: boolean;
   createMasterDisabled?: boolean;
   onCreateMaster: () => void;
   onGenerate: () => void;
   onEdit: () => void;
   onMove: () => void;
+  onCopy: () => void;
   onDelete: () => void;
   onRejig: () => void;
   onAssignCards: () => void;
+  onUnassignCards?: () => void;
   onMassDistribute: () => void;
   onExport: () => void;
   onImport: () => void;
   onDeleteCategory: () => void;
+  profileActionsLocked?: boolean;
+  generateLocked?: boolean;
 }
 
 export function ProfilesToolbar({
@@ -28,24 +33,30 @@ export function ProfilesToolbar({
   tableQuery,
   onTableQueryChange,
   canDeleteSelectedCategory,
+  canUnassignCards = false,
   createMasterDisabled = false,
   onCreateMaster,
   onGenerate,
   onEdit,
   onMove,
+  onCopy,
   onDelete,
   onRejig,
   onAssignCards,
+  onUnassignCards,
   onMassDistribute,
   onExport,
   onImport,
   onDeleteCategory,
+  profileActionsLocked = false,
+  generateLocked = false,
 }: ProfilesToolbarProps) {
   const hasJigSelection = selectedCount > 0;
   const hasMasterSelection = Boolean(selectedMasterId);
-  const canEdit = hasMasterSelection || hasJigSelection;
-  const canMove = hasJigSelection || (hasMasterSelection && selectedMasterJigCount > 0);
-  const canDelete = hasJigSelection || (hasMasterSelection && canDeleteMaster);
+  const canEdit = (hasMasterSelection || hasJigSelection) && !profileActionsLocked;
+  const canMove = (hasJigSelection || (hasMasterSelection && selectedMasterJigCount > 0)) && !profileActionsLocked;
+  const canDelete = (hasJigSelection || (hasMasterSelection && canDeleteMaster)) && !profileActionsLocked;
+  const lockHint = "Unlock the category to change these profiles";
 
   return (
     <div className="profiles-table-toolbar">
@@ -59,7 +70,13 @@ export function ProfilesToolbar({
           >
             Create Master
           </button>
-          <button type="button" className="btn-secondary btn-compact" onClick={onGenerate}>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            disabled={generateLocked}
+            title={generateLocked ? "Unlock the category to generate profiles" : undefined}
+            onClick={onGenerate}
+          >
             Generate Jigs
           </button>
         </div>
@@ -71,6 +88,7 @@ export function ProfilesToolbar({
             type="button"
             className="btn-secondary btn-compact"
             disabled={!canEdit}
+            title={profileActionsLocked ? lockHint : undefined}
             onClick={onEdit}
           >
             Edit
@@ -79,14 +97,24 @@ export function ProfilesToolbar({
             type="button"
             className="btn-secondary btn-compact"
             disabled={!canMove}
+            title={profileActionsLocked ? lockHint : undefined}
             onClick={onMove}
           >
             Move
           </button>
           <button
             type="button"
+            className="btn-secondary btn-compact"
+            disabled={!hasJigSelection}
+            onClick={onCopy}
+          >
+            Copy
+          </button>
+          <button
+            type="button"
             className="btn-secondary btn-compact ghost-button danger"
             disabled={!canDelete}
+            title={profileActionsLocked ? lockHint : undefined}
             onClick={onDelete}
           >
             Delete
@@ -100,7 +128,8 @@ export function ProfilesToolbar({
           <button
             type="button"
             className="btn-secondary btn-compact"
-            disabled={!hasJigSelection}
+            disabled={!hasJigSelection || profileActionsLocked}
+            title={profileActionsLocked ? lockHint : undefined}
             onClick={onRejig}
           >
             Re-jig
@@ -108,7 +137,8 @@ export function ProfilesToolbar({
           <button
             type="button"
             className="btn-secondary btn-compact"
-            disabled={!hasJigSelection}
+            disabled={!hasJigSelection || profileActionsLocked}
+            title={profileActionsLocked ? lockHint : undefined}
             onClick={onAssignCards}
           >
             Assign cards
@@ -116,7 +146,17 @@ export function ProfilesToolbar({
           <button
             type="button"
             className="btn-secondary btn-compact"
-            disabled={!hasJigSelection}
+            disabled={!canUnassignCards || profileActionsLocked}
+            title={profileActionsLocked ? lockHint : undefined}
+            onClick={() => onUnassignCards?.()}
+          >
+            Unassign cards
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            disabled={!hasJigSelection || profileActionsLocked}
+            title={profileActionsLocked ? lockHint : undefined}
             onClick={onMassDistribute}
           >
             Mass distribute

@@ -8,7 +8,7 @@ import {
 import { buildMisspellRequest, buildStreetVariationHint, misspellWithOpenAi } from "../lib/openaiMisspell";
 import { getJigPresetById } from "../lib/presets";
 import { resolveAddressJigFromGenerateOptions } from "../lib/jigPresetUtils";
-import { resolveProfileNameBase } from "../lib/profileNameUtils";
+import { namePartsForMisspell, resolveProfileNameBase } from "../lib/profileNameUtils";
 import {
   applyPhoneLastFourJig,
   formatUsPhone,
@@ -208,9 +208,10 @@ export function JigAddressPreview({
       error: null,
     }));
 
+    const nameParts = namePartsForMisspell(master.name);
     const request = buildMisspellRequest(
-      local.needsNameMisspell ? master.name.first.trim() : undefined,
-      local.needsNameMisspell ? master.name.last.trim() : undefined,
+      local.needsNameMisspell ? nameParts.first : undefined,
+      local.needsNameMisspell ? nameParts.last : undefined,
       local.needsStreetMisspell ? local.jigAddress.street : undefined,
       nameMisspellScope,
       local.needsStreetMisspell

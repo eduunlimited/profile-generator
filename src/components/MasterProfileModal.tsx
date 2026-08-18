@@ -25,7 +25,7 @@ export function MasterProfileModal({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="modal-dialog modal-dialog-wide master-profile-modal"
         onClick={(event) => event.stopPropagation()}

@@ -46,6 +46,19 @@ npm run tauri build
 
 The installer and `.exe` are written under `src-tauri/target/release/bundle/`.
 
+## Release / distribution
+
+For a shareable installer with bundled Camoufox + licensing + OTA updates, see [`docs/RELEASE.md`](docs/RELEASE.md).
+
+Quick release build:
+
+```powershell
+$env:LICENSE_API_URL = "https://your-license-server.example.com"
+npm run build:release
+```
+
+Share `src-tauri/target/release/bundle/nsis/Profile Generator_*_x64-setup.exe`.
+
 ## Notes
 
 - All payment data uses Luhn-valid **test card numbers only**

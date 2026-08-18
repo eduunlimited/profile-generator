@@ -26,6 +26,7 @@ export const ADDRESS_RULE_LABELS: Record<AddressRule["type"], string> = {
   prefixRandom: "Random prefix on field",
   suffixRandom: "Random suffix on field",
   streetRandomLetters: "Street random letters",
+  streetTypeCombo: "Street type combo (PKC/Target)",
 };
 
 export const AFFIX_MODE_LABELS: Record<StreetAffixMode, string> = {
@@ -37,7 +38,10 @@ export const AFFIX_MODE_LABELS: Record<StreetAffixMode, string> = {
 export const NAME_MISSPELL_SCOPE_LABELS: Record<NameMisspellScope, string> = {
   both: "First and last name",
   first: "First name only",
+  last: "Last name only",
 };
+
+export const NAME_MISSPELL_SCOPE_OPTIONS: NameMisspellScope[] = ["both", "first", "last"];
 
 export const RECOMMENDED_NAME_JIG_IDS = ["builtin-name-misspell"] as const;
 
@@ -45,6 +49,7 @@ export const RECOMMENDED_ADDRESS_JIG_IDS = [
   "builtin-street-random-letters",
   "builtin-street-prefix-letters",
   "builtin-street-suffix-letters",
+  "builtin-street-type-combo",
   "builtin-random-unit-line",
   "builtin-address-misspell",
 ] as const;

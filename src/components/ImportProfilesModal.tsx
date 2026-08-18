@@ -7,6 +7,7 @@ import {
 } from "../lib/profileImport";
 import { masterProfileLabel } from "../lib/masterProfileUtils";
 import {
+  assertProfileCategoryUnlocked,
   createUncategorizedProfileCategory,
   nextProfileCategorySortOrder,
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
@@ -47,18 +48,6 @@ function buildImportCategoryOptions(
     }
   }
 
-  // Include any category ids referenced by profiles even if missing from storage.
-  for (const profile of profiles) {
-    const categoryId = profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID;
-    if (!byId.has(categoryId)) {
-      byId.set(categoryId, {
-        id: categoryId,
-        name: categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID ? uncategorized.name : categoryId,
-        createdAt: new Date().toISOString(),
-      });
-    }
-  }
-
   const options = sortProfileCategories([...byId.values()]);
   if (!masterProfileId) {
     return options;
@@ -67,7 +56,10 @@ function buildImportCategoryOptions(
   const usedUnderMaster = new Set(
     profiles
       .filter((profile) => profile.masterProfileId === masterProfileId)
-      .map((profile) => profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID),
+      .map((profile) => {
+        const categoryId = profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+        return byId.has(categoryId) ? categoryId : PROFILE_UNCATEGORIZED_CATEGORY_ID;
+      }),
   );
 
   const masterCategories = options.filter((category) => usedUnderMaster.has(category.id));
@@ -207,6 +199,7 @@ export function ImportProfilesModal({
     let categoryId: string;
     try {
       categoryId = await resolveCategorySelection(categorySelection, createCategory);
+      assertProfileCategoryUnlocked(categories, categoryId, "import profiles into it");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Category is required.");
       return;
@@ -243,7 +236,7 @@ export function ImportProfilesModal({
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div className="modal-dialog modal-dialog-wide" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
           <strong>Import profiles</strong>
@@ -254,8 +247,9 @@ export function ImportProfilesModal({
 
         <section className="card">
           <p className="muted">
-            Import Stellar AIO exports from AYCD Profile Builder (.json or semicolon-delimited .csv). Billing
-            name, email, address, phone, and card data are loaded into jig profiles.
+            Import AYCD Profile Builder JSON (billingAddress / paymentDetails) or Stellar AIO exports
+            (.json or semicolon-delimited .csv). Billing name, email, address, phone, and card data are
+            loaded into jig profiles.
           </p>
 
           {masterProfiles.length === 0 ? (
@@ -364,7 +358,7 @@ export function ImportProfilesModal({
               }}
               placeholder={
                 importFormat === "json"
-                  ? "Paste a Stellar AIO JSON array export..."
+                  ? "Paste an AYCD Profile Builder JSON array or Stellar AIO export..."
                   : "Paste a Stellar AIO CSV export with PROFILE_NAME;EMAIL;... headers..."
               }
               rows={12}

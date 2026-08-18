@@ -35,12 +35,12 @@ export function RejigPanel({
   onRejig,
   onSuccess,
 }: RejigPanelProps) {
-  const [nameJigPresetId, setNameJigPresetId] = useState("builtin-name-misspell");
+  const [nameJigPresetId, setNameJigPresetId] = useState("");
   const [nameMisspellScope, setNameMisspellScope] = useState<NameMisspellScope>("both");
   const [streetRandomLettersEnabled, setStreetRandomLettersEnabled] = useState(false);
   const [streetRandomAffixMode, setStreetRandomAffixMode] = useState<StreetAffixMode>("both");
   const [streetRandomCharCount, setStreetRandomCharCount] = useState(3);
-  const [addressJigPresetIds, setAddressJigPresetIds] = useState<string[]>(["builtin-random-unit-line"]);
+  const [addressJigPresetIds, setAddressJigPresetIds] = useState<string[]>([]);
   const [phoneJigLastFour, setPhoneJigLastFour] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -91,10 +91,10 @@ export function RejigPanel({
 
       if (result.failedCount > 0) {
         setStatus(
-          `Re-jigged ${result.updatedCount} profile(s). ${result.failedCount} could not get a unique street line 1 — try different jigs.`,
+          `Re-jigged ${result.updatedCount} profile(s). ${result.failedCount} could not get a street line 1 under the 3-per-category limit.`,
         );
       } else {
-        setStatus(`Re-jigged ${result.updatedCount} profile(s). Street line 1 is unique within each category.`);
+        setStatus(`Re-jigged ${result.updatedCount} profile(s).`);
       }
       onSuccess?.(result);
     } catch (error) {
@@ -109,8 +109,7 @@ export function RejigPanel({
       <p className="muted generate-panel-intro">
         {canRejig ? (
           <>
-            Re-jig <strong>{selectedCount}</strong> profile{selectedCount === 1 ? "" : "s"} · street line 1 must be
-            unique within each category
+            Re-jig <strong>{selectedCount}</strong> profile{selectedCount === 1 ? "" : "s"}
           </>
         ) : (
           "Selected profiles must be linked to a master profile to re-jig."
@@ -121,7 +120,7 @@ export function RejigPanel({
         <div className="generate-modal-settings">
           <div className="generate-modal-jig-row">
             <div className="generate-modal-name-jigs">
-              <Field label="Name jig" hint="OpenAI light misspell on first/last name">
+              <Field label="Name jig" hint="One fat-finger typo per selected name part">
                 <div className="jig-option-block">
                   <select value={nameJigPresetId} onChange={(event) => setNameJigPresetId(event.target.value)}>
                     <option value="">None (keep current name)</option>
@@ -145,7 +144,7 @@ export function RejigPanel({
 
             <Field
               label="Address jigs"
-              hint="Street letters, apt/suite line 2, misspell"
+              hint="Street letters, type combo, apt/suite line 2, misspell"
               className="generate-modal-address-jigs"
             >
               <div className="address-jig-options">

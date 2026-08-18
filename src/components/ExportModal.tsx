@@ -1,25 +1,31 @@
 import { ExportPanel } from "./ExportPanel";
-import type { ExportTemplate } from "../lib/types";
+import type { ExportTemplate, MasterProfile, ProfileCategory } from "../lib/types";
 
 interface ExportModalProps {
   open: boolean;
   selectedProfileIds: string[];
   exportTemplates: ExportTemplate[];
+  masterProfiles: MasterProfile[];
+  profileCategories: ProfileCategory[];
   onClose: () => void;
   onSaveTemplate: (template: ExportTemplate) => Promise<void>;
+  onLastAction?: (label: string) => void;
 }
 
 export function ExportModal({
   open,
   selectedProfileIds,
   exportTemplates,
+  masterProfiles,
+  profileCategories,
   onClose,
   onSaveTemplate,
+  onLastAction,
 }: ExportModalProps) {
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="modal-dialog export-form-modal"
         onClick={(event) => event.stopPropagation()}
@@ -39,7 +45,10 @@ export function ExportModal({
           <ExportPanel
             selectedProfileIds={selectedProfileIds}
             exportTemplates={exportTemplates}
+            masterProfiles={masterProfiles}
+            profileCategories={profileCategories}
             onSaveTemplate={onSaveTemplate}
+            onLastAction={onLastAction}
           />
         </div>
       </div>

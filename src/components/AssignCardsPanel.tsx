@@ -1,20 +1,25 @@
-import { useEffect, useMemo, useState } from "react";
-import { formatCardNumberDisplay } from "../lib/creditCardUtils";
+import { useMemo, useState } from "react";
+import { filterAssignablePoolCards } from "../lib/creditCardUtils";
 import {
   confirmReplaceExistingCards,
-  listUnassignedCreditCards,
+  countCompletableBatchAssignments,
+  listAvailableCreditCardsForProfiles,
+  listDisplayCardsForBatchAssign,
   pickCardsForMassAssign,
+  validateCardAssignments,
 } from "../lib/assignCards";
 import {
   buildProfileAssignCategories,
   resolveAssignProfileIds,
 } from "../lib/profileAssignTree";
-import type { AssignCardsOptions, CreditCard, MasterProfile, ProfileSummary } from "../lib/types";
-import { CardBrandIcon } from "./CardBrandIcon";
+import { sortProfilesByName } from "../lib/profileNameUtils";
+import type { AssignCardsOptions, CardCategory, CreditCard, MasterProfile, ProfileSummary } from "../lib/types";
+import { CardAssignTree } from "./CardAssignTree";
 import { ProfileAssignTree } from "./ProfileAssignTree";
 
 interface AssignCardsPanelProps {
   cards: CreditCard[];
+  cardCategories: CardCategory[];
   profiles: ProfileSummary[];
   masterProfiles: MasterProfile[];
   lockedProfileIds?: string[];
@@ -25,6 +30,7 @@ interface AssignCardsPanelProps {
 
 export function AssignCardsPanel({
   cards,
+  cardCategories,
   profiles,
   masterProfiles,
   lockedProfileIds,
@@ -32,6 +38,7 @@ export function AssignCardsPanel({
   onAssign,
   onSuccess,
 }: AssignCardsPanelProps) {
+  const assignableCards = useMemo(() => filterAssignablePoolCards(cards), [cards]);
   const profilesBatchMode = Boolean(lockedProfileIds?.length) && !lockedCreditCardIds?.length;
   const cardsBulkMode = Boolean(lockedCreditCardIds?.length);
   const profileLimit = lockedProfileIds?.length ?? 0;
@@ -83,11 +90,6 @@ export function AssignCardsPanel({
       .filter((profile): profile is ProfileSummary => Boolean(profile));
   }, [lockedProfileIds, profiles]);
 
-  const availableCards = useMemo(
-    () => (profilesBatchMode ? listUnassignedCreditCards(cards, profiles) : cards),
-    [profilesBatchMode, cards, profiles],
-  );
-
   const targetProfiles = useMemo(() => {
     const profileMap = new Map(profiles.map((profile) => [profile.id, profile]));
     return profileIds
@@ -95,33 +97,44 @@ export function AssignCardsPanel({
       .filter((profile): profile is ProfileSummary => Boolean(profile));
   }, [profileIds, profiles]);
 
-  useEffect(() => {
-    if (!profilesBatchMode || profileLimit === 0) return;
-    setSelectedCreditCardIds(pickCardsForMassAssign(profileLimit, cards, profiles));
-  }, [profilesBatchMode, profileLimit, cards, profiles]);
+  const batchTargetProfiles = profilesBatchMode ? lockedProfiles : targetProfiles;
 
-  const sortedProfiles = useMemo(
-    () => [...profiles].sort((a, b) => a.name.localeCompare(b.name)),
-    [profiles],
-  );
+  const availableCards = useMemo(() => {
+    if (profilesBatchMode) {
+      return listDisplayCardsForBatchAssign(
+        assignableCards,
+        batchTargetProfiles,
+        profiles,
+        selectedCreditCardIds,
+      );
+    }
+    if (targetProfiles.length === 0) {
+      return assignableCards;
+    }
+    return listAvailableCreditCardsForProfiles(assignableCards, targetProfiles, profiles);
+  }, [
+    profilesBatchMode,
+    assignableCards,
+    batchTargetProfiles,
+    targetProfiles,
+    profiles,
+    selectedCreditCardIds,
+  ]);
+
+  const completableBatchCount = useMemo(() => {
+    if (!profilesBatchMode || batchTargetProfiles.length === 0) {
+      return 0;
+    }
+    return countCompletableBatchAssignments(batchTargetProfiles, assignableCards, profiles);
+  }, [profilesBatchMode, batchTargetProfiles, assignableCards, profiles]);
+
+  const sortedProfiles = useMemo(() => sortProfilesByName(profiles), [profiles]);
 
   const toggleProfile = (id: string) => {
     if (lockedProfileIds || cardsBulkMode) return;
     setSelectedProfileIds((current) =>
       current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
     );
-  };
-
-  const toggleBatchCard = (id: string) => {
-    setSelectedCreditCardIds((current) => {
-      if (current.includes(id)) {
-        return current.filter((item) => item !== id);
-      }
-      if (current.length >= profileLimit) {
-        return current;
-      }
-      return [...current, id];
-    });
   };
 
   const cardsReady = profilesBatchMode
@@ -133,12 +146,20 @@ export function AssignCardsPanel({
       : Boolean(creditCardId);
 
   const autoFillCards = () => {
-    setSelectedCreditCardIds(pickCardsForMassAssign(profileLimit, cards, profiles));
+    const targets = profilesBatchMode ? lockedProfiles : targetProfiles;
+    setSelectedCreditCardIds(pickCardsForMassAssign(targets, assignableCards, profiles));
   };
 
   const runCardsBulkAssign = async () => {
     if (resolvedProfileIds.length === 0) {
       setStatus("Select at least one profile or parent category.");
+      return;
+    }
+    const blockedCards = lockedCardIds.filter(
+      (id) => !assignableCards.some((card) => card.id === id),
+    );
+    if (blockedCards.length > 0) {
+      setStatus("One or more selected cards are marked Not good and cannot be assigned.");
       return;
     }
     if (lockedCardIds.length > 1 && resolvedProfileIds.length !== lockedCardIds.length) {
@@ -153,7 +174,7 @@ export function AssignCardsPanel({
       .map((id) => profileMap.get(id))
       .filter((profile): profile is ProfileSummary => Boolean(profile));
 
-    if (!confirmReplaceExistingCards(bulkTargets)) {
+    if (!confirmReplaceExistingCards(bulkTargets, cards)) {
       return;
     }
 
@@ -184,13 +205,25 @@ export function AssignCardsPanel({
       return;
     }
 
-    if (!confirmReplaceExistingCards(targetProfiles)) {
+    if (!confirmReplaceExistingCards(targetProfiles, cards)) {
       return;
     }
 
     if (profilesBatchMode) {
       if (selectedCreditCardIds.length !== profileLimit) {
         setStatus(`Select ${profileLimit} card${profileLimit === 1 ? "" : "s"} (one per profile).`);
+        return;
+      }
+
+      const batchProfileIds = lockedProfileIds ?? profileIds;
+      const validationError = validateCardAssignments(
+        batchProfileIds,
+        selectedCreditCardIds,
+        assignableCards,
+        profiles,
+      );
+      if (validationError) {
+        setStatus(validationError);
         return;
       }
 
@@ -216,6 +249,17 @@ export function AssignCardsPanel({
       return;
     }
 
+    const validationError = validateCardAssignments(
+      profileIds,
+      profileIds.map(() => creditCardId),
+      assignableCards,
+      profiles,
+    );
+    if (validationError) {
+      setStatus(validationError);
+      return;
+    }
+
     setBusy(true);
     setStatus(null);
     try {
@@ -235,14 +279,14 @@ export function AssignCardsPanel({
       return;
     }
     if (availableCards.length < profileLimit) {
-      setStatus(`Need ${profileLimit} unassigned cards — only ${availableCards.length} available.`);
+      setStatus(`Need ${profileLimit} assignable cards — only ${completableBatchCount} can be assigned in order.`);
       return;
     }
-    if (!confirmReplaceExistingCards(targetProfiles)) {
+    if (!confirmReplaceExistingCards(targetProfiles, cards)) {
       return;
     }
 
-    const cardIds = pickCardsForMassAssign(profileLimit, cards, profiles);
+    const cardIds = pickCardsForMassAssign(lockedProfiles, assignableCards, profiles);
     setSelectedCreditCardIds(cardIds);
     setBusy(true);
     setStatus(null);
@@ -287,8 +331,9 @@ export function AssignCardsPanel({
       ) : profilesBatchMode ? (
         <>
           <p className="muted assign-panel-intro">
-            One unassigned card per profile, matched in table order. Cards are auto-filled from the pool — adjust
-            checkboxes or use Mass assign.
+            Select one card per profile in list order. Each pick applies to the next profile; only cards
+            valid for that slot are shown. Profiles without an account site can only use cards not assigned
+            anywhere else; named sites (Target, Walmart) share account-group cards one per site.
           </p>
           <p className="muted">
             Assigning to <strong>{profileLimit}</strong> profile{profileLimit === 1 ? "" : "s"}:
@@ -302,58 +347,34 @@ export function AssignCardsPanel({
           </ol>
 
           <div className="assign-cards-header">
-            <h3 className="subsection-title">Available cards</h3>
+            <h3 className="subsection-title">
+              {selectedCreditCardIds.length < profileLimit
+                ? `Choose card for profile ${selectedCreditCardIds.length + 1}`
+                : "Selected cards"}
+            </h3>
             <span className={`assign-selection-count${cardsReady ? " assign-selection-count-ready" : ""}`}>
               {selectedCreditCardIds.length}/{profileLimit} cards selected
             </span>
           </div>
 
-          {availableCards.length === 0 ? (
-            <p className="muted">No unassigned cards in the pool. Add cards on the Cards tab.</p>
-          ) : availableCards.length < profileLimit ? (
+          {completableBatchCount === 0 ? (
+            <p className="muted">No assignable cards in the pool for these profiles. Add cards on the Cards tab.</p>
+          ) : completableBatchCount < profileLimit ? (
             <p className="muted status-inline">
-              Only {availableCards.length} unassigned card{availableCards.length === 1 ? "" : "s"} available — need{" "}
-              {profileLimit}.
+              Only {completableBatchCount} card{completableBatchCount === 1 ? "" : "s"} can be assigned in order —
+              need {profileLimit}.
             </p>
           ) : null}
 
           {availableCards.length > 0 ? (
-            <div className="assign-option-list card-pool-list-compact">
-              {availableCards.map((card) => {
-                const selectedIndex = selectedCreditCardIds.indexOf(card.id);
-                const isSelected = selectedIndex >= 0;
-                const atLimit = selectedCreditCardIds.length >= profileLimit;
-                return (
-                  <label
-                    key={card.id}
-                    className={`assign-option-row card-pool-row${isSelected ? " card-pool-row-editing" : ""}${!isSelected && atLimit ? " assign-option-row-disabled" : ""}`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={isSelected}
-                      disabled={!isSelected && atLimit}
-                      onChange={() => toggleBatchCard(card.id)}
-                    />
-                    <span className="assign-option-content">
-                      {isSelected ? (
-                        <span className="assign-card-order">{selectedIndex + 1}</span>
-                      ) : (
-                        <span className="card-pool-col-brand">
-                          <CardBrandIcon brand={card.brand} size="sm" />
-                        </span>
-                      )}
-                      <span className="assign-option-label">
-                        {card.profileName}
-                        <span className="muted card-pool-number">
-                          {" "}
-                          · {formatCardNumberDisplay(card.number, card.brand) || "—"}
-                        </span>
-                      </span>
-                    </span>
-                  </label>
-                );
-              })}
-            </div>
+            <CardAssignTree
+              cards={availableCards}
+              categories={cardCategories}
+              selectionMode="multiple"
+              selectedCardIds={selectedCreditCardIds}
+              selectionLimit={profileLimit}
+              onSelectedCardIdsChange={setSelectedCreditCardIds}
+            />
           ) : null}
         </>
       ) : (
@@ -392,31 +413,16 @@ export function AssignCardsPanel({
           )}
 
           <h3 className="subsection-title">Card (pick one)</h3>
-          {cards.length === 0 ? (
-            <p className="muted">No cards in pool yet. Add some on the Cards tab.</p>
+          {assignableCards.length === 0 ? (
+            <p className="muted">No Good-status cards in pool. Add cards or mark existing cards as Good on the Cards tab.</p>
           ) : (
-            <div className="assign-option-list">
-              {cards.map((card) => (
-                <label key={card.id} className="assign-option-row">
-                  <input
-                    type="radio"
-                    name="assign-card"
-                    checked={selectedCreditCardId === card.id}
-                    onChange={() => setSelectedCreditCardId(card.id)}
-                  />
-                  <span className="assign-option-content">
-                    <CardBrandIcon brand={card.brand} size="sm" />
-                    <span className="assign-option-label">
-                      {card.profileName}
-                      <span className="muted card-pool-number">
-                        {" "}
-                        · {formatCardNumberDisplay(card.number, card.brand) || "—"}
-                      </span>
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </div>
+            <CardAssignTree
+              cards={assignableCards}
+              categories={cardCategories}
+              selectionMode="single"
+              selectedCardId={selectedCreditCardId}
+              onSelectedCardIdChange={setSelectedCreditCardId}
+            />
           )}
         </>
       )}
@@ -429,7 +435,7 @@ export function AssignCardsPanel({
           <button
             type="button"
             className="btn-secondary"
-            disabled={busy || profileLimit === 0 || availableCards.length < profileLimit}
+            disabled={busy || profileLimit === 0 || completableBatchCount < profileLimit}
             onClick={() => void runMassAssign()}
           >
             Mass assign ({profileLimit})

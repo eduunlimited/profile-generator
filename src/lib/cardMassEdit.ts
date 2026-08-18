@@ -11,6 +11,7 @@ export type CardEditField =
   | "cvv"
   | "categoryId"
   | "accountStatus"
+  | "assignmentScope"
   | "notes";
 
 export type CardMixedFields = Record<CardEditField, boolean>;
@@ -26,6 +27,7 @@ export const CARD_EDIT_FIELDS: CardEditField[] = [
   "cvv",
   "categoryId",
   "accountStatus",
+  "assignmentScope",
   "notes",
 ];
 
@@ -39,6 +41,7 @@ export function emptyCardTouchedFields(): CardTouchedFields {
     cvv: false,
     categoryId: false,
     accountStatus: false,
+    assignmentScope: false,
     notes: false,
   };
 }
@@ -72,6 +75,7 @@ export function buildCardMassEditDraft(
     cvv: !valuesMatch(selected, (card) => card.cvv),
     categoryId: !valuesMatch(selected, (card) => card.categoryId || CARD_UNCATEGORIZED_CATEGORY_ID),
     accountStatus: !valuesMatch(selected, (card) => card.accountStatus),
+    assignmentScope: !valuesMatch(selected, (card) => card.assignmentScope ?? "account_group"),
     notes: !valuesMatch(selected, (card) => card.notes.trim()),
   };
 
@@ -84,6 +88,9 @@ export function buildCardMassEditDraft(
     cvv: mixedFields.cvv ? "" : first.cvv,
     categoryId: mixedFields.categoryId ? CARD_UNCATEGORIZED_CATEGORY_ID : first.categoryId,
     accountStatus: mixedFields.accountStatus ? "good" : first.accountStatus,
+    assignmentScope: mixedFields.assignmentScope
+      ? "account_group"
+      : (first.assignmentScope ?? "account_group"),
     notes: mixedFields.notes ? "" : first.notes,
     createdAt: first.createdAt,
   };
@@ -117,6 +124,9 @@ export function applyCardMassEditPatch(
     categoryId:
       touchedFields.categoryId && categoryId ? categoryId : card.categoryId || CARD_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: touchedFields.accountStatus ? draft.accountStatus : card.accountStatus,
+    assignmentScope: touchedFields.assignmentScope
+      ? (draft.assignmentScope ?? "account_group")
+      : (card.assignmentScope ?? "account_group"),
     notes: touchedFields.notes ? draft.notes.trim() : card.notes,
   };
 }
@@ -135,6 +145,7 @@ function emptyMassEditCard(): CreditCard {
     cvv: "",
     categoryId: CARD_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: "good",
+    assignmentScope: "account_group",
     notes: "",
     createdAt: new Date().toISOString(),
   };

@@ -1,31 +1,47 @@
 import { useEffect, useMemo, useState } from "react";
-import { exportProfiles, previewExport } from "../lib/exportEngine";
-import type { ExportFormat, ExportOptions, ExportTemplate, Profile } from "../lib/types";
+import {
+  buildExportFilename,
+  buildExportFilenameContext,
+  exportProfiles,
+  previewExport,
+} from "../lib/exportEngine";
+import type {
+  ExportFormat,
+  ExportOptions,
+  ExportTemplate,
+  MasterProfile,
+  Profile,
+  ProfileCategory,
+} from "../lib/types";
 import { getProfile } from "../lib/api";
 import { saveTextFile } from "../lib/saveFile";
 import { copyToClipboard } from "../hooks/useAppData";
+import { formatError } from "../lib/errorUtils";
 import { Field } from "./ui";
 
 interface ExportPanelProps {
   selectedProfileIds: string[];
   exportTemplates: ExportTemplate[];
+  masterProfiles: MasterProfile[];
+  profileCategories: ProfileCategory[];
   onSaveTemplate: (template: ExportTemplate) => Promise<void>;
+  onLastAction?: (label: string) => void;
 }
 
-const GENERIC_FORMATS: { value: ExportFormat; label: string; filename: string }[] = [
-  { value: "json", label: "JSON", filename: "profiles.json" },
-  { value: "jsonl", label: "JSON Lines", filename: "profiles.jsonl" },
-  { value: "csv", label: "CSV", filename: "profiles.csv" },
-  { value: "tsv", label: "TSV", filename: "profiles.tsv" },
-  { value: "yaml", label: "YAML", filename: "profiles.yaml" },
-  { value: "xml", label: "XML", filename: "profiles.xml" },
-  { value: "text", label: "Plain text", filename: "profiles.txt" },
-  { value: "template", label: "Custom template", filename: "custom" },
+const GENERIC_FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: "json", label: "JSON" },
+  { value: "jsonl", label: "JSON Lines" },
+  { value: "csv", label: "CSV" },
+  { value: "tsv", label: "TSV" },
+  { value: "yaml", label: "YAML" },
+  { value: "xml", label: "XML" },
+  { value: "text", label: "Plain text" },
+  { value: "template", label: "Custom template" },
 ];
 
-const BOT_FORMATS: { value: ExportFormat; label: string; filename: string }[] = [
-  { value: "aycd", label: "AYCD", filename: "aycd.json" },
-  { value: "stellar_aio", label: "Stellar AIO", filename: "stellar_aio.json" },
+const BOT_FORMATS: { value: ExportFormat; label: string }[] = [
+  { value: "aycd", label: "AYCD" },
+  { value: "stellar_aio", label: "Stellar AIO" },
 ];
 
 const DEFAULT_FORMATS: ExportFormat[] = ["aycd", "stellar_aio"];
@@ -33,7 +49,10 @@ const DEFAULT_FORMATS: ExportFormat[] = ["aycd", "stellar_aio"];
 export function ExportPanel({
   selectedProfileIds,
   exportTemplates,
+  masterProfiles,
+  profileCategories,
   onSaveTemplate,
+  onLastAction,
 }: ExportPanelProps) {
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [selectedFormats, setSelectedFormats] = useState<ExportFormat[]>(DEFAULT_FORMATS);
@@ -55,9 +74,44 @@ export function ExportPanel({
     body: '{\n  "email": "{{login.email}}"\n}',
   });
   const [status, setStatus] = useState<string | null>(null);
+  const [profilesLoading, setProfilesLoading] = useState(false);
 
   useEffect(() => {
-    void Promise.all(selectedProfileIds.map((id) => getProfile(id))).then(setProfiles);
+    let cancelled = false;
+    if (selectedProfileIds.length === 0) {
+      setProfiles([]);
+      setProfilesLoading(false);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    setProfilesLoading(true);
+    void (async () => {
+      const results = await Promise.all(
+        selectedProfileIds.map(async (id) => {
+          try {
+            return await getProfile(id);
+          } catch (error) {
+            console.error(`Failed to load profile ${id} for export:`, error);
+            return null;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const loaded = results.filter((profile): profile is Profile => profile !== null);
+      setProfiles(loaded);
+      setProfilesLoading(false);
+      if (loaded.length === 0) {
+        setStatus("Could not load the selected profiles for export.");
+      } else if (loaded.length < selectedProfileIds.length) {
+        setStatus(`Loaded ${loaded.length} of ${selectedProfileIds.length} selected profiles.`);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedProfileIds]);
 
   useEffect(() => {
@@ -66,6 +120,11 @@ export function ExportPanel({
       setPreviewFormat(selectedFormats[0]);
     }
   }, [previewFormat, selectedFormats]);
+
+  const filenameContext = useMemo(
+    () => buildExportFilenameContext(profiles, masterProfiles, profileCategories),
+    [masterProfiles, profileCategories, profiles],
+  );
 
   const options = useMemo<ExportOptions>(
     () => ({
@@ -89,11 +148,11 @@ export function ExportPanel({
   const preview = useMemo(() => {
     if (profiles.length === 0) return "";
     try {
-      return previewExport(profiles, previewOptions, exportTemplates);
+      return previewExport(profiles, previewOptions, exportTemplates, filenameContext);
     } catch (error) {
       return error instanceof Error ? error.message : "Preview failed.";
     }
-  }, [exportTemplates, previewOptions, profiles]);
+  }, [exportTemplates, filenameContext, previewOptions, profiles]);
 
   const toggleFormat = (format: ExportFormat) => {
     setSelectedFormats((current) =>
@@ -117,13 +176,25 @@ export function ExportPanel({
       return;
     }
     try {
-      const files = exportProfiles(profiles, options, exportTemplates);
+      const files = exportProfiles(profiles, options, exportTemplates, filenameContext);
+      const saved: string[] = [];
+      const cancelled: string[] = [];
       for (const file of files) {
-        await saveTextFile(file.filename, file.content);
+        const wrote = await saveTextFile(file.filename, file.content);
+        if (wrote) saved.push(file.filename);
+        else cancelled.push(file.filename);
       }
-      setStatus(`Exported ${files.length} file(s): ${files.map((file) => file.filename).join(", ")}`);
+      if (saved.length === 0) {
+        setStatus(cancelled.length > 0 ? "Export cancelled." : "Nothing to export.");
+        return;
+      }
+      const cancelledNote =
+        cancelled.length > 0 ? ` (${cancelled.length} save dialog${cancelled.length === 1 ? "" : "s"} cancelled)` : "";
+      const message = `Exported ${saved.length} file(s): ${saved.join(", ")}${cancelledNote}`;
+      setStatus(message);
+      onLastAction?.(message);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Export failed.");
+      setStatus(formatError(error, "Export failed."));
     }
   };
 
@@ -147,6 +218,12 @@ export function ExportPanel({
   };
 
   const usesBotFormats = selectedFormats.some((format) => format === "aycd" || format === "stellar_aio");
+  const selectedTemplate = exportTemplates.find((template) => template.id === templateId);
+  const sampleFilename = (format: ExportFormat) =>
+    buildExportFilename(format, filenameContext, {
+      templateExtension: format === "template" ? selectedTemplate?.extension : undefined,
+    });
+
 
   return (
     <div className="panel-grid export-panel-grid">
@@ -166,7 +243,7 @@ export function ExportPanel({
                 checked={selectedFormats.includes(item.value)}
                 onChange={() => toggleFormat(item.value)}
               />
-              {item.label} ({item.filename})
+              {item.label} ({sampleFilename(item.value)})
             </label>
           ))}
         </div>
@@ -180,7 +257,7 @@ export function ExportPanel({
                 checked={selectedFormats.includes(item.value)}
                 onChange={() => toggleFormat(item.value)}
               />
-              {item.label} ({item.filename})
+              {item.label} ({sampleFilename(item.value)})
             </label>
           ))}
         </div>
@@ -256,7 +333,9 @@ export function ExportPanel({
         <div className="card-header">
           <h2>Preview</h2>
         </div>
-        <pre className="preview-box">{preview || "No profiles to preview."}</pre>
+        <pre className="preview-box">
+          {profilesLoading ? "Loading profiles…" : preview || "No profiles to preview."}
+        </pre>
       </section>
 
       <section className="card">

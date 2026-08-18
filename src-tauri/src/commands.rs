@@ -127,6 +127,25 @@ pub fn delete_profile(state: State<DbState>, id: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn replace_profiles(state: State<DbState>, profiles: Vec<Value>) -> Result<(), String> {
+    with_connection(&state, |connection| {
+        connection
+            .execute("DELETE FROM profiles", [])
+            .map_err(|error| error.to_string())?;
+        for profile in profiles {
+            let id = profile
+                .get("id")
+                .and_then(|item| item.as_str())
+                .ok_or("Profile id is required")?
+                .to_string();
+            let data = serde_json::to_string(&profile).map_err(|error| error.to_string())?;
+            db::upsert_json(connection, "profiles", &id, &data, None)?;
+        }
+        Ok(())
+    })
+}
+
+#[tauri::command]
 pub fn list_jig_presets(state: State<DbState>) -> Result<Vec<Value>, String> {
     with_connection(&state, |connection| {
         let rows = db::list_json(connection, "jig_presets")?;
@@ -193,16 +212,23 @@ pub fn seed_defaults(
     export_templates: Vec<Value>,
 ) -> Result<(), String> {
     with_connection(&state, |connection| {
-        if db::count_rows(connection, "jig_presets")? == 0 {
-            for preset in jig_presets {
-                let id = preset
-                    .get("id")
-                    .and_then(|item| item.as_str())
-                    .ok_or("Preset id is required")?
-                    .to_string();
-                let data = serde_json::to_string(&preset).map_err(|error| error.to_string())?;
-                db::upsert_json(connection, "jig_presets", &id, &data, None)?;
+        let existing_preset_ids: std::collections::HashSet<String> = db::list_json(connection, "jig_presets")?
+            .iter()
+            .filter_map(|raw| serde_json::from_str::<Value>(raw).ok())
+            .filter_map(|value| value.get("id")?.as_str().map(|id| id.to_string()))
+            .collect();
+
+        for preset in jig_presets {
+            let id = preset
+                .get("id")
+                .and_then(|item| item.as_str())
+                .ok_or("Preset id is required")?
+                .to_string();
+            if existing_preset_ids.contains(&id) {
+                continue;
             }
+            let data = serde_json::to_string(&preset).map_err(|error| error.to_string())?;
+            db::upsert_json(connection, "jig_presets", &id, &data, None)?;
         }
 
         if db::count_rows(connection, "export_templates")? == 0 {
@@ -373,6 +399,90 @@ pub async fn openai_chat_completion(
         .filter(|content| !content.is_empty())
         .map(str::to_string)
         .ok_or_else(|| "OpenAI returned an empty response.".to_string())
+}
+
+#[tauri::command]
+pub async fn test_proxy(proxy_server: String) -> Result<crate::browser::ProxyTestResult, String> {
+    crate::browser::test_proxy(proxy_server).await
+}
+
+#[tauri::command]
+pub async fn test_imap(settings: crate::imap::ImapSettings) -> Result<crate::imap::ImapTestResult, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::imap::test_imap(settings))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn fetch_imap_inbox(
+    settings: crate::imap::ImapSettings,
+    limit: Option<u32>,
+) -> Result<Vec<crate::imap::ImapMessage>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::imap::fetch_imap_inbox(settings, limit))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn launch_browser_session(
+    app: AppHandle,
+    registry: tauri::State<'_, crate::browser::BrowserSessionRegistry>,
+    request: crate::browser::BrowserSessionLaunchRequest,
+) -> Result<crate::browser::BrowserSessionLaunchResult, String> {
+    let registry = registry.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::browser::launch_browser_session(&app, &registry, request)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn list_running_browser_sessions(
+    app: AppHandle,
+    registry: tauri::State<'_, crate::browser::BrowserSessionRegistry>,
+) -> Vec<String> {
+    crate::browser::list_running_browser_sessions(&app, registry.inner())
+}
+
+#[tauri::command]
+pub async fn check_camoufox(
+    app: AppHandle,
+    python_path: Option<String>,
+) -> Result<crate::browser::CamoufoxCheckResult, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::browser::check_camoufox(&app, python_path))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn bundled_runtime_info(
+    app: AppHandle,
+) -> crate::browser::BundledRuntimeInfo {
+    crate::browser::bundled_runtime_info(&app)
+}
+
+#[tauri::command]
+pub async fn activate_license(
+    app: AppHandle,
+    license_key: String,
+) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::activate_license(&app, license_key).await
+}
+
+#[tauri::command]
+pub async fn check_license(app: AppHandle) -> Result<crate::license::LicenseStatus, String> {
+    crate::license::check_license(&app).await
+}
+
+#[tauri::command]
+pub async fn clear_license(app: AppHandle) -> Result<(), String> {
+    crate::license::clear_license(&app).await
+}
+
+#[tauri::command]
+pub fn licensing_required() -> bool {
+    crate::license::licensing_required()
 }
 
 pub fn init_db(app: &AppHandle, state: &DbState) -> Result<(), String> {

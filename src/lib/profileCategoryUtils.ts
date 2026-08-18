@@ -48,8 +48,47 @@ export function reorderCategoryIds(currentOrder: string[], draggedId: string, ta
   return next;
 }
 
-export function profileCategoryIdsInUse(profiles: ProfileSummary[]): Set<string> {
-  return new Set(profiles.map((profile) => profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID));
+export function profileCategoryId(profile: Pick<ProfileSummary, "categoryId">): string {
+  return profile.categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+}
+
+export function isProfileCategoryLocked(
+  categories: Array<Pick<ProfileCategory, "id" | "locked">>,
+  categoryId?: string,
+): boolean {
+  const id = categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+  return Boolean(categories.find((category) => category.id === id)?.locked);
+}
+
+export function assertProfileCategoryUnlocked(
+  categories: Array<Pick<ProfileCategory, "id" | "name" | "locked">>,
+  categoryId: string | undefined,
+  action: string,
+): void {
+  if (!isProfileCategoryLocked(categories, categoryId)) {
+    return;
+  }
+  const id = categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+  const name = categories.find((category) => category.id === id)?.name ?? "This category";
+  throw new Error(`${name} is locked. Unlock it before you ${action}.`);
+}
+
+export function assertProfilesUnlocked(
+  categories: Array<Pick<ProfileCategory, "id" | "name" | "locked">>,
+  profiles: Array<Pick<ProfileSummary, "categoryId">>,
+  action: string,
+): void {
+  for (const profile of profiles) {
+    assertProfileCategoryUnlocked(categories, profile.categoryId, action);
+  }
+}
+
+export function createMissingProfileCategory(id: string): ProfileCategory {
+  return {
+    id,
+    name: "Missing category",
+    createdAt: new Date(0).toISOString(),
+  };
 }
 
 export function categoriesWithProfiles(
@@ -58,8 +97,18 @@ export function categoriesWithProfiles(
 ): ProfileCategory[] {
   const counts = new Map<string, number>();
   for (const profile of profiles) {
-    const categoryId = profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+    const categoryId = profileCategoryId(profile);
     counts.set(categoryId, (counts.get(categoryId) ?? 0) + 1);
   }
-  return sortProfileCategories(categories.filter((category) => (counts.get(category.id) ?? 0) > 0));
+  const knownIds = new Set(categories.map((category) => category.id));
+  const resolved = [...categories];
+
+  if (
+    (counts.get(PROFILE_UNCATEGORIZED_CATEGORY_ID) ?? 0) > 0 &&
+    !knownIds.has(PROFILE_UNCATEGORIZED_CATEGORY_ID)
+  ) {
+    resolved.push(createUncategorizedProfileCategory());
+  }
+
+  return sortProfileCategories(resolved.filter((category) => (counts.get(category.id) ?? 0) > 0));
 }

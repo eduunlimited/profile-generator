@@ -4,7 +4,7 @@ export const BUILTIN_JIG_PRESETS: JigPreset[] = [
   {
     id: "builtin-name-misspell",
     name: "Name misspell",
-    description: "Light OpenAI misspell on first/last name (keyboard-style typos, letters only).",
+    description: "One fat-finger typo per name part (extra letter or adjacent key). First letter stays the same.",
     nameRules: [{ type: "nameMisspell", charCount: 1 }],
     addressRules: [],
   },
@@ -39,9 +39,18 @@ export const BUILTIN_JIG_PRESETS: JigPreset[] = [
     ],
   },
   {
+    id: "builtin-street-type-combo",
+    name: "Street type combo (PKC/Target)",
+    description:
+      "Swaps street type (st/street, dr/drive, ave/avenue, pl/place) and direction form (SE/Southeast) on line 1.",
+    nameRules: [],
+    addressRules: [{ type: "streetTypeCombo" }, { type: "splitLines" }],
+  },
+  {
     id: "builtin-random-unit-line",
     name: "Random apt/suite line",
-    description: "Line 2 uses Apt, Apartment, Ste, Suite, #, or Unit with a random number.",
+    description:
+      "Line 2 uses Apt, Apartment, Ste, Suite, #, Unit, Room, Door, or 1A–Z. Numbers are 1–100.",
     nameRules: [],
     addressRules: [{ type: "randomUnitLine" }, { type: "splitLines" }],
   },

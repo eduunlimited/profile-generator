@@ -1,0 +1,8 @@
+[project]
+name = "profile-generator-camoufox"
+version = "0.2.7"
+description = "Camoufox launcher for profile-generator browser sessions"
+requires-python = ">=3.11"
+dependencies = [
+  "camoufox[geoip]>=0.4.11",
+]

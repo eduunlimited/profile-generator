@@ -1,14 +1,98 @@
 import { stringify as yamlStringify } from "yaml";
 import { exportProfileAddress, exportProfileName } from "./exportProfileFields";
 import { exportAycdJson, exportStellarAioJson } from "./botExportFormats";
+import { masterProfileLabel } from "./masterProfileUtils";
+import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
 import type {
   ExportFormat,
   ExportOptions,
   ExportTemplate,
+  MasterProfile,
   Profile,
+  ProfileCategory,
 } from "./types";
 
+export interface ExportFilenameContext {
+  masterName: string;
+  categoryName: string;
+  exportedAt?: Date;
+}
+
+function uniqueSortedNames(names: string[]): string[] {
+  return [...new Set(names.map((name) => name.trim()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" }),
+  );
+}
+
+function sanitizeFilenameSegment(value: string, fallback: string): string {
+  const cleaned = value
+    .replace(/[<>:"/\\|?*]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[. ]+$/g, "");
+  return cleaned || fallback;
+}
+
+function exportDateStamp(date = new Date()): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function botFormatFilenameLabel(format: ExportFormat): string | undefined {
+  if (format === "aycd") return "AYCD";
+  if (format === "stellar_aio") return "Stellar_AIO";
+  return undefined;
+}
+
 type FlatProfile = Record<string, string>;
+
+export function buildExportFilenameContext(
+  profiles: Profile[],
+  masters: MasterProfile[] = [],
+  categories: ProfileCategory[] = [],
+): ExportFilenameContext {
+  const masterById = new Map(masters.map((master) => [master.id, master]));
+  const categoryById = new Map(categories.map((category) => [category.id, category]));
+
+  const masterNames = uniqueSortedNames(
+    profiles.map((profile) => {
+      if (!profile.masterProfileId) return "";
+      const master = masterById.get(profile.masterProfileId);
+      return master ? masterProfileLabel(master) : "";
+    }),
+  );
+  const categoryNames = uniqueSortedNames(
+    profiles.map((profile) => {
+      const categoryId = profile.categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+      return categoryById.get(categoryId)?.name.trim() || (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID ? "Uncategorized" : "");
+    }),
+  );
+
+  return {
+    masterName: masterNames.join(" + ") || "No Master",
+    categoryName: categoryNames.join(" + ") || "Uncategorized",
+  };
+}
+
+export function buildExportFilename(
+  format: ExportFormat,
+  context: ExportFilenameContext,
+  extras: { profileStem?: string; templateExtension?: string } = {},
+): string {
+  const parts = [
+    sanitizeFilenameSegment(context.masterName, "No Master"),
+    sanitizeFilenameSegment(context.categoryName, "Uncategorized"),
+    exportDateStamp(context.exportedAt),
+  ];
+  const botLabel = botFormatFilenameLabel(format);
+  if (botLabel) parts.push(botLabel);
+  if (extras.profileStem) {
+    parts.push(sanitizeFilenameSegment(extras.profileStem, "profile"));
+  }
+  return `${parts.join("_")}${extensionForFormat(format, extras.templateExtension)}`;
+}
 
 function escapeCsv(value: string): string {
   if (/[",\n]/.test(value)) {
@@ -139,11 +223,17 @@ export function exportProfiles(
   profiles: Profile[],
   options: ExportOptions,
   templates: ExportTemplate[] = [],
+  filenameContext?: ExportFilenameContext,
 ): { filename: string; content: string; mimeType: string }[] {
   if (profiles.length === 0 || options.formats.length === 0) return [];
 
+  const context: ExportFilenameContext = {
+    ...(filenameContext ?? buildExportFilenameContext(profiles)),
+    exportedAt: filenameContext?.exportedAt ?? new Date(),
+  };
+
   return options.formats.flatMap((format) =>
-    exportProfilesForFormat(profiles, { ...options, formats: [format] }, templates),
+    exportProfilesForFormat(profiles, { ...options, formats: [format] }, templates, context),
   );
 }
 
@@ -151,11 +241,15 @@ function exportProfilesForFormat(
   profiles: Profile[],
   options: ExportOptions,
   templates: ExportTemplate[] = [],
+  filenameContext: ExportFilenameContext,
 ): { filename: string; content: string; mimeType: string }[] {
   const format = options.formats[0];
   if (!format) return [];
 
   const payloads = profiles.map((profile) => buildExportPayload(profile, options));
+  const named = (filename: string, content: string, mimeType: string) => [{ filename, content, mimeType }];
+  const fileName = (profileStem?: string, templateExtension?: string) =>
+    buildExportFilename(format, filenameContext, { profileStem, templateExtension });
 
   if (format === "template") {
     const template = templates.find((item) => item.id === options.templateId);
@@ -164,52 +258,37 @@ function exportProfilesForFormat(
     }
     if (options.oneFilePerProfile) {
       return profiles.map((profile) => ({
-        filename: `profile-${profile.id.slice(0, 8)}${template.extension}`,
+        filename: fileName(filenameStemForProfile(profile), template.extension),
         content: renderTemplate(profile, template),
         mimeType: template.mimeType,
       }));
     }
-    return [
-      {
-        filename: `profiles${template.extension}`,
-        content: profiles
-          .map((profile) => renderTemplate(profile, template))
-          .join("\n\n"),
-        mimeType: template.mimeType,
-      },
-    ];
+    return named(fileName(undefined, template.extension), profiles.map((profile) => renderTemplate(profile, template)).join("\n\n"), template.mimeType);
   }
 
   if (options.oneFilePerProfile) {
     return profiles.map((profile) => {
-      const single = exportProfilesForFormat([profile], {
-        ...options,
-        oneFilePerProfile: false,
-      }, templates);
+      const single = exportProfilesForFormat(
+        [profile],
+        {
+          ...options,
+          oneFilePerProfile: false,
+        },
+        templates,
+        filenameContext,
+      );
       return {
         ...single[0],
-        filename: `${filenameStemForProfile(profile)}${extensionForFormat(format)}`,
+        filename: fileName(filenameStemForProfile(profile)),
       };
     });
   }
 
   switch (format) {
     case "json":
-      return [
-        {
-          filename: "profiles.json",
-          content: JSON.stringify({ profiles: payloads }, null, 2),
-          mimeType: "application/json",
-        },
-      ];
+      return named(fileName(), JSON.stringify({ profiles: payloads }, null, 2), "application/json");
     case "jsonl":
-      return [
-        {
-          filename: "profiles.jsonl",
-          content: payloads.map((item) => JSON.stringify(item)).join("\n"),
-          mimeType: "application/x-ndjson",
-        },
-      ];
+      return named(fileName(), payloads.map((item) => JSON.stringify(item)).join("\n"), "application/x-ndjson");
     case "csv":
     case "tsv": {
       const delimiter = format === "csv" ? "," : "\t";
@@ -227,22 +306,14 @@ function exportProfilesForFormat(
             .join(delimiter),
         ),
       ];
-      return [
-        {
-          filename: `profiles.${format}`,
-          content: lines.join("\n"),
-          mimeType: format === "csv" ? "text/csv" : "text/tab-separated-values",
-        },
-      ];
+      return named(
+        fileName(),
+        lines.join("\n"),
+        format === "csv" ? "text/csv" : "text/tab-separated-values",
+      );
     }
     case "yaml":
-      return [
-        {
-          filename: "profiles.yaml",
-          content: yamlStringify({ profiles: payloads }),
-          mimeType: "application/yaml",
-        },
-      ];
+      return named(fileName(), yamlStringify({ profiles: payloads }), "application/yaml");
     case "xml": {
       const items = payloads
         .map((payload) => {
@@ -283,58 +354,45 @@ function exportProfilesForFormat(
           return lines.join("\n");
         })
         .join("\n");
-      return [
-        {
-          filename: "profiles.xml",
-          content: `<profiles exportedAt="${new Date().toISOString()}">\n${items}\n</profiles>`,
-          mimeType: "application/xml",
-        },
-      ];
+      return named(
+        fileName(),
+        `<profiles exportedAt="${new Date().toISOString()}">\n${items}\n</profiles>`,
+        "application/xml",
+      );
     }
     case "text":
-      return [
-        {
-          filename: "profiles.txt",
-          content: profiles
-            .map((profile) => {
-              const flat = flattenProfile(profile, options);
-              return Object.entries(flat)
-                .map(([key, value]) => `${key}: ${value}`)
-                .join("\n");
-            })
-            .join("\n\n---\n\n"),
-          mimeType: "text/plain",
-        },
-      ];
+      return named(
+        fileName(),
+        profiles
+          .map((profile) => {
+            const flat = flattenProfile(profile, options);
+            return Object.entries(flat)
+              .map(([key, value]) => `${key}: ${value}`)
+              .join("\n");
+          })
+          .join("\n\n---\n\n"),
+        "text/plain",
+      );
     case "aycd":
-      return [
-        {
-          filename: "aycd.json",
-          content: exportAycdJson(profiles),
-          mimeType: "application/json",
-        },
-      ];
+      return named(fileName(), exportAycdJson(profiles), "application/json");
     case "stellar_aio":
-      return [
-        {
-          filename: "stellar_aio.json",
-          content: exportStellarAioJson(profiles),
-          mimeType: "application/json",
-        },
-      ];
+      return named(fileName(), exportStellarAioJson(profiles), "application/json");
     default:
       throw new Error(`Unsupported export format: ${format satisfies never}`);
   }
 }
 
 function filenameStemForProfile(profile: Profile): string {
-  const slug = profile.name.full.trim().replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/^-|-$/g, "");
+  const source = profile.profileName?.trim() || profile.name.full.trim();
+  const slug = source.replace(/[^a-zA-Z0-9-_]+/g, "-").replace(/^-|-$/g, "");
   return slug ? slug : `profile-${profile.id.slice(0, 8)}`;
 }
 
-function extensionForFormat(format: ExportFormat): string {
+function extensionForFormat(format: ExportFormat, templateExtension?: string): string {
   switch (format) {
     case "json":
+    case "aycd":
+    case "stellar_aio":
       return ".json";
     case "jsonl":
       return ".jsonl";
@@ -348,12 +406,10 @@ function extensionForFormat(format: ExportFormat): string {
       return ".xml";
     case "text":
       return ".txt";
-    case "template":
-      return ".txt";
-    case "aycd":
-      return "_aycd.json";
-    case "stellar_aio":
-      return "_stellar_aio.json";
+    case "template": {
+      const extension = templateExtension?.trim() || ".txt";
+      return extension.startsWith(".") ? extension : `.${extension}`;
+    }
     default:
       return ".txt";
   }
@@ -363,7 +419,8 @@ export function previewExport(
   profiles: Profile[],
   options: ExportOptions,
   templates: ExportTemplate[] = [],
+  filenameContext?: ExportFilenameContext,
 ): string {
-  const files = exportProfiles(profiles, options, templates);
+  const files = exportProfiles(profiles, options, templates, filenameContext);
   return files.map((file) => `# ${file.filename}\n${file.content}`).join("\n\n");
 }

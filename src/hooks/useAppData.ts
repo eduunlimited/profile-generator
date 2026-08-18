@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteCredential,
   deleteCreditCard,
@@ -23,6 +23,11 @@ import {
   listExportTemplates,
   listJigPresets,
   listProfiles,
+  loadAllProfiles,
+  replaceAllProfiles,
+  replaceAllCreditCards,
+  replaceAllCredentials,
+  replaceAllMasterProfiles,
   saveCredential,
   saveCreditCard,
   saveAccountCategory,
@@ -34,7 +39,7 @@ import {
   saveProfiles,
   seedDefaults,
 } from "../lib/api";
-import { assignCardsToProfiles } from "../lib/assignCards";
+import { assignCardsToProfiles, unassignCardsFromProfiles, validateCardAssignments } from "../lib/assignCards";
 import {
   credentialLinksChanged,
   syncAllProfileCredentialLinks,
@@ -52,7 +57,12 @@ import { masterProfileLabel, sortMasterProfiles } from "../lib/masterProfileUtil
 import { resolveAddressJigFromGenerateOptions } from "../lib/jigPresetUtils";
 import { sortAccountCategories } from "../lib/accountCategoryUtils";
 import { sortCardCategories } from "../lib/cardCategoryUtils";
-import { PROFILE_UNCATEGORIZED_CATEGORY_ID, sortProfileCategories } from "../lib/profileCategoryUtils";
+import {
+  assertProfileCategoryUnlocked,
+  assertProfilesUnlocked,
+  PROFILE_UNCATEGORIZED_CATEGORY_ID,
+  sortProfileCategories,
+} from "../lib/profileCategoryUtils";
 import { BUILTIN_EXPORT_TEMPLATES, BUILTIN_JIG_PRESETS, getJigPresetById, registerJigPreset } from "../lib/presets";
 import { rejigProfiles } from "../lib/rejigProfiles";
 import type {
@@ -77,6 +87,14 @@ import type {
 } from "../lib/types";
 import { initLocalDataStore } from "../lib/localDataStore";
 
+interface AppUndoSnapshot {
+  label: string;
+  profiles: Profile[];
+  creditCards: CreditCard[];
+  credentials: Credential[];
+  masterProfiles: MasterProfile[];
+}
+
 export function useAppData() {
   const [profiles, setProfiles] = useState<ProfileSummary[]>([]);
   const [jigPresets, setJigPresets] = useState<JigPreset[]>([]);
@@ -89,6 +107,37 @@ export function useAppData() {
   const [profileCategories, setProfileCategories] = useState<ProfileCategory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const undoRef = useRef<AppUndoSnapshot | null>(null);
+  const [canUndoLastAction, setCanUndoLastAction] = useState(false);
+  const [lastActionLabel, setLastActionLabel] = useState<string | null>(null);
+
+  const captureAppUndo = useCallback(async (label: string) => {
+    const [profiles, creditCards, credentials, masterProfiles] = await Promise.all([
+      loadAllProfiles(),
+      listCreditCards(),
+      listCredentials(),
+      listMasterProfiles(),
+    ]);
+    undoRef.current = {
+      label,
+      profiles: structuredClone(profiles),
+      creditCards: structuredClone(creditCards),
+      credentials: structuredClone(credentials),
+      masterProfiles: structuredClone(masterProfiles),
+    };
+    setCanUndoLastAction(true);
+    setLastActionLabel(label);
+  }, []);
+
+  const recordLastAction = useCallback((label: string) => {
+    undoRef.current = null;
+    setCanUndoLastAction(false);
+    setLastActionLabel(label);
+  }, []);
+
+  const updateLastActionLabel = useCallback((label: string) => {
+    setLastActionLabel(label);
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -152,30 +201,50 @@ export function useAppData() {
     void refresh();
   }, [refresh]);
 
+  const undoLastAction = useCallback(async () => {
+    const snapshot = undoRef.current;
+    if (!snapshot) {
+      throw new Error("Nothing to undo.");
+    }
+    await replaceAllProfiles(snapshot.profiles);
+    await replaceAllCreditCards(snapshot.creditCards);
+    await replaceAllCredentials(snapshot.credentials);
+    await replaceAllMasterProfiles(snapshot.masterProfiles);
+    const label = snapshot.label;
+    undoRef.current = null;
+    setCanUndoLastAction(false);
+    setLastActionLabel(`Reverted: ${label}`);
+    await refresh();
+    return label;
+  }, [refresh]);
+
   const createProfile = useCallback(
     async (options: Partial<GenerateOptions> = {}) => {
+      await captureAppUndo("Generate profile");
       const profile = generateProfile(options);
       const creds = await listCredentials();
       await saveProfile(syncProfileCredentialLinks(profile, creds));
       await refresh();
       return profile;
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const createProfiles = useCallback(
     async (options: GenerateOptions) => {
+      await captureAppUndo("Generate profiles");
       const generated = generateProfiles(options);
       const creds = await listCredentials();
       await saveProfiles(syncAllProfileCredentialLinks(generated, creds));
       await refresh();
       return generated;
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const createProfilesFromMaster = useCallback(
     async (masterId: string, options: GenerateFromMasterOptions) => {
+      await captureAppUndo("Generate jig profiles");
       const master = masterProfiles.find((item) => item.id === masterId);
       if (!master) {
         throw new Error("Master profile not found.");
@@ -183,6 +252,7 @@ export function useAppData() {
       if (!options.categoryId?.trim()) {
         throw new Error("Select a category.");
       }
+      assertProfileCategoryUnlocked(profileCategories, options.categoryId, "generate profiles into it");
 
       const namePreset = options.nameJigPresetId
         ? jigPresets.find((p) => p.id === options.nameJigPresetId) ?? getJigPresetById(options.nameJigPresetId) ?? null
@@ -196,7 +266,6 @@ export function useAppData() {
           )
           .map((profile) => getProfile(profile.id)),
       );
-      const existingChildCount = profiles.filter((profile) => profile.masterProfileId === masterId).length;
       const generated = await generateProfilesFromMaster(
         master,
         options,
@@ -204,14 +273,13 @@ export function useAppData() {
         addressJig,
         creditCards,
         existingInCategory,
-        existingChildCount,
       );
       const linked = syncAllProfileCredentialLinks(generated, credentials);
       await saveProfiles(linked);
       await refresh();
       return linked.length;
     },
-    [creditCards, credentials, jigPresets, masterProfiles, profiles, refresh],
+    [captureAppUndo, creditCards, credentials, jigPresets, masterProfiles, profileCategories, profiles, refresh],
   );
 
   const rejigProfilesFromMaster = useCallback(
@@ -231,6 +299,7 @@ export function useAppData() {
       if (profilesToUpdate.length === 0) {
         throw new Error("Selected profiles could not be loaded.");
       }
+      assertProfilesUnlocked(profileCategories, profilesToUpdate, "re-jig profiles in it");
 
       const masterMap = new Map(masterProfiles.map((master) => [master.id, master]));
       const profilesMissingMaster = profilesToUpdate.filter(
@@ -263,6 +332,7 @@ export function useAppData() {
 
       if (updated.length > 0) {
         const creds = await listCredentials();
+        await captureAppUndo("Re-jig profiles");
         await saveProfiles(syncAllProfileCredentialLinks(updated, creds));
         await refresh();
       }
@@ -276,7 +346,7 @@ export function useAppData() {
         failedCount: failedIds.length,
       };
     },
-    [jigPresets, masterProfiles, profiles, refresh],
+    [captureAppUndo, jigPresets, masterProfiles, profileCategories, profiles, refresh],
   );
 
   const assignCards = useCallback(
@@ -302,17 +372,62 @@ export function useAppData() {
       if (profilesToUpdate.length === 0) {
         throw new Error("Selected profiles could not be loaded.");
       }
+      assertProfilesUnlocked(profileCategories, profilesToUpdate, "assign cards in it");
+
+      const assignmentCardIds = isBatch
+        ? options.creditCardIds!
+        : options.profileIds.map(() => options.creditCardId!);
+      const validationError = validateCardAssignments(
+        options.profileIds,
+        assignmentCardIds,
+        creditCards,
+        allProfiles,
+      );
+      if (validationError) {
+        throw new Error(validationError);
+      }
 
       const updated = assignCardsToProfiles(profilesToUpdate, allProfiles, creditCards, options);
       if (updated.length === 0) {
         throw new Error("No profiles were updated.");
       }
 
+      await captureAppUndo("Assign cards");
       await saveProfiles(updated);
       await refresh();
       return profilesToUpdate.length;
     },
-    [creditCards, profiles, refresh],
+    [captureAppUndo, creditCards, profileCategories, profiles, refresh],
+  );
+
+  const unassignCards = useCallback(
+    async (profileIds: string[]): Promise<number> => {
+      if (profileIds.length === 0) {
+        throw new Error("Select at least one profile.");
+      }
+
+      const allProfiles = await Promise.all(profiles.map((summary) => getProfile(summary.id)));
+      const profileMap = new Map(allProfiles.map((profile) => [profile.id, profile]));
+      const profilesToUpdate = profileIds
+        .map((id) => profileMap.get(id))
+        .filter((profile): profile is Profile => Boolean(profile));
+
+      if (profilesToUpdate.length === 0) {
+        throw new Error("Selected profiles could not be loaded.");
+      }
+      assertProfilesUnlocked(profileCategories, profilesToUpdate, "unassign cards in it");
+
+      const updated = unassignCardsFromProfiles(profilesToUpdate);
+      if (updated.length === 0) {
+        throw new Error("Selected profiles have no cards assigned.");
+      }
+
+      await captureAppUndo("Unassign cards");
+      await saveProfiles(updated);
+      await refresh();
+      return updated.length;
+    },
+    [captureAppUndo, profileCategories, profiles, refresh],
   );
 
   const massDistributeProfiles = useCallback(
@@ -337,6 +452,7 @@ export function useAppData() {
       if (profilesInOrder.length === 0) {
         throw new Error("Selected profiles could not be loaded.");
       }
+      assertProfilesUnlocked(profileCategories, profilesInOrder, "mass-distribute into it");
 
       const creds = await listCredentials();
       const result = massDistributeToProfiles(profilesInOrder, options.lines, options, creditCards, creds);
@@ -345,6 +461,7 @@ export function useAppData() {
         throw new Error("Nothing was distributed.");
       }
 
+      await captureAppUndo("Mass distribute");
       for (const credential of result.updatedCredentials) {
         await saveCredential(credential);
       }
@@ -363,39 +480,70 @@ export function useAppData() {
         }),
       };
     },
-    [creditCards, profiles, refresh],
+    [captureAppUndo, creditCards, profileCategories, profiles, refresh],
   );
 
   const createBlankProfile = useCallback(async () => {
+    await captureAppUndo("Create blank profile");
     const profile = buildBlankProfile();
     const creds = await listCredentials();
     await saveProfile(syncProfileCredentialLinks(profile, creds));
     await refresh();
     return profile;
-  }, [refresh]);
+  }, [captureAppUndo, refresh]);
+
+  const removeProfiles = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) {
+        return;
+      }
+      const toDelete = profiles.filter((profile) => ids.includes(profile.id));
+      assertProfilesUnlocked(profileCategories, toDelete, "delete profiles in it");
+      await captureAppUndo(ids.length === 1 ? "Delete profile" : "Delete profiles");
+      for (const id of ids) {
+        await deleteProfile(id);
+      }
+      await refresh();
+    },
+    [captureAppUndo, profileCategories, profiles, refresh],
+  );
 
   const removeProfile = useCallback(
     async (id: string) => {
-      await deleteProfile(id);
-      await refresh();
+      await removeProfiles([id]);
     },
-    [refresh],
+    [removeProfiles],
   );
 
   const loadProfile = useCallback(async (id: string) => getProfile(id), []);
 
   const updateProfile = useCallback(
     async (profile: Profile) => {
+      const existing = profiles.find((item) => item.id === profile.id);
+      if (existing) {
+        assertProfileCategoryUnlocked(profileCategories, existing.categoryId, "edit profiles in it");
+      }
+      assertProfileCategoryUnlocked(profileCategories, profile.categoryId, "save profiles into it");
+      await captureAppUndo("Save profile");
       const creds = await listCredentials();
       const linked = syncProfileCredentialLinks(profile, creds);
       await saveProfile({ ...linked, updatedAt: new Date().toISOString() });
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, profileCategories, profiles, refresh],
   );
 
   const saveProfilesBatch = useCallback(
-    async (profilesToSave: Profile[]) => {
+    async (profilesToSave: Profile[], undoLabel = "Update profiles") => {
+      const existingById = new Map(profiles.map((profile) => [profile.id, profile]));
+      for (const next of profilesToSave) {
+        const existing = existingById.get(next.id);
+        if (existing) {
+          assertProfileCategoryUnlocked(profileCategories, existing.categoryId, "edit profiles in it");
+        }
+        assertProfileCategoryUnlocked(profileCategories, next.categoryId, "add or move profiles into it");
+      }
+      await captureAppUndo(undoLabel);
       const now = new Date().toISOString();
       const creds = await listCredentials();
       await saveProfiles(
@@ -406,22 +554,24 @@ export function useAppData() {
       );
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, profileCategories, profiles, refresh],
   );
 
   const importProfiles = useCallback(
     async (profilesToImport: Profile[]) => {
-      await saveProfilesBatch(profilesToImport);
+      await saveProfilesBatch(profilesToImport, "Import profiles");
     },
     [saveProfilesBatch],
   );
 
   const updateMasterProfile = useCallback(async (master: MasterProfile) => {
+    await captureAppUndo("Save master profile");
     await saveMasterProfile(master);
     setMasterProfiles((current) =>
       sortMasterProfiles([...current.filter((item) => item.id !== master.id), master]),
     );
-  }, []);
+    await refresh();
+  }, [captureAppUndo, refresh]);
 
   const removeMasterProfile = useCallback(
     async (id: string) => {
@@ -429,58 +579,65 @@ export function useAppData() {
       if (childCount > 0) {
         throw new Error("Delete or reassign jig profiles before deleting this master.");
       }
+      await captureAppUndo("Delete master profile");
       await deleteMasterProfile(id);
       await refresh();
     },
-    [profiles, refresh],
+    [captureAppUndo, profiles, refresh],
   );
 
   const upsertCreditCard = useCallback(
     async (card: CreditCard) => {
+      await captureAppUndo("Save credit card");
       await saveCreditCard(card);
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const removeCreditCard = useCallback(
     async (id: string) => {
+      await captureAppUndo("Delete credit card");
       await deleteCreditCard(id);
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const importCards = useCallback(
     async (cards: CreditCard[]) => {
+      await captureAppUndo("Import credit cards");
       await importCreditCards(cards);
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const upsertCredential = useCallback(
     async (credential: Credential) => {
+      await captureAppUndo("Save account");
       await saveCredential(credential);
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const removeCredential = useCallback(
     async (id: string) => {
+      await captureAppUndo("Delete account");
       await deleteCredential(id);
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const importCreds = useCallback(
     async (items: Credential[]) => {
+      await captureAppUndo("Import accounts");
       await importCredentials(items);
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const upsertAccountCategory = useCallback(
@@ -548,11 +705,12 @@ export function useAppData() {
 
   const upsertJigPreset = useCallback(
     async (preset: JigPreset) => {
+      await captureAppUndo("Save jig preset");
       await saveJigPreset(preset);
       registerJigPreset(preset);
       await refresh();
     },
-    [refresh],
+    [captureAppUndo, refresh],
   );
 
   const upsertExportTemplate = useCallback(
@@ -582,9 +740,11 @@ export function useAppData() {
     createProfilesFromMaster,
     rejigProfilesFromMaster,
     assignCards,
+    unassignCards,
     massDistributeProfiles,
     createBlankProfile,
     removeProfile,
+    removeProfiles,
     loadProfile,
     updateProfile,
     saveProfilesBatch,
@@ -608,6 +768,11 @@ export function useAppData() {
     reorderProfileCategoryOrder,
     upsertJigPreset,
     upsertExportTemplate,
+    canUndoLastAction,
+    lastActionLabel,
+    recordLastAction,
+    updateLastActionLabel,
+    undoLastAction,
   };
 }
 

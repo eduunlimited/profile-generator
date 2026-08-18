@@ -49,6 +49,7 @@ export function localDataPlugin(): Plugin {
         fs.mkdirSync(dataDir, { recursive: true });
 
         if (req.method === "GET") {
+          res.setHeader("Cache-Control", "no-store");
           if (!fs.existsSync(filePath)) {
             res.setHeader("Content-Type", "application/json");
             res.end("{}");
@@ -60,6 +61,7 @@ export function localDataPlugin(): Plugin {
         }
 
         if (req.method === "PUT") {
+          res.setHeader("Cache-Control", "no-store");
           const chunks: Buffer[] = [];
           req.on("data", (chunk: Buffer) => chunks.push(chunk));
           req.on("end", () => {

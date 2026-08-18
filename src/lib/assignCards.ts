@@ -1,42 +1,339 @@
-import { applyCreditCardFromPool } from "./profileUtils";
-import { cardNumbersMatch } from "./creditCardUtils";
+import { applyCreditCardFromPool, clearProfileCreditCardAssignment } from "./profileUtils";
+import { cardNumbersMatch, isAssignablePoolCard } from "./creditCardUtils";
 import type { AssignCardsOptions, CreditCard, Profile, ProfileSummary } from "./types";
 
-export function listUnassignedCreditCards(
+export function profileSummaryHasPoolCard(
+  profile: Pick<ProfileSummary, "creditCardId" | "creditCardLabel" | "paymentNumber">,
   cards: CreditCard[],
-  profiles: Pick<ProfileSummary, "creditCardId" | "paymentNumber">[],
-): CreditCard[] {
-  const assignedIds = new Set<string>();
+): boolean {
+  if (profile.creditCardId) {
+    return true;
+  }
+  const paymentNumber = profile.paymentNumber ?? "";
+  if (paymentNumber && cards.some((card) => cardNumbersMatch(card.number, paymentNumber))) {
+    return true;
+  }
+  return false;
+}
+
+/** True when the profile has pool-linked or standalone payment data (for unassign / display). */
+export function profileSummaryHasAssignedCard(
+  profile: Pick<ProfileSummary, "creditCardId" | "creditCardLabel" | "paymentNumber">,
+): boolean {
+  return Boolean(profile.creditCardId || profile.creditCardLabel || profile.paymentNumber);
+}
+
+type AssignableProfile = {
+  id: string;
+  name: string;
+  creditCardId?: string;
+  paymentNumber?: string;
+  accountSite?: string;
+};
+
+export type { AssignableProfile };
+
+export function toAssignableProfile(profile: ProfileSummary | Profile): AssignableProfile {
+  if ("payment" in profile) {
+    return {
+      id: profile.id,
+      name: profile.profileName?.trim() || profile.name.full || "Unnamed",
+      creditCardId: profile.creditCardId,
+      paymentNumber: profile.payment.number.replace(/\D/g, ""),
+      accountSite: profile.accountSite,
+    };
+  }
+  return {
+    id: profile.id,
+    name: profile.name || "Unnamed",
+    creditCardId: profile.creditCardId,
+    paymentNumber: profile.paymentNumber,
+    accountSite: profile.accountSite,
+  };
+}
+
+export function toAssignableProfiles(profiles: (ProfileSummary | Profile)[]): AssignableProfile[] {
+  return profiles.map(toAssignableProfile);
+}
+
+function normalizeAccountSite(site?: string): string {
+  return site?.trim() ?? "";
+}
+
+export function cardUsesSingleProfileScope(card: Pick<CreditCard, "assignmentScope">): boolean {
+  return card.assignmentScope === "single_profile";
+}
+
+export function profilesUsingCard(card: CreditCard, profiles: AssignableProfile[]): AssignableProfile[] {
+  return profiles.filter((profile) => {
+    if (profile.creditCardId === card.id) {
+      return true;
+    }
+    if (profile.paymentNumber && cardNumbersMatch(profile.paymentNumber, card.number)) {
+      return true;
+    }
+    return false;
+  });
+}
+
+export function isCardAvailableForProfile(
+  card: CreditCard,
+  targetProfile: AssignableProfile,
+  allProfiles: AssignableProfile[],
+): boolean {
+  if (!isAssignablePoolCard(card)) {
+    return false;
+  }
+
+  const otherAssignees = profilesUsingCard(card, allProfiles).filter(
+    (profile) => profile.id !== targetProfile.id,
+  );
+
+  if (otherAssignees.length === 0) {
+    return true;
+  }
+
+  if (cardUsesSingleProfileScope(card)) {
+    return false;
+  }
+
+  const targetSite = normalizeAccountSite(targetProfile.accountSite);
+
+  // No account site on the profile: only completely unassigned pool cards are eligible.
+  if (!targetSite) {
+    return false;
+  }
+
+  // A card used on a profile without an account site cannot be shared to a named site.
+  if (otherAssignees.some((profile) => !normalizeAccountSite(profile.accountSite))) {
+    return false;
+  }
+
+  return !otherAssignees.some(
+    (profile) => normalizeAccountSite(profile.accountSite) === targetSite,
+  );
+}
+
+export function cardIdsUsedByProfiles(
+  profiles: (ProfileSummary | Profile)[],
+  cards: CreditCard[],
+): Set<string> {
+  const used = new Set<string>();
   for (const profile of profiles) {
-    if (profile.creditCardId) {
-      assignedIds.add(profile.creditCardId);
+    if (!profileSummaryHasPoolCard(profile, cards)) {
       continue;
     }
-    if (profile.paymentNumber) {
-      const matched = cards.find((card) => cardNumbersMatch(profile.paymentNumber!, card.number));
-      if (matched) {
-        assignedIds.add(matched.id);
-      }
+    if (profile.creditCardId) {
+      used.add(profile.creditCardId);
+      continue;
+    }
+    const paymentNumber =
+      "payment" in profile ? profile.payment.number.replace(/\D/g, "") : profile.paymentNumber ?? "";
+    const matched = cards.find((card) => cardNumbersMatch(card.number, paymentNumber));
+    if (matched) {
+      used.add(matched.id);
     }
   }
-  return cards.filter((card) => !assignedIds.has(card.id));
+  return used;
 }
 
-/** Pick the first N unassigned pool cards for mass assign (profile order). */
-export function pickCardsForMassAssign(
-  profileCount: number,
-  cards: CreditCard[],
-  profiles: ProfileSummary[],
-): string[] {
-  return listUnassignedCreditCards(cards, profiles)
-    .slice(0, profileCount)
-    .map((card) => card.id);
-}
+/** Profiles still needed (beyond existing no-card slots) to assign every usable pool card in this category. */
+export function countProfilesToCreateForFullCardUse(
+  scopeProfiles: ProfileSummary[],
+  creditCards: CreditCard[],
+  allProfiles: ProfileSummary[],
+): number {
+  if (scopeProfiles.length === 0 || creditCards.length === 0) {
+    return 0;
+  }
 
-export function confirmReplaceExistingCards(targetProfiles: ProfileSummary[]): boolean {
-  const occupied = targetProfiles.filter(
-    (profile) => Boolean(profile.creditCardId || profile.creditCardLabel),
+  const usedInCategory = cardIdsUsedByProfiles(scopeProfiles, creditCards);
+  const profilesWithoutCards = scopeProfiles.filter(
+    (profile) => !profileSummaryHasPoolCard(profile, creditCards),
   );
+  const referenceProfile =
+    profilesWithoutCards[0] ??
+    ({
+      ...scopeProfiles[0],
+      creditCardId: undefined,
+      creditCardLabel: undefined,
+      paymentNumber: undefined,
+      cardNumberMasked: "",
+      cardBrand: "",
+    } satisfies ProfileSummary);
+
+  const referenceTarget = toAssignableProfile(referenceProfile);
+  const allAssignable = toAssignableProfiles(allProfiles);
+
+  let totalCapacity = usedInCategory.size;
+  for (const card of creditCards) {
+    if (!isAssignablePoolCard(card)) {
+      continue;
+    }
+    if (usedInCategory.has(card.id)) {
+      continue;
+    }
+    if (isCardAvailableForProfile(card, referenceTarget, allAssignable)) {
+      totalCapacity += 1;
+    }
+  }
+
+  return Math.max(0, totalCapacity - usedInCategory.size - profilesWithoutCards.length);
+}
+
+export function listCreditCardsAvailableForAnyProfile(
+  cards: CreditCard[],
+  targetProfiles: (ProfileSummary | Profile)[],
+  allProfiles: (ProfileSummary | Profile)[],
+): CreditCard[] {
+  const targets = toAssignableProfiles(targetProfiles);
+  const all = toAssignableProfiles(allProfiles);
+  if (targets.length === 0) {
+    return cards.filter((card) => isAssignablePoolCard(card) && profilesUsingCard(card, all).length === 0);
+  }
+  return cards.filter((card) =>
+    targets.some((target) => isCardAvailableForProfile(card, target, all)),
+  );
+}
+
+export function listAvailableCreditCardsForProfiles(
+  cards: CreditCard[],
+  targetProfiles: (ProfileSummary | Profile)[],
+  allProfiles: (ProfileSummary | Profile)[],
+): CreditCard[] {
+  const targets = toAssignableProfiles(targetProfiles);
+  const all = toAssignableProfiles(allProfiles);
+  if (targets.length === 0) {
+    return cards.filter(isAssignablePoolCard);
+  }
+  return cards.filter((card) => targets.every((target) => isCardAvailableForProfile(card, target, all)));
+}
+
+/** @deprecated Use listAvailableCreditCardsForProfiles with explicit target profiles. */
+export function listUnassignedCreditCards(
+  cards: CreditCard[],
+  profiles: (ProfileSummary | Profile)[],
+): CreditCard[] {
+  return listAvailableCreditCardsForProfiles(cards, profiles, profiles);
+}
+
+function applyBatchAssignmentToProfiles(
+  allProfiles: AssignableProfile[],
+  assignments: Array<{ profileId: string; card: CreditCard }>,
+): AssignableProfile[] {
+  let simulated = allProfiles;
+  for (const { profileId, card } of assignments) {
+    simulated = simulated.map((profile) =>
+      profile.id === profileId
+        ? { ...profile, creditCardId: card.id, paymentNumber: card.number }
+        : profile,
+    );
+  }
+  return simulated;
+}
+
+/** Cards eligible for the next profile slot in an ordered batch assign. */
+export function listAvailableCardsForNextBatchSlot(
+  cards: CreditCard[],
+  targetProfiles: (ProfileSummary | Profile)[],
+  allProfiles: (ProfileSummary | Profile)[],
+  selectedCardIds: string[],
+): CreditCard[] {
+  const targets = toAssignableProfiles(targetProfiles);
+  const nextIndex = selectedCardIds.length;
+  if (nextIndex >= targets.length) {
+    return [];
+  }
+
+  const assignments: Array<{ profileId: string; card: CreditCard }> = [];
+  for (let index = 0; index < selectedCardIds.length; index += 1) {
+    const card = cards.find((item) => item.id === selectedCardIds[index]);
+    if (!card) {
+      continue;
+    }
+    assignments.push({ profileId: targets[index].id, card });
+  }
+
+  const simulatedAll = applyBatchAssignmentToProfiles(toAssignableProfiles(allProfiles), assignments);
+  const selectedSet = new Set(selectedCardIds);
+  const nextTarget = targets[nextIndex];
+
+  return cards.filter(
+    (card) => !selectedSet.has(card.id) && isCardAvailableForProfile(card, nextTarget, simulatedAll),
+  );
+}
+
+/** Selected cards plus the next valid choices for ordered batch assign (profile 1, then 2, …). */
+export function listDisplayCardsForBatchAssign(
+  cards: CreditCard[],
+  targetProfiles: (ProfileSummary | Profile)[],
+  allProfiles: (ProfileSummary | Profile)[],
+  selectedCardIds: string[],
+): CreditCard[] {
+  const selectedCards = selectedCardIds
+    .map((id) => cards.find((card) => card.id === id))
+    .filter((card): card is CreditCard => Boolean(card));
+
+  if (selectedCardIds.length >= targetProfiles.length) {
+    return selectedCards;
+  }
+
+  const nextSlot = listAvailableCardsForNextBatchSlot(
+    cards,
+    targetProfiles,
+    allProfiles,
+    selectedCardIds,
+  );
+  const visibleIds = new Set([...selectedCards.map((card) => card.id), ...nextSlot.map((card) => card.id)]);
+  return cards.filter((card) => visibleIds.has(card.id));
+}
+
+/** How many profiles in order can receive a distinct card from the pool. */
+export function countCompletableBatchAssignments(
+  targetProfiles: (ProfileSummary | Profile)[],
+  cards: CreditCard[],
+  allProfiles: (ProfileSummary | Profile)[],
+): number {
+  return pickCardsForMassAssign(targetProfiles, cards, allProfiles).length;
+}
+
+/** Pick the first N available pool cards for mass assign (profile order). */
+export function pickCardsForMassAssign(
+  targetProfiles: (ProfileSummary | Profile)[],
+  cards: CreditCard[],
+  allProfiles: (ProfileSummary | Profile)[],
+): string[] {
+  const targets = toAssignableProfiles(targetProfiles);
+  let simulatedProfiles = toAssignableProfiles(allProfiles);
+  const picked: string[] = [];
+
+  for (const target of targets) {
+    const available = cards.filter((card) => {
+      if (picked.includes(card.id)) {
+        return false;
+      }
+      return isCardAvailableForProfile(card, target, simulatedProfiles);
+    });
+    if (available.length === 0) {
+      break;
+    }
+    const card = available[0];
+    picked.push(card.id);
+    simulatedProfiles = simulatedProfiles.map((profile) =>
+      profile.id === target.id
+        ? { ...profile, creditCardId: card.id, paymentNumber: card.number }
+        : profile,
+    );
+  }
+
+  return picked;
+}
+
+export function confirmReplaceExistingCards(
+  targetProfiles: ProfileSummary[],
+  cards: CreditCard[],
+): boolean {
+  const occupied = targetProfiles.filter((profile) => profileSummaryHasPoolCard(profile, cards));
   if (occupied.length === 0) {
     return true;
   }
@@ -51,6 +348,43 @@ export function confirmReplaceExistingCards(targetProfiles: ProfileSummary[]): b
   return window.confirm(
     `${occupied.length} profile(s) already have a card assigned:\n\n${list}\n\nReplace with new card(s)?`,
   );
+}
+
+export function validateCardAssignments(
+  profileIds: string[],
+  cardIds: string[],
+  cards: CreditCard[],
+  allProfiles: (ProfileSummary | Profile)[],
+): string | null {
+  const assignableProfiles = toAssignableProfiles(allProfiles);
+  const profileMap = new Map(assignableProfiles.map((profile) => [profile.id, profile]));
+  let simulatedProfiles = assignableProfiles;
+  const usedCardIds = new Set<string>();
+
+  for (let index = 0; index < profileIds.length; index += 1) {
+    const profile = profileMap.get(profileIds[index]);
+    const card = cards.find((item) => item.id === cardIds[index]);
+    if (!profile || !card) {
+      continue;
+    }
+    if (usedCardIds.has(card.id)) {
+      return `"${card.profileName}" cannot be assigned to more than one profile in the same batch.`;
+    }
+    if (!isCardAvailableForProfile(card, profile, simulatedProfiles)) {
+      const site = profile.accountSite?.trim() || "unspecified account group";
+      const scopeLabel = cardUsesSingleProfileScope(card)
+        ? "single-profile card"
+        : `another ${site} profile`;
+      return `"${card.profileName}" is not available for "${profile.name}" — already assigned to ${scopeLabel}.`;
+    }
+    usedCardIds.add(card.id);
+    simulatedProfiles = simulatedProfiles.map((item) =>
+      item.id === profile.id
+        ? { ...item, creditCardId: card.id, paymentNumber: card.number }
+        : item,
+    );
+  }
+  return null;
 }
 
 export function assignCardsToProfiles(
@@ -100,7 +434,7 @@ export function assignCardsToProfiles(
       const cardId = assignmentByProfile.get(profileId);
       if (!cardId) continue;
       const card = cards.find((item) => item.id === cardId);
-      if (!card) continue;
+      if (!card || !isAssignablePoolCard(card)) continue;
 
       const profile = updatedById.get(profileId) ?? profileMap.get(profileId);
       if (!profile) continue;
@@ -119,7 +453,7 @@ export function assignCardsToProfiles(
   }
 
   const card = cards.find((item) => item.id === options.creditCardId);
-  if (!card) {
+  if (!card || !isAssignablePoolCard(card)) {
     return [];
   }
 
@@ -145,4 +479,24 @@ export function assignCardsToProfiles(
   }
 
   return [...updatedById.values()];
+}
+
+export function unassignCardsFromProfiles(profilesToUpdate: Profile[]): Profile[] {
+  if (profilesToUpdate.length === 0) {
+    return [];
+  }
+
+  const now = new Date().toISOString();
+  return profilesToUpdate
+    .filter(
+      (profile) =>
+        profile.creditCardId ||
+        profile.payment.number.trim() ||
+        profile.payment.expiry.trim() ||
+        profile.payment.cvv.trim(),
+    )
+    .map((profile) => ({
+      ...clearProfileCreditCardAssignment(profile),
+      updatedAt: now,
+    }));
 }

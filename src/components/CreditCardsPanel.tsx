@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
+  buildCardCategoryNameMap,
   CARD_UNCATEGORIZED_CATEGORY_ID,
+  cardCategoryId,
   categoriesWithCards,
   createUncategorizedCardCategory,
   nextCardCategorySortOrder,
@@ -21,8 +23,11 @@ import { parseCardNumberDigits, formatCardNumberDisplay, maskCardNumberDisplay, 
 import {
   buildImportedCreditCards,
   ensureImportCategories,
-  getCsvHeaders,
+  filterDuplicateCardImports,
+  formatCardImportSkipMessage,
+  getCardCsvImportLayout,
   guessCardImportColumnMapping,
+  normalizeImportedCreditCard,
   parseCardImportCsv,
   parseCardImportJson,
   readCsvImportFile,
@@ -32,6 +37,7 @@ import {
 import { applyExcelListSelection } from "../lib/listSelection";
 import type { CardCategory, CreditCard } from "../lib/types";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
+import { useResizableTableColumns } from "../hooks/useResizableTableColumns";
 import {
   resolveCategorySelection,
   type CategorySelection,
@@ -43,12 +49,27 @@ import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 import { CreateCategoryModal } from "./CreateCategoryModal";
 import { MoveCardsModal } from "./MoveCardsModal";
 import { RenameableCategoryName } from "./RenameableCategoryName";
+import { ResizableTh, TableColGroup } from "./ResizableTable";
 import { RowCheckbox } from "./ui";
 
 const CARDS_SIDEBAR_WIDTH_KEY = "profile-generator:cards-sidebar-width";
 const CARDS_SIDEBAR_DEFAULT_WIDTH = 200;
 const CARDS_SIDEBAR_MIN_WIDTH = 140;
 const CARDS_SIDEBAR_MAX_WIDTH = 420;
+const CARD_TABLE_COLUMNS = [
+  "check",
+  "index",
+  "brand",
+  "name",
+  "category",
+  "number",
+  "cvv",
+  "exp",
+  "status",
+  "profiles",
+  "notes",
+] as const;
+const CARD_TABLE_LOCKED_COLUMNS = ["check"] as const;
 
 function clampSidebarWidth(width: number): number {
   return Math.min(CARDS_SIDEBAR_MAX_WIDTH, Math.max(CARDS_SIDEBAR_MIN_WIDTH, width));
@@ -132,7 +153,7 @@ export function CreditCardsPanel({
       counts.set(category.id, 0);
     }
     for (const card of cards) {
-      const categoryId = card.categoryId || CARD_UNCATEGORIZED_CATEGORY_ID;
+      const categoryId = cardCategoryId(card);
       counts.set(categoryId, (counts.get(categoryId) ?? 0) + 1);
     }
     return counts;
@@ -173,37 +194,40 @@ export function CreditCardsPanel({
     return sortCardCategories(options);
   }, [categories]);
 
-  const importCsvHeaders = useMemo(() => {
+  const importCsvLayout = useMemo(() => {
     if (!importCsvText.trim()) {
       return null;
     }
-    return getCsvHeaders(importCsvText);
+    return getCardCsvImportLayout(importCsvText);
   }, [importCsvText]);
 
+  const importCsvHeaders = importCsvLayout?.displayHeaders ?? null;
+
   useEffect(() => {
-    if (!importCsvHeaders) {
+    if (!importCsvLayout) {
       setImportColumnMapping([]);
       return;
     }
 
     setImportColumnMapping((current) => {
-      if (current.length === importCsvHeaders.length) {
+      if (
+        current.length === importCsvLayout.displayHeaders.length &&
+        current.some((field) => field === "number")
+      ) {
         return current;
       }
-      return guessCardImportColumnMapping(importCsvHeaders);
+      return importCsvLayout.suggestedMapping;
     });
-  }, [importCsvHeaders]);
+  }, [importCsvLayout]);
 
   const visibleCards = useMemo(() => {
     if (selectedCategoryId === "all") return cards;
-    return cards.filter(
-      (card) => (card.categoryId || CARD_UNCATEGORIZED_CATEGORY_ID) === selectedCategoryId,
-    );
+    return cards.filter((card) => cardCategoryId(card) === selectedCategoryId);
   }, [cards, selectedCategoryId]);
 
   const categoryNameById = useMemo(
-    () => new Map(categories.map((category) => [category.id, category.name])),
-    [categories],
+    () => buildCardCategoryNameMap(categories, cards),
+    [categories, cards],
   );
 
   const searchFilteredCards = useMemo(() => {
@@ -211,8 +235,7 @@ export function CreditCardsPanel({
     if (!query) return visibleCards;
     return visibleCards.filter((card) => {
       const associatedProfiles = profileLabelForCard?.(card.id) ?? "";
-      const categoryName =
-        categoryNameById.get(card.categoryId || CARD_UNCATEGORIZED_CATEGORY_ID) ?? "";
+      const categoryName = categoryNameById.get(cardCategoryId(card)) ?? "";
       const haystack = [
         card.profileName,
         card.number,
@@ -231,6 +254,28 @@ export function CreditCardsPanel({
       return haystack.includes(query);
     });
   }, [visibleCards, cardSearch, profileLabelForCard, categoryNameById]);
+
+  const cardTableColumns = useResizableTableColumns({
+    columnIds: CARD_TABLE_COLUMNS,
+    lockedIds: CARD_TABLE_LOCKED_COLUMNS,
+    storageKey: "cards",
+    fitKey: `${privacyOn}\n${searchFilteredCards
+      .map((card) =>
+        [
+          card.id,
+          card.profileName,
+          card.brand,
+          card.number,
+          card.cvv,
+          card.expiry,
+          card.notes,
+          card.accountStatus,
+          profileLabelForCard?.(card.id) ?? "",
+          categoryNameById.get(cardCategoryId(card)) ?? "",
+        ].join("\t"),
+      )
+      .join("\n")}`,
+  });
 
   const orderedIds = searchFilteredCards.map((card) => card.id);
   const allSelected =
@@ -588,6 +633,14 @@ export function CreditCardsPanel({
     setImportColumnMapping([]);
   };
 
+  const handleImportCsvTextChange = (text: string) => {
+    setStatus(null);
+    setImportCsvText(text);
+    if (text.trim()) {
+      setImportCsvFileName("");
+    }
+  };
+
   const parseImport = async () => {
     try {
       let items;
@@ -597,7 +650,7 @@ export function CreditCardsPanel({
         ({ items, errors } = parseCardImportJson(importText));
       } else {
         if (!importCsvText.trim()) {
-          setStatus("Upload a CSV file to import.");
+          setStatus("Paste or upload CSV data to import.");
           return;
         }
         ({ items, errors } = parseCardImportCsv(importCsvText, importColumnMapping));
@@ -639,12 +692,15 @@ export function CreditCardsPanel({
         return;
       }
 
-      const imported = importedCards.map((card) => ({
-        ...card,
-        number: parseCardNumberDigits(card.number),
-        expiry: normalizeCardExpiryString(card.expiry),
-      }));
-      await onImport(imported);
+      const imported = importedCards.map((card) => normalizeImportedCreditCard(card));
+      const { cards: uniqueCards, skipped } = filterDuplicateCardImports(imported, cards);
+      if (uniqueCards.length === 0) {
+        setStatus(formatCardImportSkipMessage(0, skipped));
+        return;
+      }
+
+      await onImport(uniqueCards);
+      setStatus(formatCardImportSkipMessage(uniqueCards.length, skipped));
       setImportText("");
       clearCsvImport();
       setImportCategorySelection(existingCategorySelection(fallbackCategoryId));
@@ -841,10 +897,14 @@ export function CreditCardsPanel({
 
             <div className="cards-table-wrap">
               <div className="table-scroll">
-                <table className="profiles-table cards-table">
+                <table
+                  ref={cardTableColumns.tableRef}
+                  className={`profiles-table cards-table ${cardTableColumns.tableClassName}`.trim()}
+                >
+                  <TableColGroup columns={cardTableColumns} />
                   <thead>
                     <tr>
-                      <th className="col-check">
+                      <ResizableTh columns={cardTableColumns} id="check" className="col-check">
                         <RowCheckbox
                           checked={allSelected}
                           aria-label="Select all cards"
@@ -853,22 +913,43 @@ export function CreditCardsPanel({
                             anchorIndexRef.current = null;
                           }}
                         />
-                      </th>
-                      <th className="col-index">#</th>
-                      <th className="col-brand">Brand</th>
-                      <th>Card name</th>
-                      <th>Number</th>
-                      <th>CVV</th>
-                      <th>Exp</th>
-                      <th>Status</th>
-                      <th>Associated profile(s)</th>
-                      <th>Notes</th>
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="index" className="col-index">
+                        #
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="brand" className="col-brand">
+                        Brand
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="name">
+                        Card name
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="category" className="col-category">
+                        Category
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="number">
+                        Number
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="cvv">
+                        CVV
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="exp">
+                        Exp
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="status">
+                        Status
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="profiles">
+                        Associated profile(s)
+                      </ResizableTh>
+                      <ResizableTh columns={cardTableColumns} id="notes">
+                        Notes
+                      </ResizableTh>
                     </tr>
                   </thead>
                   <tbody>
                     {searchFilteredCards.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="table-empty">
+                        <td colSpan={CARD_TABLE_COLUMNS.length} className="table-empty">
                           {cardSearch.trim()
                             ? "No cards match your search."
                             : selectedCategory && canDeleteSelectedCategory
@@ -901,6 +982,12 @@ export function CreditCardsPanel({
                             </td>
                             <td className="col-profile-name" title={card.profileName}>
                               {card.profileName || "—"}
+                            </td>
+                            <td
+                              className="col-category"
+                              title={categoryNameById.get(cardCategoryId(card)) ?? "Uncategorized"}
+                            >
+                              {categoryNameById.get(cardCategoryId(card)) ?? "Uncategorized"}
                             </td>
                             <td
                               className="col-number card-pool-number"
@@ -958,6 +1045,7 @@ export function CreditCardsPanel({
         importCategorySelection={importCategorySelection}
         importFormat={importFormat}
         importText={importText}
+        importCsvText={importCsvText}
         importCsvFileName={importCsvFileName}
         importCsvHeaders={importCsvHeaders}
         importColumnMapping={importColumnMapping}
@@ -969,6 +1057,7 @@ export function CreditCardsPanel({
         onImportCategorySelectionChange={setImportCategorySelection}
         onImportFormatChange={setImportFormat}
         onImportTextChange={setImportText}
+        onImportCsvTextChange={handleImportCsvTextChange}
         onCsvFileUpload={(file) => void handleCsvFileUpload(file)}
         onClearCsvImport={clearCsvImport}
         onImportColumnMappingChange={setImportColumnMapping}

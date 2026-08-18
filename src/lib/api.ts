@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import * as browserStorage from "./browserStorage";
 import { isTauriRuntime } from "./env";
 import { usesProjectDataFiles } from "./localDataStore";
+import { sortProfilesByName } from "./profileNameUtils";
 import type {
   ExportTemplate,
   JigPreset,
@@ -17,6 +18,7 @@ const backend = isTauriRuntime() && !usesProjectDataFiles()
       saveProfile: (profile: Profile) => invoke("save_profile", { profile }),
       saveProfiles: (profiles: Profile[]) => invoke("save_profiles", { profiles }),
       deleteProfile: (id: string) => invoke("delete_profile", { id }),
+      replaceAllProfiles: (profiles: Profile[]) => invoke("replace_profiles", { profiles }),
       listJigPresets: () => invoke<JigPreset[]>("list_jig_presets"),
       saveJigPreset: (preset: JigPreset) => invoke("save_jig_preset", { preset }),
       deleteJigPreset: (id: string) => invoke("delete_jig_preset", { id }),
@@ -33,7 +35,7 @@ const backend = isTauriRuntime() && !usesProjectDataFiles()
   : browserStorage;
 
 export async function listProfiles(): Promise<ProfileSummary[]> {
-  return backend.listProfiles();
+  return sortProfilesByName(await backend.listProfiles());
 }
 
 export async function getProfile(id: string): Promise<Profile> {
@@ -50,6 +52,22 @@ export async function saveProfiles(profiles: Profile[]): Promise<void> {
 
 export async function deleteProfile(id: string): Promise<void> {
   await backend.deleteProfile(id);
+}
+
+export async function loadAllProfiles(): Promise<Profile[]> {
+  if (isTauriRuntime() && !usesProjectDataFiles()) {
+    const summaries = await listProfiles();
+    return Promise.all(summaries.map((summary) => getProfile(summary.id)));
+  }
+  return browserStorage.loadAllProfiles();
+}
+
+export async function replaceAllProfiles(profiles: Profile[]): Promise<void> {
+  if (isTauriRuntime() && !usesProjectDataFiles()) {
+    await invoke("replace_profiles", { profiles });
+    return;
+  }
+  await browserStorage.replaceAllProfiles(profiles);
 }
 
 export async function listJigPresets(): Promise<JigPreset[]> {
@@ -95,6 +113,23 @@ export async function deleteMasterProfile(id: string): Promise<void> {
   await backend.deleteMasterProfile(id);
 }
 
+export async function replaceAllMasterProfiles(masters: MasterProfile[]): Promise<void> {
+  if (isTauriRuntime() && !usesProjectDataFiles()) {
+    const current = await listMasterProfiles();
+    const snapshotIds = new Set(masters.map((master) => master.id));
+    for (const master of current) {
+      if (!snapshotIds.has(master.id)) {
+        await deleteMasterProfile(master.id);
+      }
+    }
+    for (const master of masters) {
+      await saveMasterProfile(master);
+    }
+    return;
+  }
+  await browserStorage.replaceAllMasterProfiles(masters);
+}
+
 export async function listCreditCards() {
   return browserStorage.listCreditCards();
 }
@@ -111,6 +146,10 @@ export async function importCreditCards(cards: import("./types").CreditCard[]) {
   return browserStorage.importCreditCards(cards);
 }
 
+export async function replaceAllCreditCards(cards: import("./types").CreditCard[]) {
+  return browserStorage.replaceAllCreditCards(cards);
+}
+
 export async function listCredentials() {
   return browserStorage.listCredentials();
 }
@@ -125,6 +164,10 @@ export async function deleteCredential(id: string) {
 
 export async function importCredentials(credentials: import("./types").Credential[]) {
   return browserStorage.importCredentials(credentials);
+}
+
+export async function replaceAllCredentials(credentials: import("./types").Credential[]) {
+  return browserStorage.replaceAllCredentials(credentials);
 }
 
 export async function listAccountCategories() {
@@ -173,4 +216,74 @@ export async function deleteProfileCategory(id: string) {
 
 export async function reorderProfileCategories(orderedIds: string[]) {
   return browserStorage.reorderProfileCategories(orderedIds);
+}
+
+export async function listProxies() {
+  return browserStorage.listProxies();
+}
+
+export async function saveProxies(proxies: import("../modules/browserSessions/types").ProxyEntry[]) {
+  return browserStorage.saveProxies(proxies);
+}
+
+export async function importProxies(proxies: import("../modules/browserSessions/types").ProxyEntry[]) {
+  return browserStorage.importProxies(proxies);
+}
+
+export async function deleteProxy(id: string) {
+  return browserStorage.deleteProxy(id);
+}
+
+export async function listProxyAssignments() {
+  return browserStorage.listProxyAssignments();
+}
+
+export async function saveProxyAssignments(assignments: Record<string, string>) {
+  return browserStorage.saveProxyAssignments(assignments);
+}
+
+export async function listProxyGroups() {
+  return browserStorage.listProxyGroups();
+}
+
+export async function saveProxyGroup(group: import("../modules/browserSessions/types").ProxyGroup) {
+  return browserStorage.saveProxyGroup(group);
+}
+
+export async function deleteProxyGroup(id: string) {
+  return browserStorage.deleteProxyGroup(id);
+}
+
+export async function listImapAccounts() {
+  return browserStorage.listImapAccounts();
+}
+
+export async function saveImapAccount(account: import("./types").ImapAccount) {
+  return browserStorage.saveImapAccount(account);
+}
+
+export async function deleteImapAccount(id: string) {
+  return browserStorage.deleteImapAccount(id);
+}
+
+export async function getImapMail(accountId: string) {
+  return browserStorage.getImapMail(accountId);
+}
+
+export async function saveImapMail(accountId: string, messages: import("./types").StoredImapMessage[]) {
+  return browserStorage.saveImapMail(accountId, messages);
+}
+
+export async function testImap(settings: import("./types").ImapSettings) {
+  if (!isTauriRuntime()) {
+    throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
+  }
+  return invoke<import("./types").ImapTestResult>("test_imap", { settings });
+}
+
+export async function fetchImapInbox(settings: import("./types").ImapSettings, limit = 500) {
+  if (!isTauriRuntime()) {
+    throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
+  }
+  return invoke<import("./types").ImapMessage[]>("fetch_imap_inbox", { settings, limit });
 }

@@ -7,7 +7,11 @@ import {
   sortAccountCategories,
   UNCATEGORIZED_CATEGORY_ID,
 } from "../lib/accountCategoryUtils";
-import { parseBulkCredentialLines } from "../lib/bulkCredentialImport";
+import {
+  filterDuplicateAccountImports,
+  formatAccountImportSkipMessage,
+  parseBulkCredentialLines,
+} from "../lib/bulkCredentialImport";
 import {
   applyMassEditPatch,
   buildMassEditDraft,
@@ -22,6 +26,7 @@ import { applyExcelListSelection } from "../lib/listSelection";
 import { ACCOUNT_SITES, DEFAULT_ACCOUNT_SITE } from "../lib/profileEmailUtils";
 import type { AccountCategory, Credential } from "../lib/types";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
+import { useResizableTableColumns } from "../hooks/useResizableTableColumns";
 import {
   resolveCategorySelection,
   type CategorySelection,
@@ -32,12 +37,15 @@ import { AccountStatusDisplay } from "./AccountStatusDisplay";
 import { CreateCategoryModal } from "./CreateCategoryModal";
 import { MoveAccountsModal } from "./MoveAccountsModal";
 import { RenameableCategoryName } from "./RenameableCategoryName";
+import { ResizableTh, TableColGroup } from "./ResizableTable";
 import { RowCheckbox } from "./ui";
 
 const ACCOUNTS_SIDEBAR_WIDTH_KEY = "profile-generator:accounts-sidebar-width";
 const ACCOUNTS_SIDEBAR_DEFAULT_WIDTH = 200;
 const ACCOUNTS_SIDEBAR_MIN_WIDTH = 140;
 const ACCOUNTS_SIDEBAR_MAX_WIDTH = 420;
+const ACCOUNT_TABLE_COLUMNS = ["check", "index", "site", "username", "status", "profile", "notes"] as const;
+const ACCOUNT_TABLE_LOCKED_COLUMNS = ["check"] as const;
 
 function clampSidebarWidth(width: number): number {
   return Math.min(ACCOUNTS_SIDEBAR_MAX_WIDTH, Math.max(ACCOUNTS_SIDEBAR_MIN_WIDTH, width));
@@ -170,6 +178,24 @@ export function CredentialsPanel({
       (credential) => (credential.categoryId || UNCATEGORIZED_CATEGORY_ID) === selectedCategoryId,
     );
   }, [credentials, selectedCategoryId]);
+
+  const accountTableColumns = useResizableTableColumns({
+    columnIds: ACCOUNT_TABLE_COLUMNS,
+    lockedIds: ACCOUNT_TABLE_LOCKED_COLUMNS,
+    storageKey: "accounts",
+    fitKey: visibleCredentials
+      .map((credential) =>
+        [
+          credential.id,
+          credential.site,
+          credential.username,
+          credential.accountStatus,
+          credential.notes,
+          profileLabelForCredential?.(credential.id) ?? "",
+        ].join("\t"),
+      )
+      .join("\n"),
+  });
 
   const orderedIds = visibleCredentials.map((credential) => credential.id);
   const allSelected =
@@ -539,8 +565,14 @@ export function CredentialsPanel({
       return;
     }
 
+    const { lines: uniqueLines, skipped } = filterDuplicateAccountImports(site, lines, credentials);
+    if (uniqueLines.length === 0) {
+      setStatus(formatAccountImportSkipMessage(site, 0, skipped));
+      return;
+    }
+
     const now = new Date().toISOString();
-    const imported: Credential[] = lines.map(({ username, password }) => ({
+    const imported: Credential[] = uniqueLines.map(({ username, password }) => ({
       id: crypto.randomUUID(),
       site,
       username,
@@ -552,6 +584,7 @@ export function CredentialsPanel({
     }));
 
     await onImport(imported);
+    setStatus(formatAccountImportSkipMessage(site, imported.length, skipped));
     setImportText("");
     setImportCategorySelection(existingCategorySelection(categoryId));
     setShowAccountModal(false);
@@ -720,10 +753,14 @@ export function CredentialsPanel({
 
             <div className="accounts-table-wrap">
               <div className="table-scroll">
-                <table className="profiles-table accounts-table">
+                <table
+                  ref={accountTableColumns.tableRef}
+                  className={`profiles-table accounts-table ${accountTableColumns.tableClassName}`.trim()}
+                >
+                  <TableColGroup columns={accountTableColumns} />
                   <thead>
                     <tr>
-                      <th className="col-check">
+                      <ResizableTh columns={accountTableColumns} id="check" className="col-check">
                         <RowCheckbox
                           checked={allSelected}
                           aria-label="Select all accounts"
@@ -732,19 +769,31 @@ export function CredentialsPanel({
                             anchorIndexRef.current = null;
                           }}
                         />
-                      </th>
-                      <th className="col-index">#</th>
-                      <th>Site</th>
-                      <th>Username</th>
-                      <th>Status</th>
-                      <th>Profile</th>
-                      <th>Notes</th>
+                      </ResizableTh>
+                      <ResizableTh columns={accountTableColumns} id="index" className="col-index">
+                        #
+                      </ResizableTh>
+                      <ResizableTh columns={accountTableColumns} id="site">
+                        Site
+                      </ResizableTh>
+                      <ResizableTh columns={accountTableColumns} id="username">
+                        Username
+                      </ResizableTh>
+                      <ResizableTh columns={accountTableColumns} id="status">
+                        Status
+                      </ResizableTh>
+                      <ResizableTh columns={accountTableColumns} id="profile">
+                        Profile
+                      </ResizableTh>
+                      <ResizableTh columns={accountTableColumns} id="notes">
+                        Notes
+                      </ResizableTh>
                     </tr>
                   </thead>
                   <tbody>
                     {visibleCredentials.length === 0 ? (
                       <tr>
-                        <td colSpan={7} className="table-empty">
+                        <td colSpan={ACCOUNT_TABLE_COLUMNS.length} className="table-empty">
                           {selectedCategory && canDeleteSelectedCategory
                             ? "No accounts in this category. You can delete it using the toolbar."
                             : "No accounts in this category."}

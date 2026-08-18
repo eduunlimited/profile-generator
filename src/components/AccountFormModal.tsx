@@ -97,7 +97,7 @@ export function AccountFormModal({
   const showImportSection = !isEditing && !isMassEditing && initialSection === "import";
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
       <div
         className="modal-dialog modal-dialog-wide account-form-modal"
         onClick={(event) => event.stopPropagation()}

@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AppNav } from "./components/AppNav";
 
+import { EpgsAppIcon, EpgsLogo } from "./components/EpgsBrand";
+
 import { CreditCardsPanel } from "./components/CreditCardsPanel";
 
 import { CredentialsPanel } from "./components/CredentialsPanel";
+
+import { ConfirmDeleteModal } from "./components/ConfirmDeleteModal";
 
 import { DevModeBanner } from "./components/DevModeBanner";
 
@@ -24,7 +28,15 @@ import { MasterProfileModal } from "./components/MasterProfileModal";
 
 import { ProfilesPanel } from "./components/ProfilesPanel";
 
+import { MailPanel } from "./components/MailPanel";
+
+import { LicenseGate, useAppUpdateChecks } from "./components/LicenseGate";
+
+import { BrowserSessionsPanel } from "./modules/browserSessions";
+
 import { useAppData } from "./hooks/useAppData";
+
+import { useConfirmDelete } from "./hooks/useConfirmDelete";
 
 import { formatLinkedProfileNames } from "./lib/profileNameUtils";
 
@@ -34,13 +46,23 @@ import { profilesMatchingCard } from "./lib/creditCardUtils";
 
 import type { AppTab, MasterProfile } from "./lib/types";
 
+const TAB_CONTEXT: Record<AppTab, { title: string; hint: string }> = {
+  profiles: { title: "Jig Profiles", hint: "Master parents · generate · re-jig · export" },
+  master: { title: "Master Profiles", hint: "Parent addresses · source of truth" },
+  cards: { title: "Credit Cards", hint: "Pool · assign · categories" },
+  credentials: { title: "Accounts", hint: "Credentials · site links" },
+  mail: { title: "Mail", hint: "IMAP keys · last 500 messages" },
+  jigs: { title: "Jig Presets", hint: "Name · address · export rules" },
+  sessions: { title: "Browser Sessions", hint: "Account pool · Camoufox · cookies" },
+};
+
 import { createEmptyMasterProfile, masterProfileLabel } from "./lib/masterProfileUtils";
 
 import "./App.css";
 
 
 
-function App() {
+function AppContent() {
 
   const {
 
@@ -72,6 +94,8 @@ function App() {
 
     assignCards,
 
+    unassignCards,
+
     massDistributeProfiles,
 
     loadProfile,
@@ -83,7 +107,17 @@ function App() {
 
     removeMasterProfile,
 
-    removeProfile,
+    removeProfiles,
+
+    canUndoLastAction,
+
+    lastActionLabel,
+
+    recordLastAction,
+
+    updateLastActionLabel,
+
+    undoLastAction,
 
     upsertCreditCard,
 
@@ -151,17 +185,17 @@ function App() {
 
   const [masterDraft, setMasterDraft] = useState<MasterProfile | null>(null);
 
-  const [generateStatus, setGenerateStatus] = useState<string | null>(null);
-
-  const [rejigStatus, setRejigStatus] = useState<string | null>(null);
-
-  const [assignCardsStatus, setAssignCardsStatus] = useState<string | null>(null);
-
   const [showMassDistributeModal, setShowMassDistributeModal] = useState(false);
 
   const [showExportModal, setShowExportModal] = useState(false);
 
-  const [massDistributeStatus, setMassDistributeStatus] = useState<string | null>(null);
+  const {
+    pending: undoConfirm,
+    busy: undoConfirmBusy,
+    askConfirm: askUndoConfirm,
+    closeConfirm: closeUndoConfirm,
+    acceptConfirm: acceptUndoConfirm,
+  } = useConfirmDelete();
 
 
 
@@ -333,9 +367,13 @@ function App() {
     }
   };
 
-  const openGenerateModal = (masterId: string) => {
+  const [generateCategoryId, setGenerateCategoryId] = useState<string | null>(null);
+
+  const openGenerateModal = (masterId: string, categoryId?: string) => {
 
     setGenerateMasterId(masterId);
+
+    setGenerateCategoryId(categoryId ?? null);
 
     setActiveMasterId(masterId);
 
@@ -405,6 +443,20 @@ function App() {
 
   };
 
+  const handleUndoLast = () => {
+    if (!canUndoLastAction || !lastActionLabel) {
+      return;
+    }
+    askUndoConfirm({
+      title: "Undo last action",
+      message: `Undo "${lastActionLabel}"? The app will restore profiles, cards, accounts, and masters to how they were before that action.`,
+      confirmLabel: "Undo last",
+      onConfirm: async () => {
+        await undoLastAction();
+      },
+    });
+  };
+
 
 
   const closeAssignCardsModal = () => {
@@ -441,29 +493,59 @@ function App() {
 
           <header className="app-titlebar">
 
-            <div>
+            <div className="app-titlebar-brand">
 
-              <h1>Profile Generator</h1>
+              <EpgsAppIcon size={38} className="app-titlebar-icon" />
 
-              <span className="app-titlebar-sub">
+              <div className="app-titlebar-copy">
 
-                Master parent · jig child profiles · cards · export
+                <EpgsLogo showVersion />
 
-              </span>
+                <p className="app-titlebar-context">
+
+                  <span className="app-titlebar-context-module">{TAB_CONTEXT[activeTab].title}</span>
+
+                  <span className="app-titlebar-context-sep" aria-hidden="true">
+
+                    ·
+
+                  </span>
+
+                  <span className="app-titlebar-context-hint">{TAB_CONTEXT[activeTab].hint}</span>
+
+                </p>
+
+              </div>
 
             </div>
 
-            {loading ? <span className="status-pill">Loading</span> : null}
+            <div className="app-titlebar-status">
 
-            {error ? <span className="status-pill error">{error}</span> : null}
+              {loading ? <span className="status-pill">Loading</span> : null}
 
-            {generateStatus ? <span className="status-pill">{generateStatus}</span> : null}
+              {error ? <span className="status-pill error">{error}</span> : null}
 
-            {rejigStatus ? <span className="status-pill">{rejigStatus}</span> : null}
+              {lastActionLabel ? (
+                <span className="app-titlebar-last-action" title={lastActionLabel}>
+                  Last: {lastActionLabel}
+                </span>
+              ) : null}
 
-            {assignCardsStatus ? <span className="status-pill">{assignCardsStatus}</span> : null}
+              <button
+                type="button"
+                className="btn-secondary btn-compact app-titlebar-undo"
+                disabled={!canUndoLastAction}
+                title={
+                  canUndoLastAction && lastActionLabel
+                    ? `Undo: ${lastActionLabel}`
+                    : "Nothing to undo"
+                }
+                onClick={handleUndoLast}
+              >
+                Undo last
+              </button>
 
-            {massDistributeStatus ? <span className="status-pill">{massDistributeStatus}</span> : null}
+            </div>
 
           </header>
 
@@ -491,7 +573,7 @@ function App() {
 
                 onImportProfiles={importProfiles}
 
-                onDelete={removeProfile}
+                onDeleteProfiles={removeProfiles}
 
                 onSaveCategory={upsertProfileCategory}
 
@@ -515,6 +597,10 @@ function App() {
 
                 onAssignCards={openAssignCardsFromProfiles}
 
+                onUnassignCards={unassignCards}
+
+                onLastAction={updateLastActionLabel}
+
                 onMassDistribute={() => setShowMassDistributeModal(true)}
 
                 onExport={() => setShowExportModal(true)}
@@ -533,6 +619,8 @@ function App() {
 
                 initialMasterId={generateMasterId ?? activeMasterId}
 
+                initialCategoryId={generateCategoryId}
+
                 profileCategories={profileCategories}
 
                 jigPresets={jigPresets}
@@ -549,7 +637,7 @@ function App() {
 
                   const master = masterProfiles.find((item) => item.id === masterId);
 
-                  setGenerateStatus(
+                  updateLastActionLabel(
 
                     `Created ${count} jig profile(s) under ${master ? masterProfileLabel(master) : "master"}.`,
 
@@ -581,15 +669,15 @@ function App() {
 
                   if (result.failedCount > 0) {
 
-                    setRejigStatus(
+                    updateLastActionLabel(
 
-                      `Re-jigged ${result.updatedCount} profile(s). ${result.failedCount} could not get a unique street line 1.`,
+                      `Re-jigged ${result.updatedCount} profile(s). ${result.failedCount} could not get a street line 1 under the 3-per-category limit.`,
 
                     );
 
                   } else {
 
-                    setRejigStatus(`Re-jigged ${result.updatedCount} profile(s).`);
+                    updateLastActionLabel(`Re-jigged ${result.updatedCount} profile(s).`);
 
                   }
 
@@ -671,6 +759,26 @@ function App() {
 
 
 
+          {activeTab === "mail" ? (
+
+            <div className="accounts-panel">
+
+              <MailPanel profiles={profiles} />
+
+            </div>
+
+          ) : null}
+
+
+
+          {activeTab === "sessions" ? (
+
+            <BrowserSessionsPanel credentials={credentials} profiles={profiles} />
+
+          ) : null}
+
+
+
           {activeTab === "jigs" ? (
 
             <div className="panel-scroll">
@@ -687,8 +795,11 @@ function App() {
             open={showExportModal}
             selectedProfileIds={exportIds}
             exportTemplates={exportTemplates}
+            masterProfiles={masterProfiles}
+            profileCategories={profileCategories}
             onClose={() => setShowExportModal(false)}
             onSaveTemplate={upsertExportTemplate}
+            onLastAction={recordLastAction}
           />
 
 
@@ -698,6 +809,8 @@ function App() {
             open={showAssignCardsModal}
 
             cards={creditCards}
+
+            cardCategories={cardCategories}
 
             profiles={profiles}
 
@@ -713,7 +826,7 @@ function App() {
 
             onSuccess={(count) => {
 
-              setAssignCardsStatus(`Assigned cards to ${count} profile(s).`);
+              updateLastActionLabel(`Assigned cards to ${count} profile(s).`);
 
               closeAssignCardsModal();
 
@@ -735,7 +848,7 @@ function App() {
 
             onSuccess={(result) => {
 
-              setMassDistributeStatus(result.message);
+              updateLastActionLabel(result.message);
 
               setShowMassDistributeModal(false);
 
@@ -770,6 +883,16 @@ function App() {
 
           <DevModeBanner />
 
+          <ConfirmDeleteModal
+            open={Boolean(undoConfirm)}
+            title={undoConfirm?.title ?? "Undo last action"}
+            message={undoConfirm?.message ?? ""}
+            confirmLabel={undoConfirm?.confirmLabel ?? "Undo last"}
+            busy={undoConfirmBusy}
+            onClose={closeUndoConfirm}
+            onConfirm={acceptUndoConfirm}
+          />
+
         </div>
 
       </div>
@@ -781,6 +904,15 @@ function App() {
 }
 
 
+
+function App() {
+  useAppUpdateChecks();
+  return (
+    <LicenseGate>
+      <AppContent />
+    </LicenseGate>
+  );
+}
 
 export default App;
 

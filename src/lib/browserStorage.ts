@@ -1,25 +1,26 @@
 import { billingAddressLines, billingFullName, resolveProfileDisplayName } from "./profileNameUtils";
 import { normalizeProfile } from "./profileEmailUtils";
 import { formatUsPhone } from "./phoneUtils";
-import { parseCardNumberDigits, resolveCreditCardProfileLabel } from "./creditCardUtils";
+import { parseCardNumberDigits, profileHasPaymentCard, resolveCreditCardProfileLabel } from "./creditCardUtils";
 import { normalizeMasterProfile, sortMasterProfiles } from "./masterProfileUtils";
 import { normalizeCredential, type StoredCredential } from "./credentialUtils";
 import { normalizeCreditCard, type StoredCreditCard } from "./creditCardUtils";
 import { RETIRED_BUILTIN_JIG_IDS } from "./presets";
-import { categoryIdsInUse, createUncategorizedCategory, sortAccountCategories, UNCATEGORIZED_CATEGORY_ID } from "./accountCategoryUtils";
+import { createUncategorizedCategory, sortAccountCategories, UNCATEGORIZED_CATEGORY_ID } from "./accountCategoryUtils";
 import {
-  cardCategoryIdsInUse,
   createUncategorizedCardCategory,
   sortCardCategories,
   CARD_UNCATEGORIZED_CATEGORY_ID,
 } from "./cardCategoryUtils";
 import {
+  createMissingProfileCategory,
   createUncategorizedProfileCategory,
-  profileCategoryIdsInUse,
   sortProfileCategories,
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
 } from "./profileCategoryUtils";
+import { IMAP_MAIL_CAP, toStoredImapMessage } from "./imapInbox";
 import {
+  flushLocalDataWrites,
   readCachedMap,
   removeLegacyStorageKey,
   writeCachedMap,
@@ -30,12 +31,21 @@ import type {
   Credential,
   CreditCard,
   ExportTemplate,
+  ImapAccount,
+  ImapSettings,
   JigPreset,
   MasterProfile,
   Profile,
   ProfileCategory,
   ProfileSummary,
+  StoredImapMessage,
 } from "./types";
+import type { ProxyEntry, ProxyGroup } from "../modules/browserSessions/types";
+import {
+  PROXY_UNCATEGORIZED_GROUP_ID,
+  createUncategorizedProxyGroup,
+  sortProxyGroups,
+} from "../modules/browserSessions/proxyGroupUtils";
 
 const KEYS = {
   profiles: "profile-generator:profiles",
@@ -48,6 +58,12 @@ const KEYS = {
   accountCategories: "profile-generator:account-categories",
   cardCategories: "profile-generator:card-categories",
   profileCategories: "profile-generator:profile-categories",
+  proxyPool: "profile-generator:proxy-pool",
+  proxyGroups: "profile-generator:proxy-groups",
+  proxyAssignments: "profile-generator:proxy-assignments",
+  imapSettings: "profile-generator:imap-settings",
+  imapMail: "profile-generator:imap-mail",
+  pythonPath: "profile-generator:python-path",
 } as const;
 
 function readMap<T>(key: string): Record<string, T> {
@@ -55,7 +71,11 @@ function readMap<T>(key: string): Record<string, T> {
 }
 
 function writeMap<T>(key: string, value: Record<string, T>) {
-  writeCachedMap(key, value);
+  void writeCachedMap(key, value);
+}
+
+async function persistMap(): Promise<void> {
+  await flushLocalDataWrites();
 }
 
 function readCredentialsMap(): Record<string, Credential> {
@@ -87,6 +107,7 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
   const billingName = billingFullName(profile);
   const addressLines = billingAddressLines(profile);
   const profileEmail = profile.email?.trim() || profile.logins[0]?.email?.trim() || "";
+  const hasPaymentCard = profileHasPaymentCard(profile);
 
   return {
     id: profile.id,
@@ -100,8 +121,8 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     billingAddressLine1: addressLines.line1,
     billingAddressLine2: addressLines.line2,
     billingAddressLine3: addressLines.line3,
-    cardNumberMasked: maskCardNumber(payment.number),
-    cardBrand: payment.brand,
+    cardNumberMasked: hasPaymentCard ? maskCardNumber(payment.number) : "",
+    cardBrand: hasPaymentCard && payment.brand.trim() ? payment.brand : "",
     accounts: sites || "None",
     accountSite: profile.accountSite?.trim() ?? "",
     masterProfileId: profile.masterProfileId,
@@ -119,6 +140,8 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
 }
 
 export async function listProfiles(): Promise<ProfileSummary[]> {
+  repairOrphanProfileCategoryIds();
+  await persistMap();
   const profiles = Object.values(readMap<Profile>(KEYS.profiles));
   const cards = readCreditCardsMap();
   const creds = readCredentialsMap();
@@ -136,29 +159,60 @@ export async function getProfile(id: string): Promise<Profile> {
 
 export async function saveProfile(profile: Profile): Promise<void> {
   const profiles = readMap<Profile>(KEYS.profiles);
-  const normalized = normalizeProfile(profile);
+  const normalized = normalizeProfile({
+    ...profile,
+    categoryId: resolveStoredProfileCategoryId(profile.categoryId),
+  });
   ensureProfileCategoryRecord(normalized.categoryId);
   profiles[normalized.id] = normalized;
   writeMap(KEYS.profiles, profiles);
-  pruneEmptyProfileCategories();
+  await persistMap();
 }
 
 export async function saveProfiles(profilesToSave: Profile[]): Promise<void> {
   const profiles = readMap<Profile>(KEYS.profiles);
   for (const profile of profilesToSave) {
-    const normalized = normalizeProfile(profile);
+    const normalized = normalizeProfile({
+      ...profile,
+      categoryId: resolveStoredProfileCategoryId(profile.categoryId),
+    });
     ensureProfileCategoryRecord(normalized.categoryId);
     profiles[normalized.id] = normalized;
   }
   writeMap(KEYS.profiles, profiles);
-  pruneEmptyProfileCategories();
+  await persistMap();
 }
 
 export async function deleteProfile(id: string): Promise<void> {
   const profiles = readMap<Profile>(KEYS.profiles);
   delete profiles[id];
   writeMap(KEYS.profiles, profiles);
-  pruneEmptyProfileCategories();
+  await persistMap();
+}
+
+export async function loadAllProfiles(): Promise<Profile[]> {
+  const profiles = Object.values(readMap<Profile>(KEYS.profiles));
+  return profiles.map((profile) =>
+    normalizeProfile({
+      ...profile,
+      credentialIds: profile.credentialIds ?? [],
+    }),
+  );
+}
+
+export async function replaceAllProfiles(profilesToRestore: Profile[]): Promise<void> {
+  const profiles: Record<string, Profile> = {};
+  for (const profile of profilesToRestore) {
+    const normalized = normalizeProfile({
+      ...profile,
+      credentialIds: profile.credentialIds ?? [],
+      categoryId: resolveStoredProfileCategoryId(profile.categoryId),
+    });
+    ensureProfileCategoryRecord(normalized.categoryId);
+    profiles[normalized.id] = normalized;
+  }
+  writeMap(KEYS.profiles, profiles);
+  await persistMap();
 }
 
 export async function listJigPresets(): Promise<JigPreset[]> {
@@ -169,12 +223,14 @@ export async function saveJigPreset(preset: JigPreset): Promise<void> {
   const presets = readMap<JigPreset>(KEYS.jigPresets);
   presets[preset.id] = preset;
   writeMap(KEYS.jigPresets, presets);
+  await persistMap();
 }
 
 export async function deleteJigPreset(id: string): Promise<void> {
   const presets = readMap<JigPreset>(KEYS.jigPresets);
   delete presets[id];
   writeMap(KEYS.jigPresets, presets);
+  await persistMap();
 }
 
 export async function listExportTemplates(): Promise<ExportTemplate[]> {
@@ -185,12 +241,14 @@ export async function saveExportTemplate(template: ExportTemplate): Promise<void
   const templates = readMap<ExportTemplate>(KEYS.exportTemplates);
   templates[template.id] = template;
   writeMap(KEYS.exportTemplates, templates);
+  await persistMap();
 }
 
 export async function deleteExportTemplate(id: string): Promise<void> {
   const templates = readMap<ExportTemplate>(KEYS.exportTemplates);
   delete templates[id];
   writeMap(KEYS.exportTemplates, templates);
+  await persistMap();
 }
 
 export async function seedDefaults(
@@ -228,6 +286,7 @@ export async function seedDefaults(
   ensureAccountCategoriesStored();
   ensureCardCategoriesStored();
   ensureProfileCategoriesStored();
+  await persistMap();
 }
 
 function readAccountCategoriesMap(): Record<string, AccountCategory> {
@@ -249,24 +308,7 @@ function ensureCategoryRecord(categoryId: string): void {
   }
 }
 
-function pruneEmptyAccountCategories(): void {
-  const creds = readCredentialsMap();
-  const inUse = categoryIdsInUse(Object.values(creds));
-  const categories = readAccountCategoriesMap();
-  let changed = false;
-  for (const id of Object.keys(categories)) {
-    if (!inUse.has(id)) {
-      delete categories[id];
-      changed = true;
-    }
-  }
-  if (changed) {
-    writeMap(KEYS.accountCategories, categories);
-  }
-}
-
 export async function listAccountCategories(): Promise<AccountCategory[]> {
-  pruneEmptyAccountCategories();
   return sortAccountCategories(Object.values(readAccountCategoriesMap()));
 }
 
@@ -274,6 +316,7 @@ export async function saveAccountCategory(category: AccountCategory): Promise<vo
   const categories = readAccountCategoriesMap();
   categories[category.id] = category;
   writeMap(KEYS.accountCategories, categories);
+  await persistMap();
 }
 
 export async function reorderAccountCategories(orderedIds: string[]): Promise<void> {
@@ -291,6 +334,7 @@ export async function reorderAccountCategories(orderedIds: string[]): Promise<vo
 
   if (changed) {
     writeMap(KEYS.accountCategories, categories);
+    await persistMap();
   }
 }
 
@@ -309,6 +353,7 @@ export async function deleteAccountCategory(id: string): Promise<void> {
 
   delete categories[id];
   writeMap(KEYS.accountCategories, categories);
+  await persistMap();
 }
 
 function readCardCategoriesMap(): Record<string, CardCategory> {
@@ -327,27 +372,61 @@ function ensureCardCategoryRecord(categoryId: string): void {
   if (categoryId === CARD_UNCATEGORIZED_CATEGORY_ID) {
     categories[categoryId] = createUncategorizedCardCategory();
     writeMap(KEYS.cardCategories, categories);
+    return;
   }
+  categories[categoryId] = {
+    id: categoryId,
+    name: "Missing category",
+    createdAt: new Date(0).toISOString(),
+  };
+  writeMap(KEYS.cardCategories, categories);
 }
 
-function pruneEmptyCardCategories(): void {
-  const cards = readCreditCardsMap();
-  const inUse = cardCategoryIdsInUse(Object.values(cards));
+function resolveStoredCardCategoryId(categoryId: string): string {
+  return categoryId?.trim() || CARD_UNCATEGORIZED_CATEGORY_ID;
+}
+
+function repairOrphanCardCategoryIds(): void {
   const categories = readCardCategoriesMap();
-  let changed = false;
-  for (const id of Object.keys(categories)) {
-    if (!inUse.has(id)) {
-      delete categories[id];
-      changed = true;
+  const cards = readCreditCardsMap();
+  let cardsChanged = false;
+  let categoriesChanged = false;
+  let needsUncategorized = false;
+
+  for (const [id, card] of Object.entries(cards)) {
+    const categoryId = card.categoryId?.trim() || CARD_UNCATEGORIZED_CATEGORY_ID;
+    if (categoryId === CARD_UNCATEGORIZED_CATEGORY_ID) {
+      if (card.categoryId !== CARD_UNCATEGORIZED_CATEGORY_ID) {
+        cards[id] = { ...card, categoryId: CARD_UNCATEGORIZED_CATEGORY_ID };
+        cardsChanged = true;
+      }
+      needsUncategorized = true;
+      continue;
+    }
+    if (!categories[categoryId]) {
+      categories[categoryId] = {
+        id: categoryId,
+        name: "Missing category",
+        createdAt: new Date(0).toISOString(),
+      };
+      categoriesChanged = true;
     }
   }
-  if (changed) {
+
+  if (cardsChanged) {
+    writeMap(KEYS.creditCards, cards);
+  }
+  if (categoriesChanged) {
     writeMap(KEYS.cardCategories, categories);
+  }
+  if (needsUncategorized) {
+    ensureCardCategoryRecord(CARD_UNCATEGORIZED_CATEGORY_ID);
   }
 }
 
 export async function listCardCategories(): Promise<CardCategory[]> {
-  pruneEmptyCardCategories();
+  repairOrphanCardCategoryIds();
+  await persistMap();
   return sortCardCategories(Object.values(readCardCategoriesMap()));
 }
 
@@ -355,6 +434,7 @@ export async function saveCardCategory(category: CardCategory): Promise<void> {
   const categories = readCardCategoriesMap();
   categories[category.id] = category;
   writeMap(KEYS.cardCategories, categories);
+  await persistMap();
 }
 
 export async function reorderCardCategories(orderedIds: string[]): Promise<void> {
@@ -372,6 +452,7 @@ export async function reorderCardCategories(orderedIds: string[]): Promise<void>
 
   if (changed) {
     writeMap(KEYS.cardCategories, categories);
+    await persistMap();
   }
 }
 
@@ -390,6 +471,7 @@ export async function deleteCardCategory(id: string): Promise<void> {
 
   delete categories[id];
   writeMap(KEYS.cardCategories, categories);
+  await persistMap();
 }
 
 function readProfileCategoriesMap(): Record<string, ProfileCategory> {
@@ -408,30 +490,53 @@ function ensureProfileCategoryRecord(categoryId: string): void {
   if (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID) {
     categories[categoryId] = createUncategorizedProfileCategory();
     writeMap(KEYS.profileCategories, categories);
+    return;
   }
+  categories[categoryId] = createMissingProfileCategory(categoryId);
+  writeMap(KEYS.profileCategories, categories);
 }
 
-function pruneEmptyProfileCategories(): void {
-  const profiles = Object.values(readMap<Profile>(KEYS.profiles));
-  const cards = readCreditCardsMap();
-  const creds = readCredentialsMap();
-  const summaries = profiles.map((profile) => profileSummary(profile, cards, creds));
-  const inUse = profileCategoryIdsInUse(summaries);
+function resolveStoredProfileCategoryId(categoryId: string): string {
+  return categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+}
+
+function repairOrphanProfileCategoryIds(): void {
   const categories = readProfileCategoriesMap();
-  let changed = false;
-  for (const id of Object.keys(categories)) {
-    if (!inUse.has(id)) {
-      delete categories[id];
-      changed = true;
+  const profiles = readMap<Profile>(KEYS.profiles);
+  let profilesChanged = false;
+  let categoriesChanged = false;
+  let needsUncategorized = false;
+
+  for (const [id, profile] of Object.entries(profiles)) {
+    const categoryId = profile.categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+    if (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID) {
+      if (profile.categoryId !== PROFILE_UNCATEGORIZED_CATEGORY_ID) {
+        profiles[id] = { ...profile, categoryId: PROFILE_UNCATEGORIZED_CATEGORY_ID };
+        profilesChanged = true;
+      }
+      needsUncategorized = true;
+      continue;
+    }
+    if (!categories[categoryId]) {
+      categories[categoryId] = createMissingProfileCategory(categoryId);
+      categoriesChanged = true;
     }
   }
-  if (changed) {
+
+  if (profilesChanged) {
+    writeMap(KEYS.profiles, profiles);
+  }
+  if (categoriesChanged) {
     writeMap(KEYS.profileCategories, categories);
+  }
+  if (needsUncategorized) {
+    ensureProfileCategoryRecord(PROFILE_UNCATEGORIZED_CATEGORY_ID);
   }
 }
 
 export async function listProfileCategories(): Promise<ProfileCategory[]> {
-  pruneEmptyProfileCategories();
+  repairOrphanProfileCategoryIds();
+  await persistMap();
   return sortProfileCategories(Object.values(readProfileCategoriesMap()));
 }
 
@@ -439,6 +544,7 @@ export async function saveProfileCategory(category: ProfileCategory): Promise<vo
   const categories = readProfileCategoriesMap();
   categories[category.id] = category;
   writeMap(KEYS.profileCategories, categories);
+  await persistMap();
 }
 
 export async function reorderProfileCategories(orderedIds: string[]): Promise<void> {
@@ -456,6 +562,7 @@ export async function reorderProfileCategories(orderedIds: string[]): Promise<vo
 
   if (changed) {
     writeMap(KEYS.profileCategories, categories);
+    await persistMap();
   }
 }
 
@@ -474,6 +581,7 @@ export async function deleteProfileCategory(id: string): Promise<void> {
 
   delete categories[id];
   writeMap(KEYS.profileCategories, categories);
+  await persistMap();
 }
 
 function migrateMasterProfilesMap(): Record<string, MasterProfile> {
@@ -509,43 +617,77 @@ export async function saveMasterProfile(master: MasterProfile): Promise<void> {
   const map = migrateMasterProfilesMap();
   map[normalized.id] = normalized;
   writeMap(KEYS.masterProfiles, map);
+  await persistMap();
 }
 
 export async function deleteMasterProfile(id: string): Promise<void> {
   const map = migrateMasterProfilesMap();
   delete map[id];
   writeMap(KEYS.masterProfiles, map);
+  await persistMap();
+}
+
+export async function replaceAllMasterProfiles(mastersToRestore: MasterProfile[]): Promise<void> {
+  const map: Record<string, MasterProfile> = {};
+  for (const master of mastersToRestore) {
+    const normalized = normalizeMasterProfile(master);
+    map[normalized.id] = normalized;
+  }
+  writeMap(KEYS.masterProfiles, map);
+  await persistMap();
 }
 
 export async function listCreditCards(): Promise<CreditCard[]> {
+  repairOrphanCardCategoryIds();
+  await persistMap();
   return Object.values(readCreditCardsMap());
 }
 
 export async function saveCreditCard(card: CreditCard): Promise<void> {
-  const normalized = normalizeCreditCard(card);
+  const normalized = normalizeCreditCard({
+    ...card,
+    categoryId: resolveStoredCardCategoryId(card.categoryId),
+  });
   ensureCardCategoryRecord(normalized.categoryId);
   const cards = readCreditCardsMap();
   cards[normalized.id] = normalized;
   writeMap(KEYS.creditCards, cards);
-  pruneEmptyCardCategories();
+  await persistMap();
 }
 
 export async function deleteCreditCard(id: string): Promise<void> {
   const cards = readCreditCardsMap();
   delete cards[id];
   writeMap(KEYS.creditCards, cards);
-  pruneEmptyCardCategories();
+  await persistMap();
 }
 
 export async function importCreditCards(cardsToImport: CreditCard[]): Promise<void> {
   const cards = readCreditCardsMap();
   for (const card of cardsToImport) {
-    const normalized = normalizeCreditCard(card);
+    const normalized = normalizeCreditCard({
+      ...card,
+      categoryId: resolveStoredCardCategoryId(card.categoryId),
+    });
     ensureCardCategoryRecord(normalized.categoryId);
     cards[normalized.id] = normalized;
   }
   writeMap(KEYS.creditCards, cards);
-  pruneEmptyCardCategories();
+  await persistMap();
+}
+
+export async function replaceAllCreditCards(cardsToRestore: CreditCard[]): Promise<void> {
+  const cards: Record<string, CreditCard> = {};
+  for (const card of cardsToRestore) {
+    const normalized = normalizeCreditCard({
+      ...card,
+      categoryId: resolveStoredCardCategoryId(card.categoryId),
+    });
+    ensureCardCategoryRecord(normalized.categoryId);
+    cards[normalized.id] = normalized;
+  }
+  writeMap(KEYS.creditCards, cards);
+  await persistMap();
 }
 
 export async function listCredentials(): Promise<Credential[]> {
@@ -558,14 +700,14 @@ export async function saveCredential(credential: Credential): Promise<void> {
   const creds = readCredentialsMap();
   creds[normalized.id] = normalized;
   writeMap(KEYS.credentials, creds);
-  pruneEmptyAccountCategories();
+  await persistMap();
 }
 
 export async function deleteCredential(id: string): Promise<void> {
   const creds = readCredentialsMap();
   delete creds[id];
   writeMap(KEYS.credentials, creds);
-  pruneEmptyAccountCategories();
+  await persistMap();
 }
 
 export async function importCredentials(credentialsToImport: Credential[]): Promise<void> {
@@ -576,5 +718,221 @@ export async function importCredentials(credentialsToImport: Credential[]): Prom
     creds[normalized.id] = normalized;
   }
   writeMap(KEYS.credentials, creds);
-  pruneEmptyAccountCategories();
+  await persistMap();
+}
+
+export async function replaceAllCredentials(credentialsToRestore: Credential[]): Promise<void> {
+  const creds: Record<string, Credential> = {};
+  for (const credential of credentialsToRestore) {
+    const normalized = normalizeCredential(credential);
+    ensureCategoryRecord(normalized.categoryId);
+    creds[normalized.id] = normalized;
+  }
+  writeMap(KEYS.credentials, creds);
+  await persistMap();
+}
+
+function normalizeProxyEntry(proxy: ProxyEntry): ProxyEntry {
+  return {
+    ...proxy,
+    groupId: proxy.groupId || PROXY_UNCATEGORIZED_GROUP_ID,
+    label: proxy.label?.trim() || undefined,
+    host: proxy.host.trim(),
+    username: proxy.username?.trim() || undefined,
+    password: proxy.password?.trim() || undefined,
+    protocol: proxy.protocol ?? "http",
+    enabled: proxy.enabled !== false,
+  };
+}
+
+function readProxyGroupsMap(): Record<string, ProxyGroup> {
+  const stored = readMap<ProxyGroup>(KEYS.proxyGroups);
+  if (!stored[PROXY_UNCATEGORIZED_GROUP_ID]) {
+    stored[PROXY_UNCATEGORIZED_GROUP_ID] = createUncategorizedProxyGroup();
+    writeMap(KEYS.proxyGroups, stored);
+  }
+  return stored;
+}
+
+export async function listProxyGroups(): Promise<ProxyGroup[]> {
+  const groups = sortProxyGroups(Object.values(readProxyGroupsMap()));
+  await persistMap();
+  return groups;
+}
+
+export async function saveProxyGroups(groups: ProxyGroup[]): Promise<void> {
+  const map = Object.fromEntries(groups.map((group) => [group.id, group]));
+  if (!map[PROXY_UNCATEGORIZED_GROUP_ID]) {
+    map[PROXY_UNCATEGORIZED_GROUP_ID] =
+      readProxyGroupsMap()[PROXY_UNCATEGORIZED_GROUP_ID] ?? createUncategorizedProxyGroup();
+  }
+  writeMap(KEYS.proxyGroups, map);
+  await persistMap();
+}
+
+export async function saveProxyGroup(group: ProxyGroup): Promise<void> {
+  const groups = readProxyGroupsMap();
+  groups[group.id] = group;
+  writeMap(KEYS.proxyGroups, groups);
+  await persistMap();
+}
+
+export async function deleteProxyGroup(id: string): Promise<void> {
+  if (id === PROXY_UNCATEGORIZED_GROUP_ID) {
+    throw new Error("Cannot delete the default proxy group.");
+  }
+
+  const groups = readProxyGroupsMap();
+  if (!groups[id]) {
+    return;
+  }
+
+  const proxies = readMap<ProxyEntry>(KEYS.proxyPool);
+  for (const proxy of Object.values(proxies)) {
+    if ((proxy.groupId || PROXY_UNCATEGORIZED_GROUP_ID) === id) {
+      const normalized = normalizeProxyEntry(proxy);
+      normalized.groupId = PROXY_UNCATEGORIZED_GROUP_ID;
+      proxies[normalized.id] = normalized;
+    }
+  }
+  writeMap(KEYS.proxyPool, proxies);
+
+  delete groups[id];
+  writeMap(KEYS.proxyGroups, groups);
+  await persistMap();
+}
+
+export async function listProxies(): Promise<ProxyEntry[]> {
+  const stored = readMap<ProxyEntry>(KEYS.proxyPool);
+  return Object.values(stored)
+    .map(normalizeProxyEntry)
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+export async function saveProxies(proxies: ProxyEntry[]): Promise<void> {
+  const map = Object.fromEntries(proxies.map((proxy) => [proxy.id, normalizeProxyEntry(proxy)]));
+  writeMap(KEYS.proxyPool, map);
+  await persistMap();
+}
+
+export async function importProxies(proxiesToImport: ProxyEntry[]): Promise<void> {
+  const stored = readMap<ProxyEntry>(KEYS.proxyPool);
+  for (const proxy of proxiesToImport) {
+    const normalized = normalizeProxyEntry(proxy);
+    stored[normalized.id] = normalized;
+  }
+  writeMap(KEYS.proxyPool, stored);
+  await persistMap();
+}
+
+export async function deleteProxy(id: string): Promise<void> {
+  const stored = readMap<ProxyEntry>(KEYS.proxyPool);
+  delete stored[id];
+  writeMap(KEYS.proxyPool, stored);
+
+  const assignments = readMap<string>(KEYS.proxyAssignments);
+  let assignmentsChanged = false;
+  for (const [accountId, proxyId] of Object.entries(assignments)) {
+    if (proxyId === id) {
+      delete assignments[accountId];
+      assignmentsChanged = true;
+    }
+  }
+  if (assignmentsChanged) {
+    writeMap(KEYS.proxyAssignments, assignments);
+  }
+  await persistMap();
+}
+
+export async function listProxyAssignments(): Promise<Record<string, string>> {
+  return readMap<string>(KEYS.proxyAssignments);
+}
+
+export async function saveProxyAssignments(assignments: Record<string, string>): Promise<void> {
+  writeMap(KEYS.proxyAssignments, assignments);
+  await persistMap();
+}
+
+export async function getPythonPath(): Promise<string | undefined> {
+  const stored = localStorage.getItem(KEYS.pythonPath)?.trim();
+  return stored || undefined;
+}
+
+export async function savePythonPath(pythonPath: string): Promise<void> {
+  const trimmed = pythonPath.trim();
+  if (trimmed) {
+    localStorage.setItem(KEYS.pythonPath, trimmed);
+  } else {
+    localStorage.removeItem(KEYS.pythonPath);
+  }
+}
+
+function normalizeImapAccount(id: string, raw: Partial<ImapAccount> & Partial<ImapSettings>): ImapAccount | null {
+  const host = raw.host?.trim() ?? "";
+  const username = raw.username?.trim() ?? "";
+  if (!host && !username && !raw.password) return null;
+  return {
+    id: raw.id?.trim() || id,
+    name: raw.name?.trim() || username || host || "IMAP key",
+    host,
+    port: Number.isFinite(raw.port) && (raw.port ?? 0) > 0 ? Number(raw.port) : 993,
+    username,
+    password: raw.password ?? "",
+    mailbox: raw.mailbox?.trim() || "INBOX",
+    createdAt: raw.createdAt || new Date().toISOString(),
+    lastFetchedAt: raw.lastFetchedAt,
+  };
+}
+
+function readImapAccountsMap(): Record<string, ImapAccount> {
+  const stored = readMap<Partial<ImapAccount> & Partial<ImapSettings>>(KEYS.imapSettings);
+  const accounts: Record<string, ImapAccount> = {};
+  for (const [id, raw] of Object.entries(stored)) {
+    const account = normalizeImapAccount(id, raw ?? {});
+    if (account) accounts[account.id] = account;
+  }
+  return accounts;
+}
+
+export async function listImapAccounts(): Promise<ImapAccount[]> {
+  return Object.values(readImapAccountsMap()).sort((a, b) =>
+    a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
+  );
+}
+
+export async function saveImapAccount(account: ImapAccount): Promise<void> {
+  const normalized = normalizeImapAccount(account.id, account);
+  if (!normalized) return;
+  const accounts = readImapAccountsMap();
+  accounts[normalized.id] = normalized;
+  writeMap(KEYS.imapSettings, accounts);
+  await persistMap();
+}
+
+export async function deleteImapAccount(id: string): Promise<void> {
+  const accounts = readImapAccountsMap();
+  delete accounts[id];
+  writeMap(KEYS.imapSettings, accounts);
+  const mail = readMap<StoredImapMessage[]>(KEYS.imapMail);
+  delete mail[id];
+  writeMap(KEYS.imapMail, mail);
+  await persistMap();
+}
+
+export async function getImapMail(accountId: string): Promise<StoredImapMessage[]> {
+  const stored = readMap<StoredImapMessage[]>(KEYS.imapMail)[accountId] ?? [];
+  return stored
+    .map((message) => ({
+      ...toStoredImapMessage(message, message.fetchedAt),
+      dateMs: Number.isFinite(message.dateMs) ? message.dateMs : toStoredImapMessage(message).dateMs,
+    }))
+    .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid)
+    .slice(0, IMAP_MAIL_CAP);
+}
+
+export async function saveImapMail(accountId: string, messages: StoredImapMessage[]): Promise<void> {
+  const mail = readMap<StoredImapMessage[]>(KEYS.imapMail);
+  mail[accountId] = messages.slice(0, IMAP_MAIL_CAP);
+  writeMap(KEYS.imapMail, mail);
+  await persistMap();
 }

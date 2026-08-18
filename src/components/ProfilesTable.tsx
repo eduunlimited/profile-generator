@@ -36,6 +36,7 @@ export function ProfilesTable({
       profile.billingAddressLine2,
       profile.billingAddressLine3,
       profile.creditCardLabel,
+      profile.cardNumberMasked,
       profile.accounts,
     ]
       .join(" ")
@@ -154,7 +155,11 @@ export function ProfilesTable({
                       />
                     </td>
                     <td className="col-card-profile">
-                      <CardProfileCell profileName={profile.creditCardLabel} brand={profile.cardBrand} />
+                      <CardProfileCell
+                        profileName={profile.creditCardLabel}
+                        brand={profile.cardBrand}
+                        lastFour={profile.cardNumberMasked || profile.paymentNumber}
+                      />
                     </td>
                     <td>{profile.accounts}</td>
                   </tr>

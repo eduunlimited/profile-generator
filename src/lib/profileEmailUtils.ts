@@ -1,4 +1,5 @@
 import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
+import { parseCardNumberDigits } from "./creditCardUtils";
 import { normalizeUsPhone } from "./phoneUtils";
 import type { Profile, ProfileName } from "./types";
 
@@ -43,10 +44,26 @@ export function resolveProfileEmail(profile: Profile): string {
   return profile.email?.trim() || profile.logins[0]?.email?.trim() || "";
 }
 
+function stripOrphanProfilePayment(profile: Profile): Profile {
+  const hasNumber = parseCardNumberDigits(profile.payment.number).length > 0;
+  if (hasNumber || profile.creditCardId) {
+    return profile;
+  }
+  const { number, expiry, cvv, brand } = profile.payment;
+  if (!number && !expiry && !cvv && !brand) {
+    return profile;
+  }
+  return {
+    ...profile,
+    creditCardId: undefined,
+    payment: { number: "", expiry: "", cvv: "", brand: "" },
+  };
+}
+
 export function normalizeProfile(profile: Profile): Profile {
   const email = resolveProfileEmail(profile);
   const phone = normalizeUsPhone(profile.phone ?? "");
-  return {
+  return stripOrphanProfilePayment({
     ...profile,
     email,
     phone,
@@ -63,7 +80,7 @@ export function normalizeProfile(profile: Profile): Profile {
       email: email || login.email,
       username: email || login.username,
     })),
-  };
+  });
 }
 
 export function setProfileEmail(profile: Profile, email: string): Profile {

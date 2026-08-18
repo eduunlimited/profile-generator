@@ -1,14 +1,19 @@
-import { generateProfile } from "./generator";
+import { isCardAvailableForProfile, toAssignableProfiles, type AssignableProfile } from "./assignCards";
 
-import { resolveGeneratedProfileName } from "./profileNameUtils";
+import { collectUsedProfileNames, resolveGeneratedProfileName } from "./profileNameUtils";
 
 import {
   applyJigRulesBatchToMasterAsync,
   applyLocalJigRulesToMaster,
   buildReservedStreetLinesForMisspell,
   buildStreetUseCounts,
+  canAssignStreetLine,
+  cloneStreetUseCounts,
   finalizeJigFromLocalAndMisspell,
+  incrementStreetUse,
+  MAX_STREET_LINE1_USES,
   streetLineFingerprint,
+  streetUseCount,
   type LocalJigSlot,
 } from "./jigEngine";
 
@@ -48,24 +53,49 @@ function paymentFromCard(card: CreditCard): ProfilePayment {
   };
 }
 
-function resolveCard(
+function emptyPayment(): ProfilePayment {
+  return {
+    number: "",
+    expiry: "",
+    cvv: "",
+    brand: "",
+  };
+}
+
+function resolveCardForProfile(
   mode: GenerateFromMasterOptions["creditCardMode"],
   cards: CreditCard[],
   selectedId: string | undefined,
+  targetProfile: AssignableProfile,
+  allAssignableProfiles: AssignableProfile[],
+  batchUsedCardIds: Set<string>,
 ): { payment: ProfilePayment; creditCardId?: string } {
   if (mode === "none" || cards.length === 0) {
-    return { payment: generateProfile().payment };
+    return { payment: emptyPayment() };
   }
 
   if (mode === "selected" && selectedId) {
     const card = cards.find((item) => item.id === selectedId);
-    if (card) return { payment: paymentFromCard(card), creditCardId: card.id };
+    if (card && isCardAvailableForProfile(card, targetProfile, allAssignableProfiles)) {
+      batchUsedCardIds.add(card.id);
+      return { payment: paymentFromCard(card), creditCardId: card.id };
+    }
+    return { payment: emptyPayment() };
   }
 
-  const card = pickRandom(cards);
-  return card
-    ? { payment: paymentFromCard(card), creditCardId: card.id }
-    : { payment: generateProfile().payment };
+  const available = cards.filter((card) => {
+    if (batchUsedCardIds.has(card.id)) {
+      return false;
+    }
+    return isCardAvailableForProfile(card, targetProfile, allAssignableProfiles);
+  });
+  const card = pickRandom(available);
+  if (!card) {
+    return { payment: emptyPayment() };
+  }
+
+  batchUsedCardIds.add(card.id);
+  return { payment: paymentFromCard(card), creditCardId: card.id };
 }
 
 function reserveLocalSlot(
@@ -73,9 +103,9 @@ function reserveLocalSlot(
   namePreset: JigPreset | null,
   addressRules: ResolvedAddressJig["rules"],
   nameMisspellScope: GenerateFromMasterOptions["nameMisspellScope"],
-  occupiedStreets: Set<string>,
-  batchStreets: Set<string>,
-): { slot: LocalJigSlot; allowStreetReuse: boolean } {
+  existingCounts: Map<string, number>,
+  batchCounts: Map<string, number>,
+): LocalJigSlot {
   const slot = applyLocalJigRulesToMaster(
     master,
     namePreset,
@@ -85,10 +115,12 @@ function reserveLocalSlot(
   );
 
   if (slot.needsStreetMisspell) {
-    return { slot, allowStreetReuse: false };
+    return slot;
   }
 
   let lastSlot = slot;
+  let fallback: { slot: LocalJigSlot; fingerprint: string; count: number } | null = null;
+
   for (let attempt = 0; attempt < DEFAULT_MAX_LOCAL_ATTEMPTS; attempt += 1) {
     const candidate = applyLocalJigRulesToMaster(
       master,
@@ -100,14 +132,24 @@ function reserveLocalSlot(
     lastSlot = candidate;
 
     const fingerprint = streetLineFingerprint(candidate.jigAddress.street);
-    if (!occupiedStreets.has(fingerprint) && !batchStreets.has(fingerprint)) {
-      batchStreets.add(fingerprint);
-      return { slot: candidate, allowStreetReuse: false };
+    const used = streetUseCount(existingCounts, fingerprint) + streetUseCount(batchCounts, fingerprint);
+    if (used === 0) {
+      incrementStreetUse(batchCounts, fingerprint);
+      return candidate;
+    }
+    if (used < MAX_STREET_LINE1_USES && (fallback === null || used < fallback.count)) {
+      fallback = { slot: candidate, fingerprint, count: used };
     }
   }
 
-  batchStreets.add(streetLineFingerprint(lastSlot.jigAddress.street));
-  return { slot: lastSlot, allowStreetReuse: true };
+  if (fallback) {
+    incrementStreetUse(batchCounts, fallback.fingerprint);
+    return fallback.slot;
+  }
+
+  const lastFingerprint = streetLineFingerprint(lastSlot.jigAddress.street);
+  incrementStreetUse(batchCounts, lastFingerprint);
+  return lastSlot;
 }
 
 function mergeBatchMisspellResults(
@@ -123,22 +165,18 @@ function mergeBatchMisspellResults(
 
 function findDuplicateStreetIndexes(
   jiggedProfiles: Array<{ address: Profile["address"] }>,
-  occupiedStreets: Set<string>,
-  allowReuseByIndex: boolean[],
+  existingCounts: Map<string, number>,
 ): number[] {
-  const seenInBatch = new Set<string>();
+  const running = cloneStreetUseCounts(existingCounts);
   const duplicateIndexes: number[] = [];
 
   for (let index = 0; index < jiggedProfiles.length; index += 1) {
     const fingerprint = streetLineFingerprint(jiggedProfiles[index].address.street);
-    const duplicateInBatch = seenInBatch.has(fingerprint);
-    const duplicateInCategory = occupiedStreets.has(fingerprint);
-
-    if (duplicateInBatch || (duplicateInCategory && !allowReuseByIndex[index])) {
+    if (!canAssignStreetLine(running, fingerprint)) {
       duplicateIndexes.push(index);
-    } else {
-      seenInBatch.add(fingerprint);
+      continue;
     }
+    incrementStreetUse(running, fingerprint);
   }
 
   return duplicateIndexes;
@@ -151,11 +189,10 @@ export async function generateProfilesFromMaster(
   addressJig: ResolvedAddressJig,
   creditCards: CreditCard[],
   existingProfilesInCategory: Profile[],
-  existingChildCount = 0,
 ): Promise<Profile[]> {
   const now = new Date().toISOString();
+  const usedProfileNames = collectUsedProfileNames(existingProfilesInCategory);
   const streetUseCounts = buildStreetUseCounts(existingProfilesInCategory.map((profile) => profile.address));
-  const occupiedStreets = new Set(streetUseCounts.keys());
 
   const occupiedPhoneLastFours = new Set(
     existingProfilesInCategory
@@ -163,21 +200,20 @@ export async function generateProfilesFromMaster(
       .filter((suffix) => suffix.length === 4),
   );
 
-  const batchStreets = new Set<string>();
+  const batchCounts = new Map<string, number>();
   const slots: LocalJigSlot[] = [];
-  const allowStreetReuseByIndex: boolean[] = [];
 
   for (let index = 0; index < options.count; index += 1) {
-    const reserved = reserveLocalSlot(
-      master,
-      namePreset,
-      addressJig.rules,
-      options.nameMisspellScope,
-      occupiedStreets,
-      batchStreets,
+    slots.push(
+      reserveLocalSlot(
+        master,
+        namePreset,
+        addressJig.rules,
+        options.nameMisspellScope,
+        streetUseCounts,
+        batchCounts,
+      ),
     );
-    slots.push(reserved.slot);
-    allowStreetReuseByIndex.push(reserved.allowStreetReuse);
   }
 
   const needsMisspell = slots.some((slot) => slot.needsNameMisspell || slot.needsStreetMisspell);
@@ -214,18 +250,13 @@ export async function generateProfilesFromMaster(
       }
 
       const jigged = mergeBatchMisspellResults(master, namePreset, slots, misspellResults);
-      const duplicateIndexes = findDuplicateStreetIndexes(jigged, occupiedStreets, allowStreetReuseByIndex);
+      const duplicateIndexes = findDuplicateStreetIndexes(jigged, streetUseCounts);
 
       if (duplicateIndexes.length === 0) {
         break;
       }
 
       if (pass === MAX_BATCH_MISSPELL_PASSES - 1) {
-        for (const index of duplicateIndexes) {
-          if (!allowStreetReuseByIndex[index]) {
-            allowStreetReuseByIndex[index] = true;
-          }
-        }
         break;
       }
 
@@ -236,13 +267,14 @@ export async function generateProfilesFromMaster(
   const jiggedProfiles = mergeBatchMisspellResults(master, namePreset, slots, misspellResults);
   const generated: Profile[] = [];
   let failedCount = 0;
+  const batchUsedCardIds = new Set<string>();
+  let simulatedAssignable = toAssignableProfiles(existingProfilesInCategory);
 
   for (let index = 0; index < jiggedProfiles.length; index += 1) {
     const jigged = jiggedProfiles[index];
     const streetFingerprint = streetLineFingerprint(jigged.address.street);
-    const allowReuse = allowStreetReuseByIndex[index];
 
-    if (occupiedStreets.has(streetFingerprint) && !allowReuse) {
+    if (!canAssignStreetLine(streetUseCounts, streetFingerprint)) {
       failedCount += 1;
       continue;
     }
@@ -265,22 +297,45 @@ export async function generateProfilesFromMaster(
       phone = applyPhoneLastFourJig(phone, lastFour);
     }
 
-    occupiedStreets.add(streetFingerprint);
-    streetUseCounts.set(streetFingerprint, (streetUseCounts.get(streetFingerprint) ?? 0) + 1);
+    incrementStreetUse(streetUseCounts, streetFingerprint);
 
-    const { payment, creditCardId } = resolveCard(
+    const profileId = crypto.randomUUID();
+    const profileName = resolveGeneratedProfileName(master, usedProfileNames);
+    const targetAssignable = {
+      id: profileId,
+      name: profileName,
+      accountSite: "",
+    };
+
+    const { payment, creditCardId } = resolveCardForProfile(
       options.creditCardMode,
       creditCards,
       options.creditCardId,
+      targetAssignable,
+      simulatedAssignable,
+      batchUsedCardIds,
     );
 
+    if (creditCardId) {
+      simulatedAssignable = [
+        ...simulatedAssignable,
+        {
+          ...targetAssignable,
+          creditCardId,
+          paymentNumber: payment.number.replace(/\D/g, ""),
+        },
+      ];
+    } else {
+      simulatedAssignable = [...simulatedAssignable, targetAssignable];
+    }
+
     generated.push({
-      id: crypto.randomUUID(),
+      id: profileId,
       locale: "en_US",
       email: "",
       masterProfileId: master.id,
       generatedFromMaster: true,
-      profileName: resolveGeneratedProfileName(master, existingChildCount + generated.length),
+      profileName,
       phone,
       categoryId: options.categoryId,
       accountStatus: "good",
@@ -310,14 +365,14 @@ export async function generateProfilesFromMaster(
       ? " Try disabling phone jig, using a different count, or clearing last-4 duplicates in this category."
       : "";
     throw new Error(
-      `Could not generate unique street line 1 values in this category.${phoneJigHint} Try different address jigs or a lower count.`,
+      `Could not generate street line 1 values within the 3-per-category limit.${phoneJigHint} Try Street type combo (PKC/Target) or a lower count.`,
     );
   }
 
   if (failedCount > 0) {
     const phoneJigHint = options.phoneJigLastFour ? " or unique phone last-4 digits" : "";
     throw new Error(
-      `Generated ${generated.length} of ${options.count} profile(s). ${failedCount} could not get a unique street line 1${phoneJigHint} in this category.`,
+      `Generated ${generated.length} of ${options.count} profile(s). ${failedCount} could not get a street line 1 under the 3-per-category limit${phoneJigHint}.`,
     );
   }
 

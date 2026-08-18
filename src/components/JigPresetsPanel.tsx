@@ -16,7 +16,10 @@ const NAME_RULE_TYPES: NameRule["type"][] = ["nameMisspell"];
 
 const ADDRESS_RULE_TYPES: AddressRule["type"][] = [
   "streetRandomLetters",
+  "streetTypeCombo",
   "randomUnitLine",
+  "addUnit",
+  "addSuite",
   "misspellField",
   "splitLines",
 ];
@@ -121,7 +124,7 @@ export function JigPresetsPanel({ presets, onSave }: JigPresetsPanelProps) {
           <div>
             <h2>Jig presets</h2>
             <p className="muted">
-              Name misspellings, street letter noise, and random apt/suite on line 2.
+              Name misspellings, street type combo, street letter noise, and random apt/suite on line 2.
             </p>
           </div>
           <button type="button" className="btn-secondary btn-compact" onClick={startNew}>
@@ -348,14 +351,19 @@ export function JigPresetsPanel({ presets, onSave }: JigPresetsPanelProps) {
                 </>
               ) : null}
               {rule.type === "addUnit" || rule.type === "addSuite" ? (
-                <input
-                  value={rule.unitFormat ?? (rule.type === "addSuite" ? "Suite {random}" : "Apt {random}")}
-                  onChange={(event) => {
-                    const addressRules = [...draft.addressRules];
-                    addressRules[index] = { ...rule, unitFormat: event.target.value };
-                    setDraft({ ...draft, addressRules });
-                  }}
-                />
+                <>
+                  <input
+                    value={rule.unitFormat ?? (rule.type === "addSuite" ? "Suite {random}" : "Apt {random}")}
+                    placeholder="Apt {n} / Room {random} / 1{letter}"
+                    title="Tokens: {n} or {random} (1–100), {letter} (A–Z)"
+                    onChange={(event) => {
+                      const addressRules = [...draft.addressRules];
+                      addressRules[index] = { ...rule, unitFormat: event.target.value };
+                      setDraft({ ...draft, addressRules });
+                    }}
+                  />
+                  <span className="muted">Tokens: {"{n}"} / {"{random}"} (1–100), {"{letter}"} (A–Z)</span>
+                </>
               ) : null}
               {["prefixRandom", "suffixRandom"].includes(rule.type) ? (
                 <>

@@ -76,7 +76,7 @@ export function GenerateModal({
 
   return (
 
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay">
 
       <div className="modal-dialog modal-dialog-generate" onClick={(event) => event.stopPropagation()}>
 

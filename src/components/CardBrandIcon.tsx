@@ -69,14 +69,27 @@ export function CardBrandIcon({ brand, size = "md", showLabel = false }: CardBra
 interface CardProfileCellProps {
   profileName?: string;
   brand?: string;
+  lastFour?: string;
 }
 
-export function CardProfileCell({ profileName, brand }: CardProfileCellProps) {
-  if (!profileName && !brand) return <>—</>;
+function cardLastFour(value?: string): string {
+  const digits = (value ?? "").replace(/\D/g, "");
+  return digits.length >= 4 ? digits.slice(-4) : digits;
+}
+
+export function CardProfileCell({ profileName, brand, lastFour }: CardProfileCellProps) {
+  const name = profileName?.trim() ?? "";
+  const digits = cardLastFour(lastFour);
+  if (!name && !digits) {
+    return <>—</>;
+  }
   return (
     <div className="card-profile-cell">
-      {brand ? <CardBrandIcon brand={brand} size="sm" /> : null}
-      <span className="card-profile-name">{profileName || "—"}</span>
+      <div className="card-profile-main">
+        {brand?.trim() ? <CardBrandIcon brand={brand} size="sm" /> : null}
+        {name ? <span className="card-profile-name">{name}</span> : null}
+      </div>
+      {digits ? <span className="card-profile-last4">{digits}</span> : null}
     </div>
   );
 }

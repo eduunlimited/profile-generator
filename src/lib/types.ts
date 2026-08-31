@@ -47,6 +47,24 @@ export interface CardCategory {
   sortOrder?: number;
 }
 
+export interface EmailCategory {
+  id: string;
+  name: string;
+  createdAt: string;
+  sortOrder?: number;
+}
+
+export interface PoolEmail {
+  id: string;
+  email: string;
+  categoryId: string;
+  accountStatus: AccountReviewStatus;
+  /** When `single_profile`, unavailable after any assignment. Default allows one assignment per profile category. */
+  assignmentScope?: CardAssignmentScope;
+  notes: string;
+  createdAt: string;
+}
+
 export interface ProfileCategory {
   id: string;
   name: string;
@@ -68,7 +86,7 @@ export interface MasterProfile {
 
 export type AccountReviewStatus = "good" | "not_good";
 
-/** How many profiles may share a pool card. */
+/** How a pool card may be reused across profiles. */
 export type CardAssignmentScope = "account_group" | "single_profile";
 
 export interface CreditCard {
@@ -80,7 +98,7 @@ export interface CreditCard {
   brand: string;
   categoryId: string;
   accountStatus: AccountReviewStatus;
-  /** When `single_profile`, unavailable after any assignment. Default shares per account site. */
+  /** When `single_profile`, unavailable after any assignment. Default allows one assignment per profile category. */
   assignmentScope?: CardAssignmentScope;
   notes: string;
   createdAt: string;
@@ -134,10 +152,57 @@ export interface Profile {
   accountSite?: string;
   payment: ProfilePayment;
   creditCardId?: string;
+  emailPoolId?: string;
   credentialIds: string[];
   logins: ProfileLogin[];
   createdAt: string;
   updatedAt: string;
+  /** Geocodio ZIP+4 exact-match stamp for the billing address. */
+  addressCheck?: AddressCheck;
+}
+
+export type AddressCheckStatus = "pass" | "warn" | "fail" | "queued" | "error";
+
+export interface AddressCheck {
+  provider: "geocodio";
+  status: AddressCheckStatus;
+  exactMatch?: boolean;
+  accuracy?: number;
+  accuracyType?: string;
+  checkedAt: string;
+  fingerprint: string;
+  message?: string;
+  /** Short badge text while a check or re-jig is in flight. */
+  displayLabel?: string;
+  /** Geocodio formatted address it actually matched. */
+  matchedAddress?: string;
+  /** House-level key from Geocodio components (number+street+city+state+ZIP5). */
+  propertyKey?: string;
+  /** True when the jig geocoded to the same house as the linked master. */
+  masterMatch?: boolean;
+}
+
+export interface GeocodioSettings {
+  apiKey: string;
+}
+
+export interface GeocodioLookupRequest {
+  apiKey: string;
+  street: string;
+  unit?: string;
+  city: string;
+  state: string;
+  postalCode: string;
+}
+
+export interface GeocodioLookupResult {
+  status: AddressCheckStatus;
+  exactMatch?: boolean;
+  accuracy?: number;
+  accuracyType?: string;
+  message?: string;
+  matchedAddress?: string;
+  propertyKey?: string;
 }
 
 export interface ProfileSummary {
@@ -160,6 +225,7 @@ export interface ProfileSummary {
   jigPresetName?: string;
   creditCardLabel?: string;
   creditCardId?: string;
+  emailPoolId?: string;
   /** Full payment card digits for pool matching (not displayed). */
   paymentNumber?: string;
   credentialSites?: string;
@@ -168,6 +234,10 @@ export interface ProfileSummary {
   accountStatus?: AccountReviewStatus;
   notes?: string;
   createdAt: string;
+  addressCheckStatus?: AddressCheckStatus;
+  addressCheckMessage?: string;
+  addressCheckDisplayLabel?: string;
+  addressMasterMatch?: boolean;
 }
 
 export type NameRuleType =
@@ -286,6 +356,8 @@ export interface GenerateFromMasterOptions {
   phoneJigLastFour?: boolean;
   creditCardMode: CreditCardAssignMode;
   creditCardId?: string;
+  emailMode?: CreditCardAssignMode;
+  emailId?: string;
 }
 
 export interface RejigProfilesOptions {
@@ -296,11 +368,14 @@ export interface RejigProfilesOptions {
   addressJigPresetIds?: string[];
   streetRandomLetters?: StreetRandomLettersJigOptions;
   phoneJigLastFour?: boolean;
+  /** After the first re-jig, keep address-jigging Fail/Warn rows until Geocodio Pass. */
+  untilPass?: boolean;
 }
 
 export interface RejigProfilesResult {
   updatedCount: number;
   failedCount: number;
+  message?: string;
 }
 
 export interface AssignCardsOptions {
@@ -309,6 +384,14 @@ export interface AssignCardsOptions {
   creditCardId?: string;
   /** One card per profile, matched to profileIds in order (Profiles tab batch). */
   creditCardIds?: string[];
+}
+
+export interface AssignEmailsOptions {
+  profileIds: string[];
+  /** One pool email for every selected profile (Emails tab flow). */
+  emailId?: string;
+  /** One pool email per profile, matched to profileIds in order (Profiles tab batch). */
+  emailIds?: string[];
 }
 
 export type MassDistributeField =
@@ -382,11 +465,14 @@ export interface ImapMessage {
   messageId?: string;
   date: string;
   from: string;
+  fromName?: string;
+  fromEmail?: string;
   to: string;
   recipients: string[];
   subject: string;
   snippet: string;
   body: string;
+  htmlBody?: string;
 }
 
 export interface StoredImapMessage extends ImapMessage {
@@ -398,6 +484,7 @@ export type AppTab =
   | "profiles"
   | "master"
   | "cards"
+  | "emails"
   | "credentials"
   | "jigs"
   | "sessions"

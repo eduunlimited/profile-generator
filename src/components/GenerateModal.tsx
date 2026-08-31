@@ -10,6 +10,8 @@ import type {
 
   MasterProfile,
 
+  PoolEmail,
+
   ProfileCategory,
 
 } from "../lib/types";
@@ -31,6 +33,8 @@ interface GenerateModalProps {
   jigPresets: JigPreset[];
 
   creditCards: CreditCard[];
+
+  poolEmails?: PoolEmail[];
 
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
 
@@ -59,6 +63,8 @@ export function GenerateModal({
   jigPresets,
 
   creditCards,
+
+  poolEmails,
 
   onSaveCategory,
 
@@ -105,6 +111,8 @@ export function GenerateModal({
           jigPresets={jigPresets}
 
           creditCards={creditCards}
+
+          poolEmails={poolEmails}
 
           onSaveCategory={onSaveCategory}
 

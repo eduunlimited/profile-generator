@@ -2959,9 +2959,10 @@ dependencies = [
 
 [[package]]
 name = "profile-generator"
-version = "0.2.23"
+version = "0.2.24"
 dependencies = [
  "imap",
+ "imap-proto",
  "mailparse",
  "native-tls",
  "reqwest 0.12.28",
@@ -2977,6 +2978,7 @@ dependencies = [
  "tauri-plugin-process",
  "tauri-plugin-updater",
  "tokio",
+ "webview2-com",
  "whoami",
 ]
 

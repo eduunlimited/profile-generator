@@ -1,4 +1,9 @@
 import { isCardAvailableForProfile, toAssignableProfiles, type AssignableProfile } from "./assignCards";
+import {
+  isEmailAvailableForProfile,
+  toEmailAssignableProfiles,
+  type EmailAssignableProfile,
+} from "./assignEmails";
 
 import { collectUsedProfileNames, resolveGeneratedProfileName } from "./profileNameUtils";
 
@@ -29,8 +34,10 @@ import type {
   GenerateFromMasterOptions,
   JigPreset,
   MasterProfile,
+  PoolEmail,
   Profile,
   ProfilePayment,
+  ProfileSummary,
 } from "./types";
 
 import type { ResolvedAddressJig } from "./jigPresetUtils";
@@ -96,6 +103,42 @@ function resolveCardForProfile(
 
   batchUsedCardIds.add(card.id);
   return { payment: paymentFromCard(card), creditCardId: card.id };
+}
+
+function resolveEmailForProfile(
+  mode: GenerateFromMasterOptions["emailMode"] | undefined,
+  emails: PoolEmail[],
+  selectedId: string | undefined,
+  targetProfile: EmailAssignableProfile,
+  allAssignableProfiles: EmailAssignableProfile[],
+  batchUsedEmailIds: Set<string>,
+): { email: string; emailPoolId?: string } {
+  if (!mode || mode === "none" || emails.length === 0) {
+    return { email: "" };
+  }
+
+  if (mode === "selected" && selectedId) {
+    const poolEmail = emails.find((item) => item.id === selectedId);
+    if (poolEmail && isEmailAvailableForProfile(poolEmail, targetProfile, allAssignableProfiles)) {
+      batchUsedEmailIds.add(poolEmail.id);
+      return { email: poolEmail.email, emailPoolId: poolEmail.id };
+    }
+    return { email: "" };
+  }
+
+  const available = emails.filter((item) => {
+    if (batchUsedEmailIds.has(item.id)) {
+      return false;
+    }
+    return isEmailAvailableForProfile(item, targetProfile, allAssignableProfiles);
+  });
+  const poolEmail = pickRandom(available);
+  if (!poolEmail) {
+    return { email: "" };
+  }
+
+  batchUsedEmailIds.add(poolEmail.id);
+  return { email: poolEmail.email, emailPoolId: poolEmail.id };
 }
 
 function reserveLocalSlot(
@@ -189,6 +232,8 @@ export async function generateProfilesFromMaster(
   addressJig: ResolvedAddressJig,
   creditCards: CreditCard[],
   existingProfilesInCategory: Profile[],
+  occupancyProfiles?: (Profile | ProfileSummary)[],
+  poolEmails: PoolEmail[] = [],
 ): Promise<Profile[]> {
   const now = new Date().toISOString();
   const usedProfileNames = collectUsedProfileNames(existingProfilesInCategory);
@@ -268,7 +313,9 @@ export async function generateProfilesFromMaster(
   const generated: Profile[] = [];
   let failedCount = 0;
   const batchUsedCardIds = new Set<string>();
-  let simulatedAssignable = toAssignableProfiles(existingProfilesInCategory);
+  const batchUsedEmailIds = new Set<string>();
+  let simulatedAssignable = toAssignableProfiles(occupancyProfiles ?? existingProfilesInCategory);
+  let simulatedEmailAssignable = toEmailAssignableProfiles(occupancyProfiles ?? existingProfilesInCategory);
 
   for (let index = 0; index < jiggedProfiles.length; index += 1) {
     const jigged = jiggedProfiles[index];
@@ -305,6 +352,7 @@ export async function generateProfilesFromMaster(
       id: profileId,
       name: profileName,
       accountSite: "",
+      categoryId: options.categoryId,
     };
 
     const { payment, creditCardId } = resolveCardForProfile(
@@ -329,10 +377,37 @@ export async function generateProfilesFromMaster(
       simulatedAssignable = [...simulatedAssignable, targetAssignable];
     }
 
+    const emailTargetAssignable = {
+      id: profileId,
+      name: profileName,
+      categoryId: options.categoryId,
+    };
+    const { email, emailPoolId } = resolveEmailForProfile(
+      options.emailMode,
+      poolEmails,
+      options.emailId,
+      emailTargetAssignable,
+      simulatedEmailAssignable,
+      batchUsedEmailIds,
+    );
+
+    if (emailPoolId) {
+      simulatedEmailAssignable = [
+        ...simulatedEmailAssignable,
+        {
+          ...emailTargetAssignable,
+          emailPoolId,
+          email,
+        },
+      ];
+    } else {
+      simulatedEmailAssignable = [...simulatedEmailAssignable, emailTargetAssignable];
+    }
+
     generated.push({
       id: profileId,
       locale: "en_US",
-      email: "",
+      email,
       masterProfileId: master.id,
       generatedFromMaster: true,
       profileName,
@@ -353,6 +428,7 @@ export async function generateProfilesFromMaster(
       cardHolderName: `${jigged.name.first} ${jigged.name.last}`.trim(),
       payment,
       creditCardId,
+      emailPoolId,
       credentialIds: [],
       logins: [],
       createdAt: now,

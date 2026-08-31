@@ -1,7 +1,9 @@
-import { useEffect, useMemo, useState, type MouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
+  compactImapMailIfNeeded,
   deleteImapAccount,
   fetchImapInbox,
+  fetchImapMessage,
   getImapMail,
   listImapAccounts,
   saveImapAccount,
@@ -9,6 +11,7 @@ import {
   testImap,
 } from "../lib/api";
 import { formatError } from "../lib/errorUtils";
+import { ensureDataKey, releaseDataKey } from "../lib/localDataStore";
 import {
   emptyImapAccount,
   extractEmailCode,
@@ -17,12 +20,19 @@ import {
   imapAccountToSettings,
   matchImapMessageToProfiles,
   mergeStoredImapMessages,
+  messageHtmlBody,
+  parseSender,
+  formatSender,
+  toStoredImapHeaders,
+  toStoredImapMessage,
+  wrapEmailHtml,
 } from "../lib/imapInbox";
 import { copyToClipboard } from "../hooks/useAppData";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
 import type { ImapAccount, ProfileSummary, StoredImapMessage } from "../lib/types";
 import { ConfirmDeleteModal } from "./ConfirmDeleteModal";
 import { ImapAccountModal } from "./ImapAccountModal";
+import { ImapKeysModal } from "./ImapKeysModal";
 
 const MAIL_SIDEBAR_WIDTH_KEY = "profile-generator:mail-sidebar-width";
 const MAIL_SIDEBAR_DEFAULT_WIDTH = 200;
@@ -45,6 +55,18 @@ function formatMessageDate(value: string, dateMs?: number): string {
   const parsed = dateMs && dateMs > 0 ? dateMs : Date.parse(value);
   if (!Number.isFinite(parsed) || parsed <= 0) return value || "—";
   return new Date(parsed).toLocaleString();
+}
+
+async function refreshImapAccount(
+  account: ImapAccount,
+  existing: StoredImapMessage[],
+): Promise<{ account: ImapAccount; messages: StoredImapMessage[] }> {
+  const fetched = await fetchImapInbox(imapAccountToSettings(account), IMAP_MAIL_CAP);
+  const messages = mergeStoredImapMessages(existing, fetched);
+  await saveImapMail(account.id, messages);
+  const updated: ImapAccount = { ...account, lastFetchedAt: new Date().toISOString() };
+  await saveImapAccount(updated);
+  return { account: updated, messages };
 }
 
 interface MailPanelProps {
@@ -71,6 +93,12 @@ export function MailPanel({ profiles }: MailPanelProps) {
   const [draft, setDraft] = useState<ImapAccount | null>(null);
   const [modalStatus, setModalStatus] = useState<string | null>(null);
   const [editingExisting, setEditingExisting] = useState(false);
+  const [showEditKeys, setShowEditKeys] = useState(false);
+  const [bodyBusyKey, setBodyBusyKey] = useState<string | null>(null);
+  const [bodyError, setBodyError] = useState<string | null>(null);
+  const [openedBodies, setOpenedBodies] = useState<Record<string, StoredImapMessage>>({});
+  const openedBodiesRef = useRef(openedBodies);
+  openedBodiesRef.current = openedBodies;
   const { pending: deleteConfirm, busy: deleteConfirmBusy, askConfirm, closeConfirm, acceptConfirm } =
     useConfirmDelete();
 
@@ -83,14 +111,50 @@ export function MailPanel({ profiles }: MailPanelProps) {
     setBusy("load");
     void (async () => {
       try {
+        await ensureDataKey("profile-generator:imap-settings");
         const listed = await listImapAccounts();
         if (cancelled) return;
         setAccounts(listed);
+        if (listed.length === 0) {
+          setBusy(null);
+          return;
+        }
+        await ensureDataKey("profile-generator:imap-mail");
+        await compactImapMailIfNeeded();
+        if (cancelled) return;
         const mailEntries = await Promise.all(
           listed.map(async (account) => [account.id, await getImapMail(account.id)] as const),
         );
         if (cancelled) return;
-        setMailByAccount(Object.fromEntries(mailEntries));
+        const stored = Object.fromEntries(mailEntries);
+        setMailByAccount(stored);
+        setBusy(null);
+
+        setBusy("fetch");
+        setStatus("Refreshing mail from IMAP…");
+        const nextAccounts: ImapAccount[] = [];
+        const nextMail = { ...stored };
+        const errors: string[] = [];
+        for (const account of listed) {
+          if (cancelled) return;
+          try {
+            const result = await refreshImapAccount(account, nextMail[account.id] ?? []);
+            nextAccounts.push(result.account);
+            nextMail[account.id] = result.messages;
+            setMailByAccount({ ...nextMail });
+          } catch (error) {
+            nextAccounts.push(account);
+            errors.push(`${imapAccountLabel(account)}: ${formatError(error, "refresh failed")}`);
+          }
+        }
+        if (cancelled) return;
+        setAccounts(nextAccounts.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" })));
+        setMailByAccount(nextMail);
+        setStatus(
+          errors.length === 0
+            ? `Loaded mail for ${listed.length} IMAP key(s).`
+            : `Loaded stored mail. ${errors.join(" ")}`,
+        );
       } catch (error) {
         if (!cancelled) setStatus(formatError(error, "Could not load mailboxes."));
       } finally {
@@ -99,7 +163,31 @@ export function MailPanel({ profiles }: MailPanelProps) {
     })();
     return () => {
       cancelled = true;
+      releaseDataKey("profile-generator:imap-mail");
     };
+  }, []);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        setActiveKey(null);
+        setOpenedBodies({});
+        setBodyBusyKey(null);
+        setBodyError(null);
+        setMailByAccount((current) => {
+          const stripped: Record<string, StoredImapMessage[]> = {};
+          for (const [id, messages] of Object.entries(current)) {
+            stripped[id] = messages.map((message) => toStoredImapHeaders(message, message.fetchedAt));
+          }
+          return stripped;
+        });
+        releaseDataKey("profile-generator:imap-mail");
+        return;
+      }
+      void ensureDataKey("profile-generator:imap-mail");
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => document.removeEventListener("visibilitychange", onVisibility);
   }, []);
 
   const startSidebarResize = (event: MouseEvent<HTMLDivElement>) => {
@@ -133,7 +221,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
           accountLabel: label,
           message,
           matched: matchImapMessageToProfiles(message, profiles),
-          code: extractEmailCode(`${message.subject}\n${message.body}`) ?? extractEmailCode(message.snippet),
+          code: extractEmailCode(`${message.subject}\n${message.snippet}`),
         });
       }
     }
@@ -147,6 +235,8 @@ export function MailPanel({ profiles }: MailPanelProps) {
       const haystack = [
         row.message.subject,
         row.message.from,
+        row.message.fromName ?? "",
+        row.message.fromEmail ?? "",
         row.message.to,
         row.message.snippet,
         row.message.body,
@@ -162,49 +252,69 @@ export function MailPanel({ profiles }: MailPanelProps) {
   }, [query, rows]);
 
   const activeRow = filteredRows.find((row) => `${row.accountId}:${row.message.uid}` === activeKey) ?? null;
+  const activeOpened = activeRow
+    ? openedBodies[`${activeRow.accountId}:${activeRow.message.uid}`]
+    : undefined;
+  const activeMessage = activeOpened ?? activeRow?.message ?? null;
+  const activeCode =
+    (activeMessage
+      ? extractEmailCode(`${activeMessage.subject}\n${activeMessage.body}\n${activeMessage.htmlBody ?? ""}`)
+      : undefined) ?? activeRow?.code;
   const storedCount = selectedAccountId === ALL_MAIL_ID
     ? Object.values(mailByAccount).reduce((sum, messages) => sum + messages.length, 0)
     : (mailByAccount[selectedAccountId]?.length ?? 0);
 
-  const persistFetchedMail = async (account: ImapAccount) => {
-    const fetched = await fetchImapInbox(imapAccountToSettings(account), IMAP_MAIL_CAP);
-    const merged = mergeStoredImapMessages(mailByAccount[account.id] ?? [], fetched);
-    await saveImapMail(account.id, merged);
-    const updated: ImapAccount = { ...account, lastFetchedAt: new Date().toISOString() };
-    await saveImapAccount(updated);
-    setMailByAccount((current) => ({ ...current, [account.id]: merged }));
+  const upsertAccount = (account: ImapAccount) => {
     setAccounts((current) => {
-      const exists = current.some((item) => item.id === updated.id);
-      const next = exists ? current.map((item) => (item.id === updated.id ? updated : item)) : [...current, updated];
-      return next.sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+      const exists = current.some((item) => item.id === account.id);
+      const next = exists
+        ? current.map((item) => (item.id === account.id ? account : item))
+        : [...current, account];
+      return next.sort((a, b) =>
+        imapAccountLabel(a).localeCompare(imapAccountLabel(b), undefined, { sensitivity: "base" }),
+      );
     });
-    return merged.length;
   };
 
-  const loadSelected = async () => {
-    const targets = selectedAccount ? [selectedAccount] : accounts;
-    if (targets.length === 0) {
-      setStatus("Add an IMAP key first.");
+  const persistFetchedMail = async (account: ImapAccount) => {
+    const existing = mailByAccount[account.id] ?? (await getImapMail(account.id));
+    const result = await refreshImapAccount(account, existing);
+    setMailByAccount((current) => ({ ...current, [account.id]: result.messages }));
+    upsertAccount(result.account);
+    return result.messages.length;
+  };
+
+  useEffect(() => {
+    if (!activeRow) return;
+    const key = `${activeRow.accountId}:${activeRow.message.uid}`;
+    const alreadyOpened = openedBodiesRef.current[key];
+    if (alreadyOpened) {
+      setBodyError(null);
       return;
     }
-    setBusy("fetch");
-    setStatus(null);
-    try {
-      let loaded = 0;
-      for (const account of targets) {
-        loaded += await persistFetchedMail(account);
+    const account = accounts.find((item) => item.id === activeRow.accountId);
+    if (!account) return;
+    let cancelled = false;
+    setBodyBusyKey(key);
+    setBodyError(null);
+    void (async () => {
+      try {
+        const fetched = await fetchImapMessage(imapAccountToSettings(account), activeRow.message.uid);
+        if (cancelled) return;
+        const stored = toStoredImapMessage(fetched);
+        setOpenedBodies((current) => ({ ...current, [key]: stored }));
+      } catch (error) {
+        if (!cancelled) setBodyError(formatError(error, "Could not load message."));
+      } finally {
+        if (!cancelled) {
+          setBodyBusyKey((current) => (current === key ? null : current));
+        }
       }
-      setStatus(
-        targets.length === 1
-          ? `Stored ${loaded} message(s) for ${imapAccountLabel(targets[0])} (cap ${IMAP_MAIL_CAP}).`
-          : `Stored mail for ${targets.length} IMAP key(s).`,
-      );
-    } catch (error) {
-      setStatus(formatError(error, "Could not load mail."));
-    } finally {
-      setBusy(null);
-    }
-  };
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts, activeRow?.accountId, activeRow?.message.uid]);
 
   const openAddModal = () => {
     setEditingExisting(false);
@@ -212,11 +322,10 @@ export function MailPanel({ profiles }: MailPanelProps) {
     setDraft(emptyImapAccount());
   };
 
-  const openEditModal = () => {
-    if (!selectedAccount) return;
+  const openSettings = (account: ImapAccount) => {
     setEditingExisting(true);
     setModalStatus(null);
-    setDraft({ ...selectedAccount });
+    setDraft({ ...account });
   };
 
   const handleTestDraft = async () => {
@@ -241,19 +350,25 @@ export function MailPanel({ profiles }: MailPanelProps) {
     }
     setBusy("save");
     setModalStatus(null);
+    const account: ImapAccount = {
+      ...draft,
+      name: draft.name.trim() || draft.username.trim(),
+      host: draft.host.trim(),
+      username: draft.username.trim(),
+      mailbox: draft.mailbox.trim() || "INBOX",
+    };
     try {
-      const account: ImapAccount = {
-        ...draft,
-        name: draft.name.trim() || draft.username.trim(),
-        host: draft.host.trim(),
-        username: draft.username.trim(),
-        mailbox: draft.mailbox.trim() || "INBOX",
-      };
       await saveImapAccount(account);
-      const count = await persistFetchedMail(account);
+      upsertAccount(account);
       setSelectedAccountId(account.id);
       setDraft(null);
-      setStatus(`Saved ${imapAccountLabel(account)} and stored ${count} message(s).`);
+      setStatus(`Saved ${imapAccountLabel(account)}. Loading mail…`);
+      try {
+        const count = await persistFetchedMail(account);
+        setStatus(`Saved ${imapAccountLabel(account)} and stored ${count} message(s).`);
+      } catch (error) {
+        setStatus(`Saved ${imapAccountLabel(account)}. ${formatError(error, "Mail refresh failed.")}`);
+      }
     } catch (error) {
       setModalStatus(formatError(error, "Could not save IMAP key."));
     } finally {
@@ -261,13 +376,11 @@ export function MailPanel({ profiles }: MailPanelProps) {
     }
   };
 
-  const handleDeleteSelected = () => {
-    if (!selectedAccount) return;
-    const account = selectedAccount;
+  const handleRemoveAccount = (account: ImapAccount) => {
     askConfirm({
-      title: "Delete IMAP key",
-      message: `Delete ${imapAccountLabel(account)} and its stored mail?`,
-      confirmLabel: "Delete",
+      title: "Remove IMAP key",
+      message: `Remove ${imapAccountLabel(account)} and its stored mail?`,
+      confirmLabel: "Remove",
       onConfirm: async () => {
         setBusy("delete");
         try {
@@ -278,11 +391,13 @@ export function MailPanel({ profiles }: MailPanelProps) {
             delete next[account.id];
             return next;
           });
-          setSelectedAccountId(ALL_MAIL_ID);
-          setActiveKey(null);
-          setStatus(`Deleted ${imapAccountLabel(account)}.`);
+          if (selectedAccountId === account.id) {
+            setSelectedAccountId(ALL_MAIL_ID);
+            setActiveKey(null);
+          }
+          setStatus(`Removed ${imapAccountLabel(account)}.`);
         } catch (error) {
-          setStatus(formatError(error, "Could not delete IMAP key."));
+          setStatus(formatError(error, "Could not remove IMAP key."));
         } finally {
           setBusy(null);
         }
@@ -308,22 +423,36 @@ export function MailPanel({ profiles }: MailPanelProps) {
             </button>
           </div>
           <ul className="accounts-category-list">
-            {accounts.map((account) => (
-              <li key={account.id} className="accounts-category-row">
-                <button
-                  type="button"
-                  className={`accounts-category-item${selectedAccountId === account.id ? " active" : ""}`}
-                  onClick={() => setSelectedAccountId(account.id)}
-                >
-                  <span>{imapAccountLabel(account)}</span>
-                  <span className="accounts-category-count">{mailByAccount[account.id]?.length ?? 0}</span>
-                </button>
-              </li>
-            ))}
+            {accounts.length === 0 ? (
+              <li className="muted mail-sidebar-empty">No IMAP keys yet</li>
+            ) : (
+              accounts.map((account) => (
+                <li key={account.id} className="accounts-category-row">
+                  <button
+                    type="button"
+                    className={`accounts-category-item mail-key-item${selectedAccountId === account.id ? " active" : ""}`}
+                    onClick={() => setSelectedAccountId(account.id)}
+                  >
+                    <span className="mail-key-copy">
+                      <span className="mail-key-name">{imapAccountLabel(account)}</span>
+                      {account.username.trim() ? (
+                        <span className="mail-key-sub">{account.username.trim()}</span>
+                      ) : null}
+                    </span>
+                    <span className="accounts-category-count">{mailByAccount[account.id]?.length ?? 0}</span>
+                  </button>
+                </li>
+              ))
+            )}
           </ul>
-          <button type="button" className="btn-secondary accounts-create-category-btn" onClick={openAddModal}>
-            Add IMAP key
-          </button>
+          <div className="mail-sidebar-actions">
+            <button type="button" className="btn-secondary accounts-create-category-btn" onClick={openAddModal}>
+              Add IMAP key
+            </button>
+            <button type="button" className="btn-secondary mail-sidebar-edit-btn" onClick={() => setShowEditKeys(true)}>
+              Edit IMAP keys
+            </button>
+          </div>
         </aside>
 
         <div
@@ -346,35 +475,6 @@ export function MailPanel({ profiles }: MailPanelProps) {
             </div>
 
             <div className="accounts-table-toolbar">
-              <div className="button-row compact accounts-toolbar-actions">
-                <button type="button" className="btn-secondary btn-compact" onClick={openAddModal}>
-                  Add IMAP key
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary btn-compact"
-                  disabled={!selectedAccount}
-                  onClick={openEditModal}
-                >
-                  Edit
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary btn-compact"
-                  disabled={busy !== null || accounts.length === 0}
-                  onClick={() => void loadSelected()}
-                >
-                  Load mail
-                </button>
-                <button
-                  type="button"
-                  className="btn-secondary btn-compact ghost-button danger"
-                  disabled={!selectedAccount}
-                  onClick={handleDeleteSelected}
-                >
-                  Delete
-                </button>
-              </div>
               <input
                 className="table-search"
                 placeholder="Search mail"
@@ -390,8 +490,8 @@ export function MailPanel({ profiles }: MailPanelProps) {
             ) : filteredRows.length === 0 ? (
               <p className="muted mail-empty">
                 {accounts.length === 0
-                  ? "Add an IMAP key to load the last 500 emails."
-                  : "No stored mail yet. Click Load mail."}
+                  ? "Add an IMAP key in the sidebar to load mail."
+                  : "No stored mail yet."}
               </p>
             ) : (
               <div className="inbox-layout mail-inbox-layout">
@@ -400,6 +500,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
                     const key = `${row.accountId}:${row.message.uid}`;
                     const active = key === activeKey;
                     const profileLabel = row.matched.map((profile) => profile.name || profile.email).join(", ");
+                    const sender = parseSender(row.message.from, row.message.fromName, row.message.fromEmail);
                     return (
                       <button
                         key={key}
@@ -410,6 +511,10 @@ export function MailPanel({ profiles }: MailPanelProps) {
                         <span className="inbox-item-top">
                           <strong>{row.message.subject.trim() || "(no subject)"}</strong>
                           <span className="inbox-item-date">{formatMessageDate(row.message.date, row.message.dateMs)}</span>
+                        </span>
+                        <span className="inbox-item-from">
+                          {sender.name || sender.email || "Unknown sender"}
+                          {sender.name && sender.email ? <span className="inbox-item-email">{sender.email}</span> : null}
                         </span>
                         <span className="inbox-item-meta">
                           {selectedAccountId === ALL_MAIL_ID ? `${row.accountLabel} · ` : ""}
@@ -427,7 +532,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
                       <p className="muted">
                         {formatMessageDate(activeRow.message.date, activeRow.message.dateMs)}
                         {" · "}
-                        {activeRow.message.from.trim() || "—"}
+                        {formatSender(activeRow.message.from, activeRow.message.fromName, activeRow.message.fromEmail)}
                       </p>
                       <p>
                         <strong>To:</strong>{" "}
@@ -444,21 +549,23 @@ export function MailPanel({ profiles }: MailPanelProps) {
                           {activeRow.matched.map((profile) => profile.name || profile.email).join(", ")}
                         </p>
                       ) : null}
-                      {activeRow.code ? (
+                      {activeCode ? (
                         <div className="button-row">
-                          <span className="inbox-otp inbox-otp-lg">Code {activeRow.code}</span>
+                          <span className="inbox-otp inbox-otp-lg">Code {activeCode}</span>
                           <button
                             type="button"
                             className="btn-secondary"
-                            onClick={() => void copyToClipboard(activeRow.code ?? "")}
+                            onClick={() => void copyToClipboard(activeCode)}
                           >
                             Copy code
                           </button>
                         </div>
                       ) : null}
-                      <pre className="preview-box">
-                        {activeRow.message.body || activeRow.message.snippet || "No body."}
-                      </pre>
+                      <MessageBody
+                        message={activeMessage ?? activeRow.message}
+                        loading={bodyBusyKey === `${activeRow.accountId}:${activeRow.message.uid}`}
+                        error={bodyError}
+                      />
                     </>
                   ) : (
                     <p className="muted">Select a message to read it.</p>
@@ -469,6 +576,16 @@ export function MailPanel({ profiles }: MailPanelProps) {
           </section>
         </div>
       </div>
+
+      <ImapKeysModal
+        open={showEditKeys}
+        accounts={accounts}
+        mailCounts={Object.fromEntries(accounts.map((account) => [account.id, mailByAccount[account.id]?.length ?? 0]))}
+        onClose={() => setShowEditKeys(false)}
+        onAdd={openAddModal}
+        onEdit={openSettings}
+        onRemove={handleRemoveAccount}
+      />
 
       <ImapAccountModal
         open={Boolean(draft)}
@@ -492,5 +609,44 @@ export function MailPanel({ profiles }: MailPanelProps) {
         onConfirm={acceptConfirm}
       />
     </>
+  );
+}
+
+function MessageBody({
+  message,
+  loading,
+  error,
+}: {
+  message: StoredImapMessage;
+  loading?: boolean;
+  error?: string | null;
+}) {
+  const html = messageHtmlBody(message);
+  if (html) {
+    return (
+      <div className="inbox-message">
+        <iframe
+          className="inbox-message-frame"
+          title="Message body"
+          sandbox="allow-popups allow-popups-to-escape-sandbox allow-same-origin"
+          srcDoc={wrapEmailHtml(html)}
+        />
+      </div>
+    );
+  }
+  if (loading) {
+    return <p className="muted">Loading message…</p>;
+  }
+  if (error) {
+    return <p className="muted">{error}</p>;
+  }
+  const text = message.body.trim() || message.snippet.trim();
+  if (!text) {
+    return <p className="muted">Select a message to load it.</p>;
+  }
+  return (
+    <div className="inbox-message">
+      <pre className="inbox-message-text">{text}</pre>
+    </div>
   );
 }

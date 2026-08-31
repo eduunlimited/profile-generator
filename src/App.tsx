@@ -6,6 +6,8 @@ import { EpgsAppIcon, EpgsLogo } from "./components/EpgsBrand";
 
 import { CreditCardsPanel } from "./components/CreditCardsPanel";
 
+import { EmailsPanel } from "./components/EmailsPanel";
+
 import { CredentialsPanel } from "./components/CredentialsPanel";
 
 import { ConfirmDeleteModal } from "./components/ConfirmDeleteModal";
@@ -17,6 +19,8 @@ import { ExportModal } from "./components/ExportModal";
 import { GenerateModal } from "./components/GenerateModal";
 
 import { AssignCardsModal } from "./components/AssignCardsModal";
+
+import { AssignEmailsModal } from "./components/AssignEmailsModal";
 
 import { MassDistributeModal } from "./components/MassDistributeModal";
 
@@ -44,12 +48,15 @@ import { profilesMatchingCredential } from "./lib/linkCredentialsByEmail";
 
 import { profilesMatchingCard } from "./lib/creditCardUtils";
 
+import { profilesMatchingEmail } from "./lib/emailPoolUtils";
+
 import type { AppTab, MasterProfile } from "./lib/types";
 
 const TAB_CONTEXT: Record<AppTab, { title: string; hint: string }> = {
   profiles: { title: "Jig Profiles", hint: "Master parents · generate · re-jig · export" },
   master: { title: "Master Profiles", hint: "Parent addresses · source of truth" },
   cards: { title: "Credit Cards", hint: "Pool · assign · categories" },
+  emails: { title: "Emails", hint: "Pool · assign · categories" },
   credentials: { title: "Accounts", hint: "Credentials · site links" },
   mail: { title: "Mail", hint: "IMAP keys · last 500 messages" },
   jigs: { title: "Jig Presets", hint: "Name · address · export rules" },
@@ -78,6 +85,10 @@ function AppContent() {
 
     cardCategories,
 
+    poolEmails,
+
+    emailCategories,
+
     profileCategories,
 
     credentials,
@@ -96,12 +107,24 @@ function AppContent() {
 
     unassignCards,
 
+    assignEmails,
+
+    unassignEmails,
+
     massDistributeProfiles,
 
     loadProfile,
 
     saveProfilesBatch,
     importProfiles,
+
+    verifyAddresses,
+    addressVerifyBusy,
+    addressJobKind,
+    addressJobStatus,
+    addressJobTone,
+    geocodioConfigured,
+    markGeocodioConfigured,
 
     updateMasterProfile,
 
@@ -130,6 +153,18 @@ function AppContent() {
     removeCardCategory,
 
     reorderCardCategoryOrder,
+
+    upsertPoolEmail,
+
+    removePoolEmail,
+
+    importEmails,
+
+    upsertEmailCategory,
+
+    removeEmailCategory,
+
+    reorderEmailCategoryOrder,
 
     upsertProfileCategory,
 
@@ -172,6 +207,10 @@ function AppContent() {
   const [assignLockedProfileIds, setAssignLockedProfileIds] = useState<string[] | undefined>();
 
   const [assignLockedCreditCardIds, setAssignLockedCreditCardIds] = useState<string[] | undefined>();
+
+  const [showAssignEmailsModal, setShowAssignEmailsModal] = useState(false);
+
+  const [assignLockedEmailIds, setAssignLockedEmailIds] = useState<string[] | undefined>();
 
   const [activeMasterId, setActiveMasterId] = useState<string | null>(null);
 
@@ -399,6 +438,12 @@ function AppContent() {
     return formatLinkedProfileNames(profilesMatchingCard(card, profiles).map((profile) => profile.name));
   };
 
+  const profileLabelForEmail = (emailId: string) => {
+    const email = poolEmails.find((item) => item.id === emailId);
+    if (!email) return "—";
+    return formatLinkedProfileNames(profilesMatchingEmail(email, profiles).map((profile) => profile.name));
+  };
+
 
 
   const exportIds = selectedProfileIds.length > 0 ? selectedProfileIds : profiles.map((profile) => profile.id);
@@ -443,6 +488,30 @@ function AppContent() {
 
   };
 
+
+
+  const openAssignEmailsFromProfiles = () => {
+
+    setAssignLockedProfileIds(distributeProfileIds.length > 0 ? distributeProfileIds : rejigIds);
+
+    setAssignLockedEmailIds(undefined);
+
+    setShowAssignEmailsModal(true);
+
+  };
+
+
+
+  const openAssignEmailsFromEmailsTab = (emailIds: string[]) => {
+
+    setAssignLockedProfileIds(undefined);
+
+    setAssignLockedEmailIds(emailIds);
+
+    setShowAssignEmailsModal(true);
+
+  };
+
   const handleUndoLast = () => {
     if (!canUndoLastAction || !lastActionLabel) {
       return;
@@ -467,6 +536,12 @@ function AppContent() {
 
     setAssignLockedCreditCardIds(undefined);
 
+  };
+
+  const closeAssignEmailsModal = () => {
+    setShowAssignEmailsModal(false);
+    setAssignLockedProfileIds(undefined);
+    setAssignLockedEmailIds(undefined);
   };
 
 
@@ -575,6 +650,20 @@ function AppContent() {
 
                 onDeleteProfiles={removeProfiles}
 
+                onVerifyAddresses={verifyAddresses}
+
+                addressVerifyBusy={addressVerifyBusy}
+
+                addressJobKind={addressJobKind}
+
+                addressJobStatus={addressJobStatus}
+
+                addressJobTone={addressJobTone}
+
+                geocodioConfigured={geocodioConfigured}
+
+                onGeocodioConfiguredChange={markGeocodioConfigured}
+
                 onSaveCategory={upsertProfileCategory}
 
                 onDeleteCategory={removeProfileCategory}
@@ -599,6 +688,10 @@ function AppContent() {
 
                 onUnassignCards={unassignCards}
 
+                onAssignEmails={openAssignEmailsFromProfiles}
+
+                onUnassignEmails={unassignEmails}
+
                 onLastAction={updateLastActionLabel}
 
                 onMassDistribute={() => setShowMassDistributeModal(true)}
@@ -606,6 +699,8 @@ function AppContent() {
                 onExport={() => setShowExportModal(true)}
 
                 creditCards={creditCards}
+
+                poolEmails={poolEmails}
 
                 credentials={credentials}
 
@@ -626,6 +721,8 @@ function AppContent() {
                 jigPresets={jigPresets}
 
                 creditCards={creditCards}
+
+                poolEmails={poolEmails}
 
                 onSaveCategory={upsertProfileCategory}
 
@@ -661,13 +758,21 @@ function AppContent() {
 
                 jigPresets={jigPresets}
 
+                geocodioConfigured={geocodioConfigured}
+
+                addressJobStatus={addressJobStatus}
+
                 onClose={() => setShowRejigModal(false)}
 
                 onRejig={rejigProfilesFromMaster}
 
                 onSuccess={(result) => {
 
-                  if (result.failedCount > 0) {
+                  if (result.message) {
+
+                    updateLastActionLabel(result.message);
+
+                  } else if (result.failedCount > 0) {
 
                     updateLastActionLabel(
 
@@ -727,6 +832,40 @@ function AppContent() {
 
 
 
+          {activeTab === "emails" ? (
+
+            <div className="cards-panel">
+
+              <EmailsPanel
+
+                emails={poolEmails}
+
+                categories={emailCategories}
+
+                profileLabelForEmail={profileLabelForEmail}
+
+                onSave={upsertPoolEmail}
+
+                onDelete={removePoolEmail}
+
+                onImport={importEmails}
+
+                onSaveCategory={upsertEmailCategory}
+
+                onDeleteCategory={removeEmailCategory}
+
+                onReorderCategories={reorderEmailCategoryOrder}
+
+                onAssignSelected={openAssignEmailsFromEmailsTab}
+
+              />
+
+            </div>
+
+          ) : null}
+
+
+
           {activeTab === "credentials" ? (
 
             <div className="accounts-panel">
@@ -760,13 +899,9 @@ function AppContent() {
 
 
           {activeTab === "mail" ? (
-
             <div className="accounts-panel">
-
               <MailPanel profiles={profiles} />
-
             </div>
-
           ) : null}
 
 
@@ -829,6 +964,38 @@ function AppContent() {
               updateLastActionLabel(`Assigned cards to ${count} profile(s).`);
 
               closeAssignCardsModal();
+
+            }}
+
+          />
+
+
+
+          <AssignEmailsModal
+
+            open={showAssignEmailsModal}
+
+            emails={poolEmails}
+
+            emailCategories={emailCategories}
+
+            profiles={profiles}
+
+            masterProfiles={masterProfiles}
+
+            lockedProfileIds={assignLockedProfileIds}
+
+            lockedEmailIds={assignLockedEmailIds}
+
+            onClose={closeAssignEmailsModal}
+
+            onAssign={assignEmails}
+
+            onSuccess={(count) => {
+
+              updateLastActionLabel(`Assigned emails to ${count} profile(s).`);
+
+              closeAssignEmailsModal();
 
             }}
 

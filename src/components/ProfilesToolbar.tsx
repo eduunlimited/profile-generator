@@ -7,6 +7,7 @@ interface ProfilesToolbarProps {
   onTableQueryChange: (value: string) => void;
   canDeleteSelectedCategory: boolean;
   canUnassignCards?: boolean;
+  canUnassignEmails?: boolean;
   createMasterDisabled?: boolean;
   onCreateMaster: () => void;
   onGenerate: () => void;
@@ -17,10 +18,19 @@ interface ProfilesToolbarProps {
   onRejig: () => void;
   onAssignCards: () => void;
   onUnassignCards?: () => void;
+  onAssignEmails: () => void;
+  onUnassignEmails?: () => void;
   onMassDistribute: () => void;
   onExport: () => void;
   onImport: () => void;
   onDeleteCategory: () => void;
+  onVerifyAddresses?: () => void;
+  onOpenAddressApi?: () => void;
+  addressVerifyBusy?: boolean;
+  addressJobKind?: "idle" | "verify" | "rejig";
+  addressJobStatus?: string | null;
+  addressJobTone?: "info" | "error" | "success";
+  geocodioConfigured?: boolean;
   profileActionsLocked?: boolean;
   generateLocked?: boolean;
 }
@@ -34,6 +44,7 @@ export function ProfilesToolbar({
   onTableQueryChange,
   canDeleteSelectedCategory,
   canUnassignCards = false,
+  canUnassignEmails = false,
   createMasterDisabled = false,
   onCreateMaster,
   onGenerate,
@@ -44,10 +55,19 @@ export function ProfilesToolbar({
   onRejig,
   onAssignCards,
   onUnassignCards,
+  onAssignEmails,
+  onUnassignEmails,
   onMassDistribute,
   onExport,
   onImport,
   onDeleteCategory,
+  onVerifyAddresses,
+  onOpenAddressApi,
+  addressVerifyBusy = false,
+  addressJobKind = "idle",
+  addressJobStatus = null,
+  addressJobTone = "info",
+  geocodioConfigured = false,
   profileActionsLocked = false,
   generateLocked = false,
 }: ProfilesToolbarProps) {
@@ -60,6 +80,7 @@ export function ProfilesToolbar({
 
   return (
     <div className="profiles-table-toolbar">
+      <div className="profiles-toolbar-row">
       <div className="profiles-toolbar-groups">
         <div className="toolbar-group">
           <button
@@ -137,6 +158,26 @@ export function ProfilesToolbar({
           <button
             type="button"
             className="btn-secondary btn-compact"
+            disabled={!hasJigSelection || addressVerifyBusy || !geocodioConfigured}
+            title={
+              geocodioConfigured
+                ? "Check selected billing addresses with Geocodio"
+                : "Set a Geocodio API key first"
+            }
+            onClick={onVerifyAddresses}
+          >
+            {addressVerifyBusy && addressJobKind === "verify" ? "Verifying…" : "Verify address"}
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            onClick={onOpenAddressApi}
+          >
+            Address API
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
             disabled={!hasJigSelection || profileActionsLocked}
             title={profileActionsLocked ? lockHint : undefined}
             onClick={onAssignCards}
@@ -151,6 +192,24 @@ export function ProfilesToolbar({
             onClick={() => onUnassignCards?.()}
           >
             Unassign cards
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            disabled={!hasJigSelection || profileActionsLocked}
+            title={profileActionsLocked ? lockHint : undefined}
+            onClick={onAssignEmails}
+          >
+            Assign emails
+          </button>
+          <button
+            type="button"
+            className="btn-secondary btn-compact"
+            disabled={!canUnassignEmails || profileActionsLocked}
+            title={profileActionsLocked ? lockHint : undefined}
+            onClick={() => onUnassignEmails?.()}
+          >
+            Unassign emails
           </button>
           <button
             type="button"
@@ -190,6 +249,12 @@ export function ProfilesToolbar({
         value={tableQuery}
         onChange={(event) => onTableQueryChange(event.target.value)}
       />
+      </div>
+      {addressJobStatus ? (
+        <p className={`profiles-toolbar-status is-${addressJobTone}`} role="status">
+          {addressJobStatus}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -332,8 +332,9 @@ export function AssignCardsPanel({
         <>
           <p className="muted assign-panel-intro">
             Select one card per profile in list order. Each pick applies to the next profile; only cards
-            valid for that slot are shown. Profiles without an account site can only use cards not assigned
-            anywhere else; named sites (Target, Walmart) share account-group cards one per site.
+            valid for that slot are shown. Cards cannot be repeated in the same category, but can be reused
+            on profiles in other categories. Cards marked “Assign only to 1 profile” cannot be reused
+            anywhere.
           </p>
           <p className="muted">
             Assigning to <strong>{profileLimit}</strong> profile{profileLimit === 1 ? "" : "s"}:

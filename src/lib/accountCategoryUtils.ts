@@ -61,5 +61,15 @@ export function categoriesWithAccounts(
     const categoryId = credential.categoryId || UNCATEGORIZED_CATEGORY_ID;
     counts.set(categoryId, (counts.get(categoryId) ?? 0) + 1);
   }
-  return sortAccountCategories(categories.filter((category) => (counts.get(category.id) ?? 0) > 0));
+  const knownIds = new Set(categories.map((category) => category.id));
+  const resolved = [...categories];
+
+  if (
+    (counts.get(UNCATEGORIZED_CATEGORY_ID) ?? 0) > 0 &&
+    !knownIds.has(UNCATEGORIZED_CATEGORY_ID)
+  ) {
+    resolved.push(createUncategorizedCategory());
+  }
+
+  return sortAccountCategories(resolved);
 }

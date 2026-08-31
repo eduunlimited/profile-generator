@@ -1,4 +1,5 @@
 import { useRef } from "react";
+import { addressCheckLabel, addressMasterMatchLabel } from "../lib/addressCheck";
 import { applyExcelListSelection } from "../lib/listSelection";
 import type { ProfileSummary } from "../lib/types";
 import { BillingAddressCell } from "./BillingAddressCell";
@@ -38,6 +39,8 @@ export function ProfilesTable({
       profile.creditCardLabel,
       profile.cardNumberMasked,
       profile.accounts,
+      addressCheckLabel(profile.addressCheckStatus),
+      addressMasterMatchLabel(profile.addressMasterMatch),
     ]
       .join(" ")
       .toLowerCase();
@@ -152,6 +155,10 @@ export function ProfilesTable({
                         line1={profile.billingAddressLine1}
                         line2={profile.billingAddressLine2}
                         line3={profile.billingAddressLine3}
+                        checkStatus={profile.addressCheckStatus}
+                        checkMessage={profile.addressCheckMessage}
+                        checkDisplayLabel={profile.addressCheckDisplayLabel}
+                        masterMatch={profile.addressMasterMatch}
                       />
                     </td>
                     <td className="col-card-profile">

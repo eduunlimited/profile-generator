@@ -1,7 +1,8 @@
 import { loginFromCredential } from "./credentialUtils";
+import { emailsMatch, findPoolEmailByAddress, isAssignablePoolEmail } from "./emailPoolUtils";
 import { resolveProfileEmail, setProfileEmail } from "./profileEmailUtils";
 import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
-import type { Credential, CreditCard, Profile, ProfileLogin, ProfileName, ProfilePayment } from "./types";
+import type { Credential, CreditCard, PoolEmail, Profile, ProfileLogin, ProfileName, ProfilePayment } from "./types";
 import { cardNumbersMatch, findPoolCardByPayment, isAssignablePoolCard, parseCardNumberDigits } from "./creditCardUtils";
 import { generateProfile } from "./generator";
 import { normalizeUsPhone } from "./phoneUtils";
@@ -191,6 +192,31 @@ export function syncAllProfileCreditCardLinks(profiles: Profile[], cards: Credit
   return profiles.map((profile) => syncProfileCreditCardLink(profile, cards));
 }
 
+export function syncProfileEmailLink(profile: Profile, emails: PoolEmail[]): Profile {
+  if (profile.emailPoolId) {
+    const linked = emails.find((item) => item.id === profile.emailPoolId);
+    if (linked && emailsMatch(linked.email, resolveProfileEmail(profile))) {
+      return profile;
+    }
+    return { ...profile, emailPoolId: undefined };
+  }
+
+  const matched = findPoolEmailByAddress(resolveProfileEmail(profile), emails);
+  if (!matched || !isAssignablePoolEmail(matched)) {
+    return profile;
+  }
+
+  return { ...profile, emailPoolId: matched.id };
+}
+
+export function syncAllProfileEmailLinks(profiles: Profile[], emails: PoolEmail[]): Profile[] {
+  return profiles.map((profile) => syncProfileEmailLink(profile, emails));
+}
+
+export function emailLinkChanged(before: Profile, after: Profile): boolean {
+  return before.emailPoolId !== after.emailPoolId;
+}
+
 export function creditCardLinkChanged(before: Profile, after: Profile): boolean {
   return before.creditCardId !== after.creditCardId;
 }
@@ -276,6 +302,25 @@ export function clearProfileCreditCardAssignment(profile: Profile): Profile {
       cvv: "",
       brand: "",
     },
+  };
+}
+
+export function applyEmailFromPool(profile: Profile, emailId: string, emails: PoolEmail[]): Profile {
+  if (!emailId) {
+    return clearProfileEmailAssignment(profile);
+  }
+  const email = emails.find((item) => item.id === emailId);
+  if (!email) return profile;
+  return {
+    ...setProfileEmail(profile, email.email),
+    emailPoolId: emailId,
+  };
+}
+
+export function clearProfileEmailAssignment(profile: Profile): Profile {
+  return {
+    ...setProfileEmail(profile, ""),
+    emailPoolId: undefined,
   };
 }
 

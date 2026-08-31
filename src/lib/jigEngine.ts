@@ -9,6 +9,7 @@ import type {
   ProfileName,
   NameMisspellScope,
 } from "./types";
+import { isAllUppercaseLetterToken } from "./keyboardFatFinger";
 import { cloneProfileName, namePartsForMisspell, resolveProfileNameBase } from "./profileNameUtils";
 import { buildMisspellRequest, buildStreetVariationHint, misspellBatchWithOpenAi, misspellWithOpenAi } from "./openaiMisspell";
 import type { OpenAiMisspellResult } from "./openaiMisspell";
@@ -134,18 +135,50 @@ function consumeTrailingDirection(tokens: string[]): {
   return null;
 }
 
+/** Same reserved blocks streetRandomLetters adds at the start or end of line 1. */
+function isRandomLetterBlock(token: string): boolean {
+  if (!isAllUppercaseLetterToken(token)) return false;
+  if (matchDirection(token)) return false;
+  if (matchStreetType(token)) return false;
+  return true;
+}
+
+function peelRandomLetterBlocks(tokens: string[]): {
+  prefix: string;
+  suffix: string;
+  core: string[];
+} {
+  let core = [...tokens];
+  let prefix = "";
+  let suffix = "";
+  if (core.length > 0 && isRandomLetterBlock(core[0])) {
+    prefix = core[0];
+    core = core.slice(1);
+  }
+  if (core.length > 0 && isRandomLetterBlock(core[core.length - 1])) {
+    suffix = core[core.length - 1];
+    core = core.slice(0, -1);
+  }
+  return { prefix, suffix, core };
+}
+
 function applyStreetTypeCombo(street: string): string {
   const tokens = tokenizeStreet(street);
   if (tokens.length === 0) return street;
 
-  const direction = consumeTrailingDirection(tokens);
-  const afterDirection = direction?.remaining ?? tokens;
+  const { prefix, suffix, core } = peelRandomLetterBlocks(tokens);
+  if (core.length === 0) {
+    return [prefix, suffix].filter(Boolean).join(" ");
+  }
+
+  const direction = consumeTrailingDirection(core);
+  const afterDirection = direction?.remaining ?? core;
   const typeToken = afterDirection[afterDirection.length - 1];
   const matchedType = typeToken ? matchStreetType(typeToken) : null;
   const coreTokens = matchedType ? afterDirection.slice(0, -1) : afterDirection;
 
   if (!matchedType && !direction) {
-    return street;
+    return [prefix, core.join(" "), suffix].filter(Boolean).join(" ");
   }
 
   const house = coreTokens[0] && /^\d/.test(coreTokens[0]) ? coreTokens[0] : "";
@@ -156,7 +189,7 @@ function applyStreetTypeCombo(street: string): string {
   const typeText = typePair ? (Math.random() < 0.5 ? typePair.short : typePair.long) : "";
   const directionText = direction ? pickRandom(direction.group.variants) : "";
 
-  return [house, name, typeText, directionText].filter(Boolean).join(" ");
+  return [prefix, house, name, typeText, directionText, suffix].filter(Boolean).join(" ");
 }
 
 function randomLetters(count: number): string {

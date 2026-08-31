@@ -1,7 +1,8 @@
 import { countProfilesToCreateForFullCardUse, profileSummaryHasPoolCard } from "./assignCards";
+import { countProfilesToCreateForFullEmailUse, profileSummaryHasPoolEmail } from "./assignEmails";
 import { normalizeUsPhone } from "./phoneUtils";
 import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
-import type { CreditCard, ProfileSummary } from "./types";
+import type { CreditCard, PoolEmail, ProfileSummary } from "./types";
 
 export type ProfileOpportunityId =
   | "duplicate-address"
@@ -9,7 +10,9 @@ export type ProfileOpportunityId =
   | "duplicate-billing-phone"
   | "duplicate-billing-email"
   | "no-card"
-  | "unused-cards";
+  | "unused-cards"
+  | "no-email"
+  | "unused-emails";
 
 export interface ProfileOpportunity {
   id: ProfileOpportunityId;
@@ -85,6 +88,7 @@ export function analyzeProfileOpportunities(
   scopeProfiles: ProfileSummary[],
   allProfiles: ProfileSummary[],
   creditCards: CreditCard[],
+  poolEmails: PoolEmail[] = [],
 ): ProfileOpportunity[] {
   const opportunities: ProfileOpportunity[] = [];
 
@@ -161,6 +165,33 @@ export function analyzeProfileOpportunities(
       label: `Create ${profilesToCreate} more profile${profilesToCreate === 1 ? "" : "s"} to use all cards`,
       count: profilesToCreate,
       profileIds: noCardIds.length > 0 ? noCardIds : scopeProfiles.map((profile) => profile.id),
+    });
+  }
+
+  const profilesNeedingEmails = scopeProfiles.filter(
+    (profile) => !profileSummaryHasPoolEmail(profile, poolEmails),
+  );
+  const noEmailIds = profilesNeedingEmails.map((profile) => profile.id);
+  if (noEmailIds.length > 0) {
+    opportunities.push({
+      id: "no-email",
+      label: "No email profile",
+      count: noEmailIds.length,
+      profileIds: noEmailIds,
+    });
+  }
+
+  const emailsToCreate = countProfilesToCreateForFullEmailUse(
+    scopeProfiles,
+    poolEmails,
+    allProfiles,
+  );
+  if (emailsToCreate > 0) {
+    opportunities.push({
+      id: "unused-emails",
+      label: `Create ${emailsToCreate} more profile${emailsToCreate === 1 ? "" : "s"} to use all emails`,
+      count: emailsToCreate,
+      profileIds: noEmailIds.length > 0 ? noEmailIds : scopeProfiles.map((profile) => profile.id),
     });
   }
 

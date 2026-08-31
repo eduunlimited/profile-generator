@@ -110,5 +110,5 @@ export function categoriesWithProfiles(
     resolved.push(createUncategorizedProfileCategory());
   }
 
-  return sortProfileCategories(resolved.filter((category) => (counts.get(category.id) ?? 0) > 0));
+  return sortProfileCategories(resolved);
 }

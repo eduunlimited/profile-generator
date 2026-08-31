@@ -292,6 +292,7 @@ export async function rejigProfiles(
           : profile.cardHolderSameAsShipping !== false
             ? billingFullName({ ...profile, name: jigged.name })
             : profile.cardHolderName,
+        addressCheck: undefined,
         updatedAt: now,
       };
       break;

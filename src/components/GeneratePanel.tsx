@@ -22,12 +22,14 @@ import {
   sortProfileCategories,
 } from "../lib/profileCategoryUtils";
 import { filterAssignablePoolCards } from "../lib/creditCardUtils";
+import { filterAssignablePoolEmails } from "../lib/emailPoolUtils";
 import type {
   CreditCard,
   GenerateFromMasterOptions,
   JigPreset,
   MasterProfile,
   NameMisspellScope,
+  PoolEmail,
   ProfileCategory,
   StreetAffixMode,
 } from "../lib/types";
@@ -41,6 +43,7 @@ interface GeneratePanelProps {
   profileCategories: ProfileCategory[];
   jigPresets: JigPreset[];
   creditCards: CreditCard[];
+  poolEmails?: PoolEmail[];
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
   onGenerate: (masterId: string, options: GenerateFromMasterOptions) => Promise<number>;
   onSuccess?: (count: number, masterId: string) => void;
@@ -60,6 +63,7 @@ export function GeneratePanel({
   profileCategories,
   jigPresets,
   creditCards,
+  poolEmails = [],
   onSaveCategory,
   onGenerate,
   onSuccess,
@@ -87,6 +91,8 @@ export function GeneratePanel({
   const [phoneJigLastFour, setPhoneJigLastFour] = useState(false);
   const [creditCardMode, setCreditCardMode] = useState<GenerateFromMasterOptions["creditCardMode"]>("none");
   const [creditCardId, setCreditCardId] = useState("");
+  const [emailMode, setEmailMode] = useState<GenerateFromMasterOptions["emailMode"]>("none");
+  const [emailId, setEmailId] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -98,6 +104,7 @@ export function GeneratePanel({
   const sortedNamePresets = sortJigPresets(namePresets, RECOMMENDED_NAME_JIG_IDS);
   const sortedAddressPresets = sortJigPresets(addressPresets, RECOMMENDED_ADDRESS_JIG_IDS);
   const assignableCreditCards = useMemo(() => filterAssignablePoolCards(creditCards), [creditCards]);
+  const assignablePoolEmails = useMemo(() => filterAssignablePoolEmails(poolEmails), [poolEmails]);
 
   const selectedMaster =
     masterProfiles.find((master) => master.id === masterId) ?? masterProfiles[0] ?? null;
@@ -177,6 +184,8 @@ export function GeneratePanel({
         phoneJigLastFour: phoneJigLastFour || undefined,
         creditCardMode,
         creditCardId: creditCardMode === "selected" ? creditCardId : undefined,
+        emailMode: emailMode ?? "none",
+        emailId: emailMode === "selected" ? emailId : undefined,
       });
       setStatus(`Created ${created} jig profile(s) in the selected category.`);
       onSuccess?.(created, selectedMaster.id);
@@ -257,6 +266,30 @@ export function GeneratePanel({
               {assignableCreditCards.map((card) => (
                 <option key={card.id} value={card.id}>
                   {card.profileName}
+                </option>
+              ))}
+            </select>
+          </Field>
+        ) : null}
+
+        <Field label="Email assignment">
+          <select
+            value={emailMode ?? "none"}
+            onChange={(e) => setEmailMode(e.target.value as GenerateFromMasterOptions["emailMode"])}
+          >
+            <option value="none">No email</option>
+            <option value="random">Random ({assignablePoolEmails.length})</option>
+            <option value="selected">Selected</option>
+          </select>
+        </Field>
+
+        {emailMode === "selected" ? (
+          <Field label="Pool email">
+            <select value={emailId} onChange={(e) => setEmailId(e.target.value)}>
+              <option value="">Choose email</option>
+              {assignablePoolEmails.map((email) => (
+                <option key={email.id} value={email.id}>
+                  {email.email}
                 </option>
               ))}
             </select>

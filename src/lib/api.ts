@@ -202,6 +202,42 @@ export async function reorderCardCategories(orderedIds: string[]) {
   return browserStorage.reorderCardCategories(orderedIds);
 }
 
+export async function listPoolEmails() {
+  return browserStorage.listPoolEmails();
+}
+
+export async function savePoolEmail(email: import("./types").PoolEmail) {
+  return browserStorage.savePoolEmail(email);
+}
+
+export async function deletePoolEmail(id: string) {
+  return browserStorage.deletePoolEmail(id);
+}
+
+export async function importPoolEmails(emails: import("./types").PoolEmail[]) {
+  return browserStorage.importPoolEmails(emails);
+}
+
+export async function replaceAllPoolEmails(emails: import("./types").PoolEmail[]) {
+  return browserStorage.replaceAllPoolEmails(emails);
+}
+
+export async function listEmailCategories() {
+  return browserStorage.listEmailCategories();
+}
+
+export async function saveEmailCategory(category: import("./types").EmailCategory) {
+  return browserStorage.saveEmailCategory(category);
+}
+
+export async function deleteEmailCategory(id: string) {
+  return browserStorage.deleteEmailCategory(id);
+}
+
+export async function reorderEmailCategories(orderedIds: string[]) {
+  return browserStorage.reorderEmailCategories(orderedIds);
+}
+
 export async function listProfileCategories() {
   return browserStorage.listProfileCategories();
 }
@@ -274,6 +310,10 @@ export async function saveImapMail(accountId: string, messages: import("./types"
   return browserStorage.saveImapMail(accountId, messages);
 }
 
+export async function compactImapMailIfNeeded() {
+  return browserStorage.compactImapMailIfNeeded();
+}
+
 export async function testImap(settings: import("./types").ImapSettings) {
   if (!isTauriRuntime()) {
     throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
@@ -286,4 +326,27 @@ export async function fetchImapInbox(settings: import("./types").ImapSettings, l
     throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
   }
   return invoke<import("./types").ImapMessage[]>("fetch_imap_inbox", { settings, limit });
+}
+
+export async function fetchImapMessage(settings: import("./types").ImapSettings, uid: number) {
+  if (!isTauriRuntime()) {
+    throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
+  }
+  return invoke<import("./types").ImapMessage>("fetch_imap_message", { settings, uid });
+}
+
+export async function getGeocodioSettings() {
+  return browserStorage.getGeocodioSettings();
+}
+
+export async function saveGeocodioSettings(settings: import("./types").GeocodioSettings) {
+  return browserStorage.saveGeocodioSettings(settings);
+}
+
+export async function geocodioLookup(request: import("./types").GeocodioLookupRequest) {
+  return import("./geocodioClient").then((mod) => mod.geocodioLookup(request));
+}
+
+export async function testGeocodioConnection(apiKey: string) {
+  return import("./geocodioClient").then((mod) => mod.testGeocodioConnection(apiKey));
 }

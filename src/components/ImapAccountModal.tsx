@@ -96,7 +96,7 @@ export function ImapAccountModal({
               Test connection
             </button>
             <button type="button" className="btn-primary" disabled={busy} onClick={onSave}>
-              Save and load
+              {title.startsWith("Edit") ? "Save" : "Save and load"}
             </button>
           </div>
         </div>

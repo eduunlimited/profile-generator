@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { profileSummaryHasAssignedCard } from "../lib/assignCards";
+import { profileSummaryHasAssignedEmail } from "../lib/assignEmails";
 import {
   assertProfileCategoryUnlocked,
   categoriesWithProfiles,
@@ -32,12 +33,14 @@ import { ResizableTh, TableColGroup } from "./ResizableTable";
 import {
   ensureProfileEditorFields,
   syncProfileCreditCardLink,
+  syncProfileEmailLink,
   updateProfileField,
 } from "../lib/profileUtils";
 import type {
   Credential,
   CreditCard,
   MasterProfile,
+  PoolEmail,
   Profile,
   ProfileCategory,
   ProfileSummary,
@@ -55,6 +58,9 @@ import {
 } from "../lib/profileOpportunities";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
 import { BillingAddressCell } from "./BillingAddressCell";
+import { GeocodioSettingsModal } from "./GeocodioSettingsModal";
+import { addressCheckLabel, addressMasterMatchLabel } from "../lib/addressCheck";
+import { getGeocodioSettings, saveGeocodioSettings, testGeocodioConnection } from "../lib/api";
 import {
   resolveCategorySelection,
   type CategorySelection,
@@ -112,9 +118,16 @@ interface ProfilesPanelProps {
   activeMasterId: string | null;
   onActiveMasterChange: (masterId: string | null) => void;
   onLoadProfile: (id: string) => Promise<Profile>;
-  onSaveProfiles: (profiles: Profile[], undoLabel?: string) => Promise<void>;
+  onSaveProfiles: (profiles: Profile[], undoLabel?: string, options?: { skipAddressVerify?: boolean }) => Promise<void>;
   onImportProfiles: (profiles: Profile[]) => Promise<void>;
   onDeleteProfiles: (ids: string[]) => Promise<void>;
+  onVerifyAddresses?: (ids: string[], options?: { force?: boolean }) => Promise<void>;
+  addressVerifyBusy?: boolean;
+  addressJobKind?: "idle" | "verify" | "rejig";
+  addressJobStatus?: string | null;
+  addressJobTone?: "info" | "error" | "success";
+  geocodioConfigured?: boolean;
+  onGeocodioConfiguredChange?: (configured: boolean) => void;
   onLastAction?: (label: string) => void;
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
@@ -127,9 +140,12 @@ interface ProfilesPanelProps {
   onRejig: () => void;
   onAssignCards: () => void;
   onUnassignCards: (profileIds: string[]) => Promise<number>;
+  onAssignEmails: () => void;
+  onUnassignEmails: (profileIds: string[]) => Promise<number>;
   onMassDistribute: () => void;
   onExport: () => void;
   creditCards: CreditCard[];
+  poolEmails?: PoolEmail[];
   credentials?: Credential[];
   onSelectedIdsChange?: (ids: string[]) => void;
 }
@@ -144,6 +160,13 @@ export function ProfilesPanel({
   onSaveProfiles,
   onImportProfiles,
   onDeleteProfiles,
+  onVerifyAddresses,
+  addressVerifyBusy = false,
+  addressJobKind = "idle",
+  addressJobStatus = null,
+  addressJobTone = "info",
+  geocodioConfigured = false,
+  onGeocodioConfiguredChange,
   onLastAction,
   onSaveCategory,
   onDeleteCategory,
@@ -156,9 +179,12 @@ export function ProfilesPanel({
   onRejig,
   onAssignCards,
   onUnassignCards,
+  onAssignEmails,
+  onUnassignEmails,
   onMassDistribute,
   onExport,
   creditCards,
+  poolEmails = [],
   credentials = [],
   onSelectedIdsChange,
 }: ProfilesPanelProps) {
@@ -188,6 +214,10 @@ export function ProfilesPanel({
   const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [showProfileModal, setShowProfileModal] = useState(false);
+  const [showGeocodioModal, setShowGeocodioModal] = useState(false);
+  const [geocodioApiKey, setGeocodioApiKey] = useState("");
+  const [geocodioStatus, setGeocodioStatus] = useState<string | null>(null);
+  const [geocodioBusy, setGeocodioBusy] = useState(false);
   const [editTargetIds, setEditTargetIds] = useState<string[]>([]);
   const [mixedFields, setMixedFields] = useState<ProfileMixedFields>(() => emptyProfileMixedFields());
   const [touchedFields, setTouchedFields] = useState<ProfileTouchedFields>(() => emptyProfileTouchedFields());
@@ -273,15 +303,16 @@ export function ProfilesPanel({
   const categoriesForMaster = useCallback(
     (masterId: string) => {
       const counts = masterCategoryCounts.get(masterId);
-      if (!counts || counts.size === 0) return [];
       const query = categorySearch.trim().toLowerCase();
       return activeCategories.filter((category) => {
-        if ((counts.get(category.id) ?? 0) === 0) return false;
+        const masterCount = counts?.get(category.id) ?? 0;
+        const globalCount = categoryCounts.get(category.id) ?? 0;
+        if (masterCount === 0 && globalCount > 0) return false;
         if (!query) return true;
         return category.name.toLowerCase().includes(query);
       });
     },
-    [activeCategories, categorySearch, masterCategoryCounts],
+    [activeCategories, categoryCounts, categorySearch, masterCategoryCounts],
   );
 
   const filteredMasters = useMemo(() => {
@@ -313,9 +344,9 @@ export function ProfilesPanel({
   const profileOpportunities = useMemo(
     () =>
       showProfileOpportunities
-        ? analyzeProfileOpportunities(visibleProfiles, profiles, creditCards)
+        ? analyzeProfileOpportunities(visibleProfiles, profiles, creditCards, poolEmails)
         : [],
-    [showProfileOpportunities, visibleProfiles, profiles, creditCards],
+    [showProfileOpportunities, visibleProfiles, profiles, creditCards, poolEmails],
   );
 
   const opportunityFilteredProfiles = useMemo(() => {
@@ -339,6 +370,9 @@ export function ProfilesPanel({
         profile.cardNumberMasked,
         profile.accounts,
         profile.notes,
+        addressCheckLabel(profile.addressCheckStatus),
+        profile.addressCheckDisplayLabel,
+        addressMasterMatchLabel(profile.addressMasterMatch),
       ]
         .filter(Boolean)
         .join(" ")
@@ -377,6 +411,11 @@ export function ProfilesPanel({
     [profiles, selectedIds],
   );
   const canUnassignCards = selectedProfilesWithCards.length > 0;
+  const selectedProfilesWithEmails = useMemo(
+    () => profiles.filter((profile) => selectedIds.includes(profile.id) && profileSummaryHasAssignedEmail(profile)),
+    [profiles, selectedIds],
+  );
+  const canUnassignEmails = selectedProfilesWithEmails.length > 0;
   const selectedProfilesLocked = profiles.some(
     (profile) => selectedIds.includes(profile.id) && isProfileCategoryLocked(categories, profile.categoryId),
   );
@@ -407,20 +446,17 @@ export function ProfilesPanel({
   }, [activeOpportunityId, profileOpportunities]);
 
   useEffect(() => {
-    if (selectedCategoryId === "all") return;
+    if (selectedCategoryId === "all" || !selectedProfileCategoryId) return;
+    const categoryStillExists =
+      selectedProfileCategoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID ||
+      categories.some((category) => category.id === selectedProfileCategoryId);
+    if (categoryStillExists) return;
     if (selectedMasterId) {
-      if (selectedProfileCategoryId) {
-        const counts = masterCategoryCounts.get(selectedMasterId);
-        if ((counts?.get(selectedProfileCategoryId) ?? 0) === 0) {
-          setSelectedCategoryId(masterSidebarCategoryId(selectedMasterId));
-        }
-      }
+      setSelectedCategoryId(masterSidebarCategoryId(selectedMasterId));
       return;
     }
-    if (selectedProfileCategoryId && (categoryCounts.get(selectedProfileCategoryId) ?? 0) === 0) {
-      setSelectedCategoryId("all");
-    }
-  }, [categoryCounts, masterCategoryCounts, selectedCategoryId, selectedMasterId, selectedProfileCategoryId]);
+    setSelectedCategoryId("all");
+  }, [categories, selectedCategoryId, selectedMasterId, selectedProfileCategoryId]);
 
   useEffect(() => {
     if (!selectedMasterId) return;
@@ -538,7 +574,10 @@ export function ProfilesPanel({
 
     if (selectedIds.length === 1) {
       const loaded = ensureProfileEditorFields(
-        syncProfileCreditCardLink(await onLoadProfile(selectedIds[0]), creditCards),
+        syncProfileEmailLink(
+          syncProfileCreditCardLink(await onLoadProfile(selectedIds[0]), creditCards),
+          poolEmails,
+        ),
       );
       setEditTargetIds([loaded.id]);
       setProfileDraft(loaded);
@@ -558,19 +597,20 @@ export function ProfilesPanel({
     setShowProfileModal(true);
   };
 
-  const save = async () => {
+  const save = async (options?: { verifyAfter?: "auto" | "force" }): Promise<boolean> => {
+    const skipAddressVerify = options?.verifyAfter === "force";
     if (isMassEditing) {
       if (!profileDraft) {
         setStatus("Profiles could not be loaded.");
-        return;
+        return false;
       }
       if (!hasProfileMassEditChanges(touchedFields)) {
         setStatus("Change at least one field to update selected profiles.");
-        return;
+        return false;
       }
       if (touchedFields.profileName && !profileDraft.profileName?.trim()) {
         setStatus("Profile name is required.");
-        return;
+        return false;
       }
 
       let categoryId: string | null = null;
@@ -579,7 +619,7 @@ export function ProfilesPanel({
           categoryId = await resolveCategorySelection(draftCategorySelection, createCategory);
         } catch (error) {
           setStatus(error instanceof Error ? error.message : "Category is required.");
-          return;
+          return false;
         }
       }
 
@@ -591,25 +631,31 @@ export function ProfilesPanel({
       const nameBase = profileDraft.profileName?.trim() ?? "";
       const patched = loaded.map((profile) => {
         const next = applyProfileMassEditPatch(profile, profileDraft, categoryId, touchedFields, creditCards);
-        if (!sequentialNames) return next;
-        return updateProfileField(next, "profileName", nextUniqueProfileName(nameBase, sequentialNames));
+        const withName = sequentialNames
+          ? updateProfileField(next, "profileName", nextUniqueProfileName(nameBase, sequentialNames))
+          : next;
+        return syncProfileEmailLink(withName, poolEmails);
       });
       await onSaveProfiles(
         patched,
         editTargetIds.length > 1 ? "Edit profiles" : "Save profile",
+        skipAddressVerify ? { skipAddressVerify: true } : undefined,
       );
       closeProfileModal();
-      return;
+      if (options?.verifyAfter === "force") {
+        await onVerifyAddresses?.(editTargetIds, { force: true });
+      }
+      return true;
     }
 
     if (!profileDraft) {
       setStatus("Profile could not be loaded.");
-      return;
+      return false;
     }
 
     if (!profileDraft.profileName?.trim()) {
       setStatus("Profile name is required.");
-      return;
+      return false;
     }
 
     let categoryId: string;
@@ -617,14 +663,74 @@ export function ProfilesPanel({
       categoryId = await resolveCategorySelection(draftCategorySelection, createCategory);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Category is required.");
-      return;
+      return false;
     }
 
     const updated = ensureProfileEditorFields(
-      syncProfileCreditCardLink({ ...profileDraft, categoryId }, creditCards),
+      syncProfileEmailLink(syncProfileCreditCardLink({ ...profileDraft, categoryId }, creditCards), poolEmails),
     );
-    await onSaveProfiles([updated], "Save profile");
+    await onSaveProfiles(
+      [updated],
+      "Save profile",
+      skipAddressVerify ? { skipAddressVerify: true } : undefined,
+    );
     closeProfileModal();
+    if (options?.verifyAfter === "force") {
+      await onVerifyAddresses?.([updated.id], { force: true });
+    }
+    return true;
+  };
+
+  const handleVerifySelected = async () => {
+    if (!geocodioConfigured) {
+      setStatus("Set a Geocodio API key first (Address API).");
+      return;
+    }
+    try {
+      await onVerifyAddresses?.(selectedIds, { force: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Address verify failed.";
+      setStatus(message);
+      onLastAction?.(message);
+    }
+  };
+
+  const openGeocodioModal = async () => {
+    try {
+      const settings = await getGeocodioSettings();
+      setGeocodioApiKey(settings.apiKey);
+      setGeocodioStatus(null);
+      setShowGeocodioModal(true);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not load Address API settings.");
+    }
+  };
+
+  const handleGeocodioTest = async () => {
+    setGeocodioBusy(true);
+    setGeocodioStatus("Testing…");
+    try {
+      const message = await testGeocodioConnection(geocodioApiKey);
+      setGeocodioStatus(message);
+    } catch (error) {
+      setGeocodioStatus(error instanceof Error ? error.message : "Geocodio test failed.");
+    } finally {
+      setGeocodioBusy(false);
+    }
+  };
+
+  const handleGeocodioSave = async () => {
+    setGeocodioBusy(true);
+    try {
+      await saveGeocodioSettings({ apiKey: geocodioApiKey });
+      onGeocodioConfiguredChange?.(Boolean(geocodioApiKey.trim()));
+      setShowGeocodioModal(false);
+      setStatus(geocodioApiKey.trim() ? "Geocodio API key saved." : "Geocodio API key cleared.");
+    } catch (error) {
+      setGeocodioStatus(error instanceof Error ? error.message : "Could not save API key.");
+    } finally {
+      setGeocodioBusy(false);
+    }
   };
 
   const selectedCategory =
@@ -666,9 +772,10 @@ export function ProfilesPanel({
 
   const handleCreateCategory = async (name: string) => {
     const category = await createCategory(name);
-    if (selectedMasterId) {
-      setSelectedCategoryId(masterCategorySidebarId(selectedMasterId, category.id));
-      onActiveMasterChange(selectedMasterId);
+    const masterId = selectedMasterId ?? activeMasterId ?? masterProfiles[0]?.id ?? null;
+    if (masterId) {
+      setSelectedCategoryId(masterCategorySidebarId(masterId, category.id));
+      onActiveMasterChange(masterId);
     } else {
       setSelectedCategoryId(category.id);
     }
@@ -799,6 +906,32 @@ export function ProfilesPanel({
           setStatus(message);
         } catch (error) {
           setStatus(error instanceof Error ? error.message : "Could not unassign cards.");
+        }
+      },
+    });
+  };
+
+  const handleUnassignEmails = () => {
+    const withEmails = selectedProfilesWithEmails;
+    if (withEmails.length === 0) {
+      return;
+    }
+    const count = withEmails.length;
+    askConfirm({
+      title: "Unassign emails",
+      message:
+        count === 1
+          ? `Unassign the email from "${withEmails[0].name}"? The email on the profile will be cleared.`
+          : `Unassign emails from ${count} profile${count === 1 ? "" : "s"}? Emails on those profiles will be cleared.`,
+      confirmLabel: "Unassign",
+      onConfirm: async () => {
+        try {
+          const updated = await onUnassignEmails(withEmails.map((profile) => profile.id));
+          const message = `Unassigned emails from ${updated} profile${updated === 1 ? "" : "s"}.`;
+          onLastAction?.(message);
+          setStatus(message);
+        } catch (error) {
+          setStatus(error instanceof Error ? error.message : "Could not unassign emails.");
         }
       },
     });
@@ -1102,6 +1235,7 @@ export function ProfilesPanel({
               onTableQueryChange={setTableQuery}
               canDeleteSelectedCategory={canDeleteSelectedCategory}
               canUnassignCards={canUnassignCards}
+              canUnassignEmails={canUnassignEmails}
               profileActionsLocked={selectedProfilesLocked}
               generateLocked={viewingCategoryLocked}
               createMasterDisabled={createMasterDisabled}
@@ -1114,8 +1248,17 @@ export function ProfilesPanel({
               onCopy={openCopyModal}
               onDelete={() => void handleToolbarDelete()}
               onRejig={onRejig}
+              onVerifyAddresses={() => void handleVerifySelected()}
+              onOpenAddressApi={() => void openGeocodioModal()}
+              addressVerifyBusy={addressVerifyBusy}
+              addressJobKind={addressJobKind}
+              addressJobStatus={addressJobStatus ?? status}
+              addressJobTone={addressJobStatus ? addressJobTone : status ? "error" : "info"}
+              geocodioConfigured={geocodioConfigured}
               onAssignCards={onAssignCards}
               onUnassignCards={() => void handleUnassignCards()}
+              onAssignEmails={onAssignEmails}
+              onUnassignEmails={() => void handleUnassignEmails()}
               onMassDistribute={onMassDistribute}
               onExport={onExport}
               onImport={() => setShowImportModal(true)}
@@ -1212,6 +1355,10 @@ export function ProfilesPanel({
                                 line1={profile.billingAddressLine1}
                                 line2={profile.billingAddressLine2}
                                 line3={profile.billingAddressLine3}
+                                checkStatus={profile.addressCheckStatus}
+                                checkMessage={profile.addressCheckMessage}
+                                checkDisplayLabel={profile.addressCheckDisplayLabel}
+                                masterMatch={profile.addressMasterMatch}
                               />
                             </td>
                             <td className="col-card-profile">
@@ -1260,6 +1407,22 @@ export function ProfilesPanel({
         onDraftCategorySelectionChange={setDraftCategorySelection}
         onFieldTouch={touchField}
         onSave={() => void save()}
+        onVerify={
+          onVerifyAddresses && geocodioConfigured
+            ? () => {
+                void (async () => {
+                  try {
+                    await save({ verifyAfter: "force" });
+                  } catch (error) {
+                    const message = error instanceof Error ? error.message : "Address verify failed.";
+                    setStatus(message);
+                    onLastAction?.(message);
+                  }
+                })();
+              }
+            : undefined
+        }
+        verifyBusy={addressVerifyBusy}
         onDeleteDraftCategory={() =>
           void deleteCategoryById(
             draftCategorySelection.kind === "existing" ? draftCategorySelection.categoryId : "",
@@ -1315,6 +1478,17 @@ export function ProfilesPanel({
         onSaveCategory={onSaveCategory}
         onClose={() => setShowImportModal(false)}
         onImport={onImportProfiles}
+      />
+
+      <GeocodioSettingsModal
+        open={showGeocodioModal}
+        apiKey={geocodioApiKey}
+        busy={geocodioBusy}
+        status={geocodioStatus}
+        onApiKeyChange={setGeocodioApiKey}
+        onClose={() => setShowGeocodioModal(false)}
+        onTest={() => void handleGeocodioTest()}
+        onSave={() => void handleGeocodioSave()}
       />
     </>
   );

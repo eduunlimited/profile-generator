@@ -28,6 +28,7 @@ import type {
 import { AccountCategorySelect, type CategorySelection } from "./AccountCategorySelect";
 import { AccountSiteSelect } from "./AccountSiteSelect";
 import { Field } from "./ui";
+import { AddressCheckBadge } from "./AddressCheckBadge";
 
 const MASS_EDIT_PLACEHOLDER = "Multiple values";
 const CARD_BRANDS = ["Visa", "Mastercard", "Amex", "Discover"] as const;
@@ -52,6 +53,8 @@ interface ProfileFormModalProps {
   onDraftCategorySelectionChange: (selection: CategorySelection) => void;
   onFieldTouch?: (field: ProfileEditField) => void;
   onSave: () => void;
+  onVerify?: () => void;
+  verifyBusy?: boolean;
   onDeleteDraftCategory: () => void;
 }
 
@@ -104,6 +107,8 @@ export function ProfileFormModal({
   onDraftCategorySelectionChange,
   onFieldTouch,
   onSave,
+  onVerify,
+  verifyBusy = false,
   onDeleteDraftCategory,
 }: ProfileFormModalProps) {
   if (!open || !profileDraft) return null;
@@ -636,6 +641,26 @@ export function ProfileFormModal({
           ) : null}
           {status ? <p className="status-inline">{status}</p> : null}
           <div className="profile-edit-footer">
+            {!isMassEditing ? (
+              <span className="profile-edit-address-check">
+                <AddressCheckBadge
+                  status={profile.addressCheck?.status}
+                  message={profile.addressCheck?.message}
+                  displayLabel={profile.addressCheck?.displayLabel}
+                  masterMatch={profile.addressCheck?.masterMatch}
+                />
+              </span>
+            ) : null}
+            {onVerify ? (
+              <button
+                type="button"
+                className="btn-secondary"
+                disabled={verifyBusy}
+                onClick={onVerify}
+              >
+                {verifyBusy ? "Verifying…" : "Verify address"}
+              </button>
+            ) : null}
             <button type="button" className="btn-primary profile-edit-save" onClick={onSave}>
               {saveLabel}
             </button>

@@ -36,6 +36,51 @@ export function localDataPlugin(): Plugin {
   return {
     name: "local-data",
     configureServer(server) {
+      server.middlewares.use("/__geocode", (req, res, next) => {
+        if (req.method !== "POST") {
+          next();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+                apiKey?: string;
+                street?: string;
+                unit?: string;
+                city?: string;
+                state?: string;
+                postalCode?: string;
+              };
+              const params = new URLSearchParams({
+                api_key: payload.apiKey?.trim() ?? "",
+                street: payload.street?.trim() ?? "",
+                city: payload.city?.trim() ?? "",
+                state_province: payload.state?.trim() ?? "",
+                postal_code: payload.postalCode?.trim() ?? "",
+                country: "US",
+                fields: "zip4",
+                limit: "1",
+              });
+              const unit = payload.unit?.trim() ?? "";
+              if (unit) params.set("street2", unit);
+              const response = await fetch(`https://api.geocod.io/v2/geocode?${params.toString()}`);
+              const text = await response.text();
+              res.statusCode = response.ok ? 200 : response.status;
+              res.setHeader("Content-Type", "application/json");
+              res.setHeader("Cache-Control", "no-store");
+              res.end(text);
+            } catch {
+              res.statusCode = 500;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Geocodio proxy failed." }));
+            }
+          })();
+        });
+      });
+
       server.middlewares.use(DATA_ROUTE, (req, res, next) => {
         const urlPath = (req.url ?? "").split("?")[0] ?? "";
         const fileName = safeFileName(urlPath.replace(/^\//, ""));

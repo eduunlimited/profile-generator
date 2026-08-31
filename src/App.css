@@ -765,6 +765,71 @@ body.is-col-resizing * {
   white-space: nowrap;
 }
 
+.address-check-stack {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 2px;
+  width: fit-content;
+}
+
+.address-check-badge,
+.address-master-match,
+.address-master-mismatch {
+  display: inline-block;
+  width: fit-content;
+  padding: 0 5px;
+  border-radius: 3px;
+  border: 1px solid var(--border);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.address-master-match {
+  border-color: #67e8f9;
+  color: #67e8f9;
+  background: rgba(103, 232, 249, 0.12);
+}
+
+.address-master-mismatch {
+  border-color: #fb923c;
+  color: #fb923c;
+  background: rgba(251, 146, 60, 0.12);
+}
+
+.address-check-pass {
+  border-color: #34d399;
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.address-check-warn {
+  border-color: #fbbf24;
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.12);
+}
+
+.address-check-fail,
+.address-check-error {
+  border-color: var(--danger);
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.address-check-queued {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  background: var(--cyan-dim);
+}
+
+.address-check-unchecked {
+  color: var(--text-muted);
+}
+
 .col-card {
   font-family: Consolas, monospace;
   white-space: nowrap;
@@ -1472,6 +1537,10 @@ input.mass-edit-mixed[readonly] {
   overflow: hidden;
 }
 
+.accounts-panel.is-tab-hidden {
+  display: none;
+}
+
 .cards-panel {
   display: flex;
   flex-direction: column;
@@ -1774,6 +1843,73 @@ body.accounts-resizing {
   background: var(--green-dim);
 }
 
+.mail-sidebar-actions {
+  display: grid;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.mail-sidebar-edit-btn {
+  width: 100%;
+}
+
+.mail-sidebar-empty {
+  padding: 8px;
+  list-style: none;
+}
+
+.mail-key-item {
+  align-items: flex-start;
+}
+
+.mail-key-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.mail-key-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mail-key-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.mail-key-item.active .mail-key-sub {
+  color: var(--cyan);
+}
+
+.imap-key-manage-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.imap-key-manage-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.imap-key-manage-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
 .accounts-main {
   min-width: 0;
   display: flex;
@@ -1860,14 +1996,36 @@ body.accounts-resizing {
 
 .profiles-table-toolbar {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-md);
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   padding: var(--space-sm) var(--table-content-padding-right) var(--space-sm) var(--space-md);
   border-bottom: 1px solid var(--border);
   background: var(--bg-panel);
   flex-shrink: 0;
+}
+
+.profiles-toolbar-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-md);
+  flex-wrap: wrap;
+}
+
+.profiles-toolbar-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+.profiles-toolbar-status.is-error {
+  color: var(--danger);
+}
+
+.profiles-toolbar-status.is-success {
+  color: #34d399;
 }
 
 .profiles-toolbar-groups {
@@ -2178,9 +2336,18 @@ body.accounts-resizing {
 }
 
 .profile-edit-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   margin-top: 14px;
   padding-top: 12px;
   border-top: 1px solid var(--border);
+}
+
+.profile-edit-address-check {
+  display: flex;
+  align-items: center;
+  margin-right: auto;
 }
 
 .profile-edit-save {
@@ -3057,6 +3224,7 @@ textarea {
   flex-shrink: 0;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
   padding-top: var(--space-sm);
   border-top: 1px solid var(--border);
@@ -3714,6 +3882,19 @@ textarea {
   font-size: 11px;
 }
 
+.inbox-item-from {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 12px;
+}
+
+.inbox-item-email {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
 .inbox-otp {
   display: inline-flex;
   align-items: center;
@@ -3739,6 +3920,36 @@ textarea {
 .inbox-detail h3 {
   margin: 0 0 6px;
   font-size: 15px;
+}
+
+.inbox-message {
+  margin-top: 12px;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.inbox-message-frame {
+  display: block;
+  width: 100%;
+  min-height: 360px;
+  height: min(60vh, 720px);
+  border: 0;
+  background: #ffffff;
+}
+
+.inbox-message-text {
+  margin: 0;
+  padding: 16px;
+  min-height: 280px;
+  background: #ffffff;
+  color: #111111;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .mail-pool-card {

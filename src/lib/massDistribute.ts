@@ -6,13 +6,14 @@ import {
 } from "./creditCardUtils";
 import { profileMatchesCredential } from "./linkCredentialsByEmail";
 import { DEFAULT_ACCOUNT_SITE, resolveProfileEmail } from "./profileEmailUtils";
-import { billingSameAsShipping, updateProfileField, updateProfilePaymentField } from "./profileUtils";
+import { billingSameAsShipping, syncProfileEmailLink, updateProfileField, updateProfilePaymentField } from "./profileUtils";
 import type {
   AccountReviewStatus,
   Credential,
   CreditCard,
   MassDistributeField,
   MassDistributeOptions,
+  PoolEmail,
   Profile,
 } from "./types";
 
@@ -159,6 +160,7 @@ export function distributeLinesToProfile(
   creditCards: CreditCard[],
   credentials: Credential[],
   accountSite: string,
+  poolEmails: PoolEmail[] = [],
 ): { profile: Profile; updatedCredentials: Credential[] } {
   const now = new Date().toISOString();
   const value = line.trim();
@@ -174,7 +176,7 @@ export function distributeLinesToProfile(
       next = updateProfileField(profile, "profileName", value);
       break;
     case "email":
-      next = updateProfileField(profile, "email", value);
+      next = syncProfileEmailLink(updateProfileField(profile, "email", value), poolEmails);
       break;
     case "phone":
       next = updateProfileField(profile, "phone", value);
@@ -290,6 +292,7 @@ export function massDistributeToProfiles(
   options: Pick<MassDistributeOptions, "field" | "accountSite">,
   creditCards: CreditCard[] = [],
   credentials: Credential[] = [],
+  poolEmails: PoolEmail[] = [],
 ): {
   updated: Profile[];
   updatedCredentials: Credential[];
@@ -309,6 +312,7 @@ export function massDistributeToProfiles(
       creditCards,
       [...credentialMap.values()],
       options.accountSite ?? DEFAULT_ACCOUNT_SITE,
+      poolEmails,
     );
     updated.push(result.profile);
     for (const credential of result.updatedCredentials) {

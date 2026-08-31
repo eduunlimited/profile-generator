@@ -74,7 +74,7 @@ export function categoriesWithCards(categories: CardCategory[], cards: CreditCar
     resolved.push(createUncategorizedCardCategory());
   }
 
-  return sortCardCategories(resolved.filter((category) => (counts.get(category.id) ?? 0) > 0));
+  return sortCardCategories(resolved);
 }
 
 export function buildCardCategoryNameMap(

@@ -6,6 +6,7 @@ const NAV_ITEMS: { id: AppTab; label: string; icon: string }[] = [
   { id: "profiles", label: "Profiles", icon: "◫" },
   { id: "sessions", label: "Sessions", icon: "🌐" },
   { id: "cards", label: "Cards", icon: "💳" },
+  { id: "emails", label: "Emails", icon: "@" },
   { id: "credentials", label: "Accounts", icon: "🔑" },
   { id: "mail", label: "Mail", icon: "✉" },
   { id: "jigs", label: "Jigs", icon: "⌘" },

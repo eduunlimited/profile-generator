@@ -1,6 +1,6 @@
 [package]
 name = "profile-generator"
-version = "0.2.23"
+version = "0.2.24"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -30,9 +30,13 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 sha2 = "0.10"
 whoami = "1"
 imap = "2.4"
+imap-proto = "0.10"
 native-tls = "0.2"
 mailparse = "0.16"
 
 [target."cfg(not(any(target_os = \"android\", target_os = \"ios\")))".dependencies]
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.38"

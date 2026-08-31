@@ -24,6 +24,8 @@ interface RejigPanelProps {
   selectedProfiles: ProfileSummary[];
   masterProfiles: MasterProfile[];
   jigPresets: JigPreset[];
+  geocodioConfigured?: boolean;
+  addressJobStatus?: string | null;
   onRejig: (options: RejigProfilesOptions) => Promise<RejigProfilesResult>;
   onSuccess?: (result: RejigProfilesResult) => void;
 }
@@ -32,6 +34,8 @@ export function RejigPanel({
   selectedProfiles,
   masterProfiles,
   jigPresets,
+  geocodioConfigured = false,
+  addressJobStatus = null,
   onRejig,
   onSuccess,
 }: RejigPanelProps) {
@@ -42,6 +46,7 @@ export function RejigPanel({
   const [streetRandomCharCount, setStreetRandomCharCount] = useState(3);
   const [addressJigPresetIds, setAddressJigPresetIds] = useState<string[]>([]);
   const [phoneJigLastFour, setPhoneJigLastFour] = useState(false);
+  const [untilPass, setUntilPass] = useState(false);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -70,6 +75,10 @@ export function RejigPanel({
       setStatus("Selected profiles must be linked to a master profile.");
       return;
     }
+    if (untilPass && geocodioConfigured && addressJigPresetIds.length === 0 && !streetRandomLettersEnabled) {
+      setStatus("Select at least one address jig to re-jig until pass.");
+      return;
+    }
 
     setBusy(true);
     setStatus(null);
@@ -87,9 +96,12 @@ export function RejigPanel({
           : undefined,
         addressJigPresetIds: addressJigPresetIds.length > 0 ? addressJigPresetIds : undefined,
         phoneJigLastFour: phoneJigLastFour || undefined,
+        untilPass: untilPass && geocodioConfigured,
       });
 
-      if (result.failedCount > 0) {
+      if (result.message) {
+        setStatus(result.message);
+      } else if (result.failedCount > 0) {
         setStatus(
           `Re-jigged ${result.updatedCount} profile(s). ${result.failedCount} could not get a street line 1 under the 3-per-category limit.`,
         );
@@ -183,6 +195,22 @@ export function RejigPanel({
       </div>
 
       <div className="generate-modal-footer">
+        <div className="jig-option-block">
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={untilPass && geocodioConfigured}
+              disabled={!geocodioConfigured || busy}
+              onChange={(event) => setUntilPass(event.target.checked)}
+            />
+            <span>Re-jig until pass</span>
+          </label>
+          <p className="muted jig-option-hint">
+            {geocodioConfigured
+              ? "Keeps re-jigging Fail/Warn addresses up to 5 times until Geocodio Pass"
+              : "Set a Geocodio API key first (Address API)"}
+          </p>
+        </div>
         <button
           type="button"
           className="btn-primary"
@@ -192,14 +220,18 @@ export function RejigPanel({
         >
           {busy ? (
             <span className="generate-loading-label">
-              Re-jigging
+              {untilPass && geocodioConfigured ? "Re-jigging until Pass" : "Re-jigging"}
               <span className="generate-loading-dots" aria-hidden="true" />
             </span>
           ) : (
             <>Re-jig {selectedCount} profile{selectedCount === 1 ? "" : "s"}</>
           )}
         </button>
-        {status ? <p className="status-inline generate-modal-status">{status}</p> : null}
+        {busy && addressJobStatus ? (
+          <p className="status-inline generate-modal-status">{addressJobStatus}</p>
+        ) : status ? (
+          <p className="status-inline generate-modal-status">{status}</p>
+        ) : null}
       </div>
     </section>
   );

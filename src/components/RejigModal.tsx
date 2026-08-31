@@ -14,6 +14,8 @@ interface RejigModalProps {
   profiles: ProfileSummary[];
   masterProfiles: MasterProfile[];
   jigPresets: JigPreset[];
+  geocodioConfigured?: boolean;
+  addressJobStatus?: string | null;
   onClose: () => void;
   onRejig: (options: RejigProfilesOptions) => Promise<RejigProfilesResult>;
   onSuccess?: (result: RejigProfilesResult) => void;
@@ -25,6 +27,8 @@ export function RejigModal({
   profiles,
   masterProfiles,
   jigPresets,
+  geocodioConfigured,
+  addressJobStatus,
   onClose,
   onRejig,
   onSuccess,
@@ -49,6 +53,8 @@ export function RejigModal({
           selectedProfiles={selectedProfiles}
           masterProfiles={masterProfiles}
           jigPresets={jigPresets}
+          geocodioConfigured={geocodioConfigured}
+          addressJobStatus={addressJobStatus}
           onRejig={onRejig}
           onSuccess={onSuccess}
         />

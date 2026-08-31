@@ -1,5 +1,6 @@
 import { applyCreditCardFromPool, clearProfileCreditCardAssignment } from "./profileUtils";
 import { cardNumbersMatch, isAssignablePoolCard } from "./creditCardUtils";
+import { profileCategoryId } from "./profileCategoryUtils";
 import type { AssignCardsOptions, CreditCard, Profile, ProfileSummary } from "./types";
 
 export function profileSummaryHasPoolCard(
@@ -29,6 +30,7 @@ type AssignableProfile = {
   creditCardId?: string;
   paymentNumber?: string;
   accountSite?: string;
+  categoryId?: string;
 };
 
 export type { AssignableProfile };
@@ -41,6 +43,7 @@ export function toAssignableProfile(profile: ProfileSummary | Profile): Assignab
       creditCardId: profile.creditCardId,
       paymentNumber: profile.payment.number.replace(/\D/g, ""),
       accountSite: profile.accountSite,
+      categoryId: profileCategoryId(profile),
     };
   }
   return {
@@ -49,6 +52,7 @@ export function toAssignableProfile(profile: ProfileSummary | Profile): Assignab
     creditCardId: profile.creditCardId,
     paymentNumber: profile.paymentNumber,
     accountSite: profile.accountSite,
+    categoryId: profileCategoryId(profile),
   };
 }
 
@@ -56,12 +60,22 @@ export function toAssignableProfiles(profiles: (ProfileSummary | Profile)[]): As
   return profiles.map(toAssignableProfile);
 }
 
-function normalizeAccountSite(site?: string): string {
-  return site?.trim() ?? "";
-}
-
 export function cardUsesSingleProfileScope(card: Pick<CreditCard, "assignmentScope">): boolean {
   return card.assignmentScope === "single_profile";
+}
+
+function assignmentConflicts(
+  card: Pick<CreditCard, "assignmentScope">,
+  holder: { id: string; categoryId?: string },
+  incoming: { id: string; categoryId?: string },
+): boolean {
+  if (holder.id === incoming.id) {
+    return false;
+  }
+  if (cardUsesSingleProfileScope(card)) {
+    return true;
+  }
+  return profileCategoryId(holder) === profileCategoryId(incoming);
 }
 
 export function profilesUsingCard(card: CreditCard, profiles: AssignableProfile[]): AssignableProfile[] {
@@ -93,25 +107,7 @@ export function isCardAvailableForProfile(
     return true;
   }
 
-  if (cardUsesSingleProfileScope(card)) {
-    return false;
-  }
-
-  const targetSite = normalizeAccountSite(targetProfile.accountSite);
-
-  // No account site on the profile: only completely unassigned pool cards are eligible.
-  if (!targetSite) {
-    return false;
-  }
-
-  // A card used on a profile without an account site cannot be shared to a named site.
-  if (otherAssignees.some((profile) => !normalizeAccountSite(profile.accountSite))) {
-    return false;
-  }
-
-  return !otherAssignees.some(
-    (profile) => normalizeAccountSite(profile.accountSite) === targetSite,
-  );
+  return !otherAssignees.some((profile) => assignmentConflicts(card, profile, targetProfile));
 }
 
 export function cardIdsUsedByProfiles(
@@ -359,7 +355,6 @@ export function validateCardAssignments(
   const assignableProfiles = toAssignableProfiles(allProfiles);
   const profileMap = new Map(assignableProfiles.map((profile) => [profile.id, profile]));
   let simulatedProfiles = assignableProfiles;
-  const usedCardIds = new Set<string>();
 
   for (let index = 0; index < profileIds.length; index += 1) {
     const profile = profileMap.get(profileIds[index]);
@@ -367,17 +362,12 @@ export function validateCardAssignments(
     if (!profile || !card) {
       continue;
     }
-    if (usedCardIds.has(card.id)) {
-      return `"${card.profileName}" cannot be assigned to more than one profile in the same batch.`;
-    }
     if (!isCardAvailableForProfile(card, profile, simulatedProfiles)) {
-      const site = profile.accountSite?.trim() || "unspecified account group";
       const scopeLabel = cardUsesSingleProfileScope(card)
-        ? "single-profile card"
-        : `another ${site} profile`;
+        ? "another profile"
+        : "another profile in the same category";
       return `"${card.profileName}" is not available for "${profile.name}" — already assigned to ${scopeLabel}.`;
     }
-    usedCardIds.add(card.id);
     simulatedProfiles = simulatedProfiles.map((item) =>
       item.id === profile.id
         ? { ...item, creditCardId: card.id, paymentNumber: card.number }
@@ -418,16 +408,22 @@ export function assignCardsToProfiles(
       if (!profile.creditCardId || !assignedCardIds.has(profile.creditCardId)) {
         continue;
       }
-      const nextOwner = [...assignmentByProfile.entries()].find(
+      const nextOwnerId = [...assignmentByProfile.entries()].find(
         ([, cardId]) => cardId === profile.creditCardId,
       )?.[0];
-      if (nextOwner !== profile.id) {
-        updatedById.set(profile.id, {
-          ...profile,
-          creditCardId: undefined,
-          updatedAt: now,
-        });
+      if (!nextOwnerId || nextOwnerId === profile.id) {
+        continue;
       }
+      const card = cards.find((item) => item.id === profile.creditCardId);
+      const nextOwner = profileMap.get(nextOwnerId) ?? allProfiles.find((item) => item.id === nextOwnerId);
+      if (!card || !nextOwner || !assignmentConflicts(card, profile, nextOwner)) {
+        continue;
+      }
+      updatedById.set(profile.id, {
+        ...profile,
+        creditCardId: undefined,
+        updatedAt: now,
+      });
     }
 
     for (const profileId of options.profileIds) {
@@ -460,13 +456,18 @@ export function assignCardsToProfiles(
   const targetIds = new Set(options.profileIds);
 
   for (const profile of allProfiles) {
-    if (profile.creditCardId === options.creditCardId && !targetIds.has(profile.id)) {
-      updatedById.set(profile.id, {
-        ...profile,
-        creditCardId: undefined,
-        updatedAt: now,
-      });
+    if (profile.creditCardId !== options.creditCardId || targetIds.has(profile.id)) {
+      continue;
     }
+    const conflicts = profilesToUpdate.some((target) => assignmentConflicts(card, profile, target));
+    if (!conflicts) {
+      continue;
+    }
+    updatedById.set(profile.id, {
+      ...profile,
+      creditCardId: undefined,
+      updatedAt: now,
+    });
   }
 
   for (const profile of profilesToUpdate) {

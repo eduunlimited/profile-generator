@@ -347,7 +347,7 @@ export function CardFormModal({
                 <Field
                   label="Assignment"
                   className="form-grid-span"
-                  hint="When unchecked, the card may be shared across Target/Walmart account groups (one profile per site)."
+                  hint="When unchecked, the card may be assigned once per profile category and reused in other categories. When checked, it can only be on a single profile."
                 >
                   <label className={`checkbox-row${showMixed("assignmentScope") ? " mass-edit-mixed" : ""}`}>
                     <input

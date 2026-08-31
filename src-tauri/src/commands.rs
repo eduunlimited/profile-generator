@@ -407,6 +407,13 @@ pub async fn test_proxy(proxy_server: String) -> Result<crate::browser::ProxyTes
 }
 
 #[tauri::command]
+pub async fn geocodio_lookup(
+    request: crate::geocodio::GeocodioLookupRequest,
+) -> Result<crate::geocodio::GeocodioLookupResult, String> {
+    crate::geocodio::lookup(request).await
+}
+
+#[tauri::command]
 pub async fn test_imap(settings: crate::imap::ImapSettings) -> Result<crate::imap::ImapTestResult, String> {
     tauri::async_runtime::spawn_blocking(move || crate::imap::test_imap(settings))
         .await
@@ -419,6 +426,16 @@ pub async fn fetch_imap_inbox(
     limit: Option<u32>,
 ) -> Result<Vec<crate::imap::ImapMessage>, String> {
     tauri::async_runtime::spawn_blocking(move || crate::imap::fetch_imap_inbox(settings, limit))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn fetch_imap_message(
+    settings: crate::imap::ImapSettings,
+    uid: u32,
+) -> Result<crate::imap::ImapMessage, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::imap::fetch_imap_message(settings, uid))
         .await
         .map_err(|error| error.to_string())?
 }

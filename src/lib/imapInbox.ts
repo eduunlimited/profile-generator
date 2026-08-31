@@ -69,6 +69,62 @@ export function storedImapMessageKey(message: Pick<StoredImapMessage, "messageId
   return messageId ? `id:${messageId}` : `uid:${message.uid}`;
 }
 
+export function parseSender(from: string, fromName?: string, fromEmail?: string): { name: string; email: string } {
+  const name = fromName?.trim() ?? "";
+  const email = fromEmail?.trim() ?? "";
+  if (name || email) return { name, email };
+  const trimmed = from.trim();
+  const angled = trimmed.match(/^(.*?)\s*<([^>]+)>\s*$/);
+  if (angled) {
+    return {
+      name: angled[1].replace(/^["']|["']$/g, "").trim(),
+      email: angled[2].trim(),
+    };
+  }
+  if (trimmed.includes("@")) return { name: "", email: trimmed };
+  return { name: trimmed, email: "" };
+}
+
+export function formatSender(from: string, fromName?: string, fromEmail?: string): string {
+  const { name, email } = parseSender(from, fromName, fromEmail);
+  if (name && email) return `${name} <${email}>`;
+  return name || email || from.trim() || "—";
+}
+
+export function looksLikeEmailHtml(value: string): boolean {
+  return /<(?:html|body|div|table|p|br|span|style|img|!doctype)\b/i.test(value);
+}
+
+export function sanitizeEmailHtml(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<iframe\b[^>]*>[\s\S]*?<\/iframe>/gi, "")
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+    .replace(/javascript:/gi, "");
+}
+
+export function wrapEmailHtml(html: string): string {
+  const safe = sanitizeEmailHtml(html);
+  const chrome = `<meta charset="utf-8"><base target="_blank" rel="noopener noreferrer"><style>
+    html, body { background: #ffffff; color: #111111; margin: 0; }
+    body { padding: 16px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 14px; line-height: 1.5; }
+    img { max-width: 100%; height: auto; }
+  </style>`;
+  if (/<html[\s>]/i.test(safe)) {
+    if (/<head[\s>]/i.test(safe)) {
+      return safe.replace(/<head([^>]*)>/i, `<head$1>${chrome}`);
+    }
+    return safe.replace(/<html([^>]*)>/i, `<html$1><head>${chrome}</head>`);
+  }
+  return `<!DOCTYPE html><html><head>${chrome}</head><body>${safe}</body></html>`;
+}
+
+export function messageHtmlBody(message: Pick<ImapMessage, "body" | "htmlBody">): string {
+  const html = message.htmlBody?.trim();
+  if (html) return html;
+  return looksLikeEmailHtml(message.body) ? message.body : "";
+}
+
 export function toStoredImapMessage(message: ImapMessage, fetchedAt = new Date().toISOString()): StoredImapMessage {
   const parsed = Date.parse(message.date);
   return {
@@ -76,6 +132,22 @@ export function toStoredImapMessage(message: ImapMessage, fetchedAt = new Date()
     messageId: message.messageId?.trim() || undefined,
     dateMs: Number.isFinite(parsed) ? parsed : 0,
     fetchedAt,
+  };
+}
+
+export function toStoredImapHeaders(
+  message: ImapMessage,
+  fetchedAt = new Date().toISOString(),
+): StoredImapMessage {
+  const stored = toStoredImapMessage(message, fetchedAt);
+  const existingMs = "dateMs" in message ? (message as StoredImapMessage).dateMs : undefined;
+  const snippet = (stored.snippet || stored.body).replace(/\s+/g, " ").trim().slice(0, 280);
+  return {
+    ...stored,
+    dateMs: Number.isFinite(existingMs) && (existingMs ?? 0) > 0 ? existingMs : stored.dateMs,
+    snippet,
+    body: "",
+    htmlBody: undefined,
   };
 }
 
@@ -87,10 +159,18 @@ export function mergeStoredImapMessages(
   const fetchedAt = new Date().toISOString();
   const byKey = new Map<string, StoredImapMessage>();
   for (const message of existing) {
-    byKey.set(storedImapMessageKey(message), message);
+    byKey.set(storedImapMessageKey(message), toStoredImapHeaders(message, message.fetchedAt));
   }
   for (const message of incoming) {
-    const stored = toStoredImapMessage(message, fetchedAt);
+    const stored = toStoredImapHeaders(message, fetchedAt);
+    const previous = byKey.get(storedImapMessageKey(stored));
+    if (previous && !stored.dateMs && previous.dateMs) {
+      stored.dateMs = previous.dateMs;
+      stored.date = stored.date || previous.date;
+    }
+    if (previous && !stored.snippet && previous.snippet) {
+      stored.snippet = previous.snippet;
+    }
     byKey.set(storedImapMessageKey(stored), stored);
   }
   return [...byKey.values()]

@@ -5,6 +5,12 @@ import { parseCardNumberDigits, profileHasPaymentCard, resolveCreditCardProfileL
 import { normalizeMasterProfile, sortMasterProfiles } from "./masterProfileUtils";
 import { normalizeCredential, type StoredCredential } from "./credentialUtils";
 import { normalizeCreditCard, type StoredCreditCard } from "./creditCardUtils";
+import { normalizePoolEmail, type StoredPoolEmail } from "./emailPoolUtils";
+import {
+  createUncategorizedEmailCategory,
+  sortEmailCategories,
+  EMAIL_UNCATEGORIZED_CATEGORY_ID,
+} from "./emailCategoryUtils";
 import { RETIRED_BUILTIN_JIG_IDS } from "./presets";
 import { createUncategorizedCategory, sortAccountCategories, UNCATEGORIZED_CATEGORY_ID } from "./accountCategoryUtils";
 import {
@@ -18,8 +24,9 @@ import {
   sortProfileCategories,
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
 } from "./profileCategoryUtils";
-import { IMAP_MAIL_CAP, toStoredImapMessage } from "./imapInbox";
+import { IMAP_MAIL_CAP, toStoredImapHeaders } from "./imapInbox";
 import {
+  ensureDataKey,
   flushLocalDataWrites,
   readCachedMap,
   removeLegacyStorageKey,
@@ -30,11 +37,13 @@ import type {
   CardCategory,
   Credential,
   CreditCard,
+  EmailCategory,
   ExportTemplate,
   ImapAccount,
   ImapSettings,
   JigPreset,
   MasterProfile,
+  PoolEmail,
   Profile,
   ProfileCategory,
   ProfileSummary,
@@ -57,12 +66,15 @@ const KEYS = {
   credentials: "profile-generator:credentials",
   accountCategories: "profile-generator:account-categories",
   cardCategories: "profile-generator:card-categories",
+  poolEmails: "profile-generator:pool-emails",
+  emailCategories: "profile-generator:email-categories",
   profileCategories: "profile-generator:profile-categories",
   proxyPool: "profile-generator:proxy-pool",
   proxyGroups: "profile-generator:proxy-groups",
   proxyAssignments: "profile-generator:proxy-assignments",
   imapSettings: "profile-generator:imap-settings",
   imapMail: "profile-generator:imap-mail",
+  geocodioSettings: "profile-generator:geocodio-settings",
   pythonPath: "profile-generator:python-path",
 } as const;
 
@@ -86,6 +98,11 @@ function readCredentialsMap(): Record<string, Credential> {
 function readCreditCardsMap(): Record<string, CreditCard> {
   const stored = readMap<StoredCreditCard>(KEYS.creditCards);
   return Object.fromEntries(Object.entries(stored).map(([id, card]) => [id, normalizeCreditCard(card)]));
+}
+
+function readPoolEmailsMap(): Record<string, PoolEmail> {
+  const stored = readMap<StoredPoolEmail>(KEYS.poolEmails);
+  return Object.fromEntries(Object.entries(stored).map(([id, email]) => [id, normalizePoolEmail(email)]));
 }
 
 function maskCardNumber(number: string): string {
@@ -129,6 +146,7 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     jigPresetName: profile.jigPresetName,
     creditCardLabel: resolveCreditCardProfileLabel(profile, cardList),
     creditCardId: profile.creditCardId,
+    emailPoolId: profile.emailPoolId,
     paymentNumber: parseCardNumberDigits(payment.number),
     credentialSites: sites || undefined,
     credentialIds: profile.credentialIds ?? [],
@@ -136,6 +154,10 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     accountStatus: profile.accountStatus === "not_good" ? "not_good" : "good",
     notes: profile.notes ?? "",
     createdAt: profile.createdAt,
+    addressCheckStatus: profile.addressCheck?.status,
+    addressCheckMessage: profile.addressCheck?.message,
+    addressCheckDisplayLabel: profile.addressCheck?.displayLabel,
+    addressMasterMatch: profile.addressCheck?.masterMatch,
   };
 }
 
@@ -285,6 +307,7 @@ export async function seedDefaults(
 
   ensureAccountCategoriesStored();
   ensureCardCategoriesStored();
+  ensureEmailCategoriesStored();
   ensureProfileCategoriesStored();
   await persistMap();
 }
@@ -471,6 +494,124 @@ export async function deleteCardCategory(id: string): Promise<void> {
 
   delete categories[id];
   writeMap(KEYS.cardCategories, categories);
+  await persistMap();
+}
+
+function readEmailCategoriesMap(): Record<string, EmailCategory> {
+  return readMap<EmailCategory>(KEYS.emailCategories);
+}
+
+function ensureEmailCategoriesStored(): void {
+  readEmailCategoriesMap();
+}
+
+function ensureEmailCategoryRecord(categoryId: string): void {
+  const categories = readEmailCategoriesMap();
+  if (categories[categoryId]) {
+    return;
+  }
+  if (categoryId === EMAIL_UNCATEGORIZED_CATEGORY_ID) {
+    categories[categoryId] = createUncategorizedEmailCategory();
+    writeMap(KEYS.emailCategories, categories);
+    return;
+  }
+  categories[categoryId] = {
+    id: categoryId,
+    name: "Missing category",
+    createdAt: new Date(0).toISOString(),
+  };
+  writeMap(KEYS.emailCategories, categories);
+}
+
+function resolveStoredEmailCategoryId(categoryId: string): string {
+  return categoryId?.trim() || EMAIL_UNCATEGORIZED_CATEGORY_ID;
+}
+
+function repairOrphanEmailCategoryIds(): void {
+  const categories = readEmailCategoriesMap();
+  const emails = readPoolEmailsMap();
+  let emailsChanged = false;
+  let categoriesChanged = false;
+  let needsUncategorized = false;
+
+  for (const [id, email] of Object.entries(emails)) {
+    const categoryId = email.categoryId?.trim() || EMAIL_UNCATEGORIZED_CATEGORY_ID;
+    if (categoryId === EMAIL_UNCATEGORIZED_CATEGORY_ID) {
+      if (email.categoryId !== EMAIL_UNCATEGORIZED_CATEGORY_ID) {
+        emails[id] = { ...email, categoryId: EMAIL_UNCATEGORIZED_CATEGORY_ID };
+        emailsChanged = true;
+      }
+      needsUncategorized = true;
+      continue;
+    }
+    if (!categories[categoryId]) {
+      categories[categoryId] = {
+        id: categoryId,
+        name: "Missing category",
+        createdAt: new Date(0).toISOString(),
+      };
+      categoriesChanged = true;
+    }
+  }
+
+  if (emailsChanged) {
+    writeMap(KEYS.poolEmails, emails);
+  }
+  if (categoriesChanged) {
+    writeMap(KEYS.emailCategories, categories);
+  }
+  if (needsUncategorized) {
+    ensureEmailCategoryRecord(EMAIL_UNCATEGORIZED_CATEGORY_ID);
+  }
+}
+
+export async function listEmailCategories(): Promise<EmailCategory[]> {
+  repairOrphanEmailCategoryIds();
+  await persistMap();
+  return sortEmailCategories(Object.values(readEmailCategoriesMap()));
+}
+
+export async function saveEmailCategory(category: EmailCategory): Promise<void> {
+  const categories = readEmailCategoriesMap();
+  categories[category.id] = category;
+  writeMap(KEYS.emailCategories, categories);
+  await persistMap();
+}
+
+export async function reorderEmailCategories(orderedIds: string[]): Promise<void> {
+  const categories = readEmailCategoriesMap();
+  let changed = false;
+
+  orderedIds.forEach((id, index) => {
+    const category = categories[id];
+    if (!category || category.sortOrder === index) {
+      return;
+    }
+    categories[id] = { ...category, sortOrder: index };
+    changed = true;
+  });
+
+  if (changed) {
+    writeMap(KEYS.emailCategories, categories);
+    await persistMap();
+  }
+}
+
+export async function deleteEmailCategory(id: string): Promise<void> {
+  const categories = readEmailCategoriesMap();
+  if (!categories[id]) {
+    return;
+  }
+
+  const emailCount = Object.values(readPoolEmailsMap()).filter(
+    (email) => (email.categoryId || EMAIL_UNCATEGORIZED_CATEGORY_ID) === id,
+  ).length;
+  if (emailCount > 0) {
+    throw new Error("Cannot delete a category that still has emails.");
+  }
+
+  delete categories[id];
+  writeMap(KEYS.emailCategories, categories);
   await persistMap();
 }
 
@@ -690,6 +831,59 @@ export async function replaceAllCreditCards(cardsToRestore: CreditCard[]): Promi
   await persistMap();
 }
 
+export async function listPoolEmails(): Promise<PoolEmail[]> {
+  repairOrphanEmailCategoryIds();
+  await persistMap();
+  return Object.values(readPoolEmailsMap());
+}
+
+export async function savePoolEmail(email: PoolEmail): Promise<void> {
+  const normalized = normalizePoolEmail({
+    ...email,
+    categoryId: resolveStoredEmailCategoryId(email.categoryId),
+  });
+  ensureEmailCategoryRecord(normalized.categoryId);
+  const emails = readPoolEmailsMap();
+  emails[normalized.id] = normalized;
+  writeMap(KEYS.poolEmails, emails);
+  await persistMap();
+}
+
+export async function deletePoolEmail(id: string): Promise<void> {
+  const emails = readPoolEmailsMap();
+  delete emails[id];
+  writeMap(KEYS.poolEmails, emails);
+  await persistMap();
+}
+
+export async function importPoolEmails(emailsToImport: PoolEmail[]): Promise<void> {
+  const emails = readPoolEmailsMap();
+  for (const email of emailsToImport) {
+    const normalized = normalizePoolEmail({
+      ...email,
+      categoryId: resolveStoredEmailCategoryId(email.categoryId),
+    });
+    ensureEmailCategoryRecord(normalized.categoryId);
+    emails[normalized.id] = normalized;
+  }
+  writeMap(KEYS.poolEmails, emails);
+  await persistMap();
+}
+
+export async function replaceAllPoolEmails(emailsToRestore: PoolEmail[]): Promise<void> {
+  const emails: Record<string, PoolEmail> = {};
+  for (const email of emailsToRestore) {
+    const normalized = normalizePoolEmail({
+      ...email,
+      categoryId: resolveStoredEmailCategoryId(email.categoryId),
+    });
+    ensureEmailCategoryRecord(normalized.categoryId);
+    emails[normalized.id] = normalized;
+  }
+  writeMap(KEYS.poolEmails, emails);
+  await persistMap();
+}
+
 export async function listCredentials(): Promise<Credential[]> {
   return Object.values(readCredentialsMap());
 }
@@ -895,6 +1089,7 @@ function readImapAccountsMap(): Record<string, ImapAccount> {
 }
 
 export async function listImapAccounts(): Promise<ImapAccount[]> {
+  await ensureDataKey(KEYS.imapSettings);
   return Object.values(readImapAccountsMap()).sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
@@ -920,19 +1115,54 @@ export async function deleteImapAccount(id: string): Promise<void> {
 }
 
 export async function getImapMail(accountId: string): Promise<StoredImapMessage[]> {
+  await ensureDataKey(KEYS.imapMail);
   const stored = readMap<StoredImapMessage[]>(KEYS.imapMail)[accountId] ?? [];
   return stored
     .map((message) => ({
-      ...toStoredImapMessage(message, message.fetchedAt),
-      dateMs: Number.isFinite(message.dateMs) ? message.dateMs : toStoredImapMessage(message).dateMs,
+      ...toStoredImapHeaders(message, message.fetchedAt),
+      dateMs: Number.isFinite(message.dateMs) ? message.dateMs : toStoredImapHeaders(message).dateMs,
     }))
     .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid)
     .slice(0, IMAP_MAIL_CAP);
 }
 
 export async function saveImapMail(accountId: string, messages: StoredImapMessage[]): Promise<void> {
+  await ensureDataKey(KEYS.imapMail);
   const mail = readMap<StoredImapMessage[]>(KEYS.imapMail);
-  mail[accountId] = messages.slice(0, IMAP_MAIL_CAP);
+  mail[accountId] = messages.slice(0, IMAP_MAIL_CAP).map((message) =>
+    toStoredImapHeaders(message, message.fetchedAt),
+  );
   writeMap(KEYS.imapMail, mail);
+  await persistMap();
+}
+
+export async function compactImapMailIfNeeded(): Promise<void> {
+  await ensureDataKey(KEYS.imapMail);
+  const mail = readMap<StoredImapMessage[]>(KEYS.imapMail);
+  let changed = false;
+  const next: Record<string, StoredImapMessage[]> = {};
+  for (const [id, messages] of Object.entries(mail)) {
+    const list = Array.isArray(messages) ? messages : [];
+    if (list.some((message) => Boolean(message.htmlBody?.trim() || message.body?.trim()))) {
+      changed = true;
+    }
+    next[id] = list
+      .map((message) => toStoredImapHeaders(message, message.fetchedAt))
+      .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid)
+      .slice(0, IMAP_MAIL_CAP);
+  }
+  if (!changed) return;
+  writeMap(KEYS.imapMail, next);
+  await persistMap();
+}
+
+export async function getGeocodioSettings(): Promise<import("./types").GeocodioSettings> {
+  await ensureDataKey(KEYS.geocodioSettings);
+  const stored = readMap<string>(KEYS.geocodioSettings);
+  return { apiKey: (stored.apiKey ?? "").trim() };
+}
+
+export async function saveGeocodioSettings(settings: import("./types").GeocodioSettings): Promise<void> {
+  writeMap(KEYS.geocodioSettings, { apiKey: settings.apiKey.trim() });
   await persistMap();
 }

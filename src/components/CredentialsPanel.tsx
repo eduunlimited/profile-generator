@@ -207,10 +207,12 @@ export function CredentialsPanel({
 
   useEffect(() => {
     if (selectedCategoryId === "all") return;
-    if ((categoryCounts.get(selectedCategoryId) ?? 0) === 0) {
-      setSelectedCategoryId("all");
-    }
-  }, [selectedCategoryId, categoryCounts]);
+    const categoryStillExists =
+      selectedCategoryId === UNCATEGORIZED_CATEGORY_ID ||
+      categories.some((category) => category.id === selectedCategoryId);
+    if (categoryStillExists) return;
+    setSelectedCategoryId("all");
+  }, [categories, selectedCategoryId]);
 
   useEffect(() => {
     if (selectedCategoryId !== "all") {

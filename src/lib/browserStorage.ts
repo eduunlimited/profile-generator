@@ -172,13 +172,25 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
   };
 }
 
+export async function summarizeProfiles(profiles: Profile[]): Promise<ProfileSummary[]> {
+  const cards = readCreditCardsMap();
+  const creds = readCredentialsMap();
+  return profiles.map((profile) =>
+    profileSummary(
+      normalizeProfile({
+        ...profile,
+        credentialIds: profile.credentialIds ?? [],
+      }),
+      cards,
+      creds,
+    ),
+  );
+}
+
 export async function listProfiles(): Promise<ProfileSummary[]> {
   repairOrphanProfileCategoryIds();
   await persistMap();
-  const profiles = Object.values(readMap<Profile>(KEYS.profiles));
-  const cards = readCreditCardsMap();
-  const creds = readCredentialsMap();
-  return profiles.map((profile) => profileSummary(profile, cards, creds));
+  return summarizeProfiles(Object.values(readMap<Profile>(KEYS.profiles)));
 }
 
 export async function getProfile(id: string): Promise<Profile> {

@@ -9,14 +9,12 @@ import {
   replaceAllProfiles,
 } from "./api";
 import type { ExportTemplate, JigPreset, MasterProfile, Profile } from "./types";
-import { isTauriRuntime } from "./env";
 import {
   STORAGE_KEY_TO_FILE,
   ensureDataKey,
   flushLocalDataWrites,
   initLocalDataStore,
   readCachedMap,
-  usesProjectDataFiles,
   writeCachedMap,
 } from "./localDataStore";
 import { pickTextFile, saveTextFile } from "./saveFile";
@@ -61,10 +59,6 @@ export interface AppBackupSummary {
   orders: number;
   hasGeocodioKey: boolean;
   hasOpenAiKey: boolean;
-}
-
-function usesRustProfileStore(): boolean {
-  return isTauriRuntime() && !usesProjectDataFiles();
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -166,18 +160,16 @@ export async function collectAppBackup(): Promise<AppBackup> {
     stores[key] = { ...readCachedMap<unknown>(key) };
   }
 
-  if (usesRustProfileStore()) {
-    const [profiles, jigPresets, exportTemplates, masterProfiles] = await Promise.all([
-      loadAllProfiles(),
-      listJigPresets(),
-      listExportTemplates(),
-      listMasterProfiles(),
-    ]);
-    stores[PROFILES_KEY] = recordsById(profiles);
-    stores[JIG_PRESETS_KEY] = recordsById(jigPresets);
-    stores[EXPORT_TEMPLATES_KEY] = recordsById(exportTemplates);
-    stores[MASTER_PROFILES_KEY] = recordsById(masterProfiles);
-  }
+  const [profiles, jigPresets, exportTemplates, masterProfiles] = await Promise.all([
+    loadAllProfiles(),
+    listJigPresets(),
+    listExportTemplates(),
+    listMasterProfiles(),
+  ]);
+  stores[PROFILES_KEY] = recordsById(profiles);
+  stores[JIG_PRESETS_KEY] = recordsById(jigPresets);
+  stores[EXPORT_TEMPLATES_KEY] = recordsById(exportTemplates);
+  stores[MASTER_PROFILES_KEY] = recordsById(masterProfiles);
 
   const ui = collectUiPrefs();
   return {
@@ -203,12 +195,10 @@ export async function restoreAppBackup(backup: AppBackup): Promise<AppBackupSumm
   }
   await flushLocalDataWrites();
 
-  if (usesRustProfileStore()) {
-    await replaceAllProfiles(Object.values(backup.stores[PROFILES_KEY] ?? {}) as Profile[]);
-    await replaceAllJigPresets(Object.values(backup.stores[JIG_PRESETS_KEY] ?? {}) as JigPreset[]);
-    await replaceAllExportTemplates(Object.values(backup.stores[EXPORT_TEMPLATES_KEY] ?? {}) as ExportTemplate[]);
-    await replaceAllMasterProfiles(Object.values(backup.stores[MASTER_PROFILES_KEY] ?? {}) as MasterProfile[]);
-  }
+  await replaceAllProfiles(Object.values(backup.stores[PROFILES_KEY] ?? {}) as Profile[]);
+  await replaceAllJigPresets(Object.values(backup.stores[JIG_PRESETS_KEY] ?? {}) as JigPreset[]);
+  await replaceAllExportTemplates(Object.values(backup.stores[EXPORT_TEMPLATES_KEY] ?? {}) as ExportTemplate[]);
+  await replaceAllMasterProfiles(Object.values(backup.stores[MASTER_PROFILES_KEY] ?? {}) as MasterProfile[]);
 
   applyUiPrefs(backup.extras.ui);
   if (backup.extras.pythonPath != null) {

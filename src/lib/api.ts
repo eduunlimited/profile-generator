@@ -11,9 +11,13 @@ import type {
   ProfileSummary,
 } from "./types";
 
-const backend = isTauriRuntime() && !usesProjectDataFiles()
+function usesRustProfileStore(): boolean {
+  return isTauriRuntime() && !usesProjectDataFiles();
+}
+
+const backend = usesRustProfileStore()
   ? {
-      listProfiles: () => invoke<ProfileSummary[]>("list_profiles"),
+      listProfiles: () => invoke<Profile[]>("list_profiles"),
       getProfile: (id: string) => invoke<Profile>("get_profile", { id }),
       saveProfile: (profile: Profile) => invoke("save_profile", { profile }),
       saveProfiles: (profiles: Profile[]) => invoke("save_profiles", { profiles }),
@@ -35,7 +39,11 @@ const backend = isTauriRuntime() && !usesProjectDataFiles()
   : browserStorage;
 
 export async function listProfiles(): Promise<ProfileSummary[]> {
-  return sortProfilesByName(await backend.listProfiles());
+  if (usesRustProfileStore()) {
+    const profiles = await invoke<Profile[]>("list_profiles");
+    return sortProfilesByName(await browserStorage.summarizeProfiles(profiles));
+  }
+  return sortProfilesByName(await browserStorage.listProfiles());
 }
 
 export async function getProfile(id: string): Promise<Profile> {
@@ -55,15 +63,14 @@ export async function deleteProfile(id: string): Promise<void> {
 }
 
 export async function loadAllProfiles(): Promise<Profile[]> {
-  if (isTauriRuntime() && !usesProjectDataFiles()) {
-    const summaries = await listProfiles();
-    return Promise.all(summaries.map((summary) => getProfile(summary.id)));
+  if (usesRustProfileStore()) {
+    return invoke<Profile[]>("list_profiles");
   }
   return browserStorage.loadAllProfiles();
 }
 
 export async function replaceAllProfiles(profiles: Profile[]): Promise<void> {
-  if (isTauriRuntime() && !usesProjectDataFiles()) {
+  if (usesRustProfileStore()) {
     await invoke("replace_profiles", { profiles });
     return;
   }

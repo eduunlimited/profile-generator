@@ -19,62 +19,13 @@ fn with_connection<T>(
     callback(connection)
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
-#[serde(rename_all = "camelCase")]
-pub struct ProfileSummary {
-    pub id: String,
-    pub name: String,
-    pub email: String,
-    pub city: String,
-    pub state: String,
-    pub jig_preset_name: Option<String>,
-    pub created_at: String,
-}
-
-fn profile_summary_from_value(value: &Value) -> Option<ProfileSummary> {
-    Some(ProfileSummary {
-        id: value.get("id")?.as_str()?.to_string(),
-        name: value
-            .pointer("/name/full")
-            .and_then(|item| item.as_str())
-            .unwrap_or("")
-            .to_string(),
-        email: value
-            .pointer("/logins/0/email")
-            .and_then(|item| item.as_str())
-            .unwrap_or("")
-            .to_string(),
-        city: value
-            .pointer("/address/city")
-            .and_then(|item| item.as_str())
-            .unwrap_or("")
-            .to_string(),
-        state: value
-            .pointer("/address/state")
-            .and_then(|item| item.as_str())
-            .unwrap_or("")
-            .to_string(),
-        jig_preset_name: value
-            .get("jigPresetName")
-            .and_then(|item| item.as_str())
-            .map(str::to_string),
-        created_at: value
-            .get("createdAt")
-            .and_then(|item| item.as_str())
-            .unwrap_or("")
-            .to_string(),
-    })
-}
-
 #[tauri::command]
-pub fn list_profiles(state: State<DbState>) -> Result<Vec<ProfileSummary>, String> {
+pub fn list_profiles(state: State<DbState>) -> Result<Vec<Value>, String> {
     with_connection(&state, |connection| {
         let rows = db::list_json(connection, "profiles")?;
-        Ok(rows
-            .iter()
-            .filter_map(|row| serde_json::from_str::<Value>(row).ok())
-            .filter_map(|value| profile_summary_from_value(&value))
-            .collect())
+        rows.iter()
+            .map(|row| serde_json::from_str(row).map_err(|error| error.to_string()))
+            .collect()
     })
 }
 

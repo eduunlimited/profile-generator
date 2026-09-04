@@ -3,8 +3,15 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { isTauriRuntime } from "./env";
 
+export function isAppUpdateCheckAvailable(): boolean {
+  return isTauriRuntime() && !import.meta.env.DEV;
+}
+
 export async function checkForAppUpdates(options?: { silent?: boolean }): Promise<void> {
-  if (!isTauriRuntime() || import.meta.env.DEV) {
+  if (!isAppUpdateCheckAvailable()) {
+    if (!options?.silent) {
+      throw new Error("Update checks run in the installed desktop app, not in this browser or dev window.");
+    }
     return;
   }
 

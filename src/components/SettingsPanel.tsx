@@ -8,6 +8,7 @@ import {
   testOpenAiConnection,
 } from "../lib/api";
 import { exportAppBackupFile, importAppBackupFile, type AppBackupSummary } from "../lib/appBackup";
+import { checkForAppUpdates, isAppUpdateCheckAvailable } from "../lib/appUpdates";
 import { formatError } from "../lib/errorUtils";
 import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
 import { Field } from "./ui";
@@ -27,6 +28,8 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
   const [openAiStatus, setOpenAiStatus] = useState<KeyStatus>(null);
   const [backupBusy, setBackupBusy] = useState(false);
   const [backupStatus, setBackupStatus] = useState<KeyStatus>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<KeyStatus>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -141,6 +144,26 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
     }
   };
 
+  const checkUpdates = async () => {
+    if (!isAppUpdateCheckAvailable()) {
+      setUpdateStatus({
+        tone: "ok",
+        text: "Update checks run in the installed desktop app, not in this browser or dev window.",
+      });
+      return;
+    }
+    setUpdateBusy(true);
+    setUpdateStatus({ tone: "ok", text: "Checking…" });
+    try {
+      await checkForAppUpdates();
+      setUpdateStatus({ tone: "ok", text: "Check complete." });
+    } catch (error) {
+      setUpdateStatus({ tone: "error", text: formatError(error, "Could not check for updates.") });
+    } finally {
+      setUpdateBusy(false);
+    }
+  };
+
   const testOpenAi = async () => {
     setOpenAiBusy(true);
     setOpenAiStatus({ tone: "ok", text: "Testing…" });
@@ -217,6 +240,23 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
         </div>
         {openAiStatus ? (
           <p className={openAiStatus.tone === "error" ? "is-error" : "muted"}>{openAiStatus.text}</p>
+        ) : null}
+      </section>
+
+      <section className="card settings-card">
+        <div className="card-header">
+          <h2>Updates</h2>
+        </div>
+        <p className="muted">
+          Installed copies also check on launch and every hour. Use this to look now.
+        </p>
+        <div className="button-row">
+          <button type="button" className="btn-secondary" disabled={updateBusy} onClick={() => void checkUpdates()}>
+            {updateBusy ? "Checking…" : "Check for updates"}
+          </button>
+        </div>
+        {updateStatus ? (
+          <p className={updateStatus.tone === "error" ? "is-error" : "muted"}>{updateStatus.text}</p>
         ) : null}
       </section>
 

@@ -17,7 +17,10 @@ export const STORAGE_KEY_TO_FILE: Record<string, string> = {
   "profile-generator:proxy-assignments": "proxy-assignments.json",
   "profile-generator:imap-settings": "imap-settings.json",
   "profile-generator:imap-mail": "imap-mail.json",
+  "profile-generator:orders": "orders.json",
   "profile-generator:geocodio-settings": "geocodio-settings.json",
+  "profile-generator:openai-settings": "openai-settings.json",
+  "profile-generator:order-analysis": "order-analysis.json",
 };
 
 const DATA_API = "/__data";

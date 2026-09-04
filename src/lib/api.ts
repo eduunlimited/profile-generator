@@ -321,11 +321,15 @@ export async function testImap(settings: import("./types").ImapSettings) {
   return invoke<import("./types").ImapTestResult>("test_imap", { settings });
 }
 
-export async function fetchImapInbox(settings: import("./types").ImapSettings, limit = 500) {
+export async function fetchImapInbox(
+  settings: import("./types").ImapSettings,
+  limit = 500,
+  offset = 0,
+) {
   if (!isTauriRuntime()) {
     throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
   }
-  return invoke<import("./types").ImapMessage[]>("fetch_imap_inbox", { settings, limit });
+  return invoke<import("./types").ImapMessage[]>("fetch_imap_inbox", { settings, limit, offset });
 }
 
 export async function fetchImapMessage(settings: import("./types").ImapSettings, uid: number) {
@@ -333,6 +337,21 @@ export async function fetchImapMessage(settings: import("./types").ImapSettings,
     throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
   }
   return invoke<import("./types").ImapMessage>("fetch_imap_message", { settings, uid });
+}
+
+export async function searchImapHeaders(settings: import("./types").ImapSettings, subjects: string[]) {
+  if (!isTauriRuntime()) {
+    throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
+  }
+  return invoke<import("./types").ImapMessage[]>("search_imap_headers", { settings, subjects });
+}
+
+export async function listOrders() {
+  return browserStorage.listOrders();
+}
+
+export async function saveOrders(orders: import("./types").ParsedOrder[]) {
+  return browserStorage.saveOrders(orders);
 }
 
 export async function getGeocodioSettings() {
@@ -349,4 +368,24 @@ export async function geocodioLookup(request: import("./types").GeocodioLookupRe
 
 export async function testGeocodioConnection(apiKey: string) {
   return import("./geocodioClient").then((mod) => mod.testGeocodioConnection(apiKey));
+}
+
+export async function getOpenAiSettings() {
+  return browserStorage.getOpenAiSettings();
+}
+
+export async function saveOpenAiSettings(settings: import("./types").OpenAiSettings) {
+  return browserStorage.saveOpenAiSettings(settings);
+}
+
+export async function testOpenAiConnection(apiKey: string) {
+  return import("./openaiMisspell").then((mod) => mod.testOpenAiConnection(apiKey));
+}
+
+export async function listOrderAnalysis() {
+  return browserStorage.listOrderAnalysis();
+}
+
+export async function upsertOrderAnalysis(record: import("./types").OrderAnalysisRecord) {
+  return browserStorage.upsertOrderAnalysis(record);
 }

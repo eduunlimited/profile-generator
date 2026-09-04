@@ -5,9 +5,10 @@ export function TableColGroup({ columns }: { columns: ResizableTableColumns }) {
   if (!columns.widths) return null;
   return (
     <colgroup>
-      {columns.columnIds.map((id, index) => (
-        <col key={id} style={{ width: columns.widths?.[index] }} />
-      ))}
+      {columns.columnIds.map((id, index) => {
+        const width = columns.widths?.[index];
+        return <col key={id} style={width != null ? { width: `${width}px` } : undefined} />;
+      })}
     </colgroup>
   );
 }

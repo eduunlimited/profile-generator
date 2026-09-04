@@ -24,7 +24,9 @@ import {
   sortProfileCategories,
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
 } from "./profileCategoryUtils";
-import { IMAP_MAIL_CAP, toStoredImapHeaders } from "./imapInbox";
+import { toStoredImapHeaders } from "./imapInbox";
+import { finalizeParsedOrder } from "./orderEmail/merge";
+import { repairUtf8Mojibake } from "./orderEmail/parse";
 import {
   ensureDataKey,
   flushLocalDataWrites,
@@ -48,6 +50,9 @@ import type {
   ProfileCategory,
   ProfileSummary,
   StoredImapMessage,
+  OrderAnalysisRecord,
+  OrderRetailer,
+  ParsedOrder,
 } from "./types";
 import type { ProxyEntry, ProxyGroup } from "../modules/browserSessions/types";
 import {
@@ -74,7 +79,10 @@ const KEYS = {
   proxyAssignments: "profile-generator:proxy-assignments",
   imapSettings: "profile-generator:imap-settings",
   imapMail: "profile-generator:imap-mail",
+  orders: "profile-generator:orders",
   geocodioSettings: "profile-generator:geocodio-settings",
+  openaiSettings: "profile-generator:openai-settings",
+  orderAnalysis: "profile-generator:order-analysis",
   pythonPath: "profile-generator:python-path",
 } as const;
 
@@ -132,6 +140,7 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     email: profileEmail,
     city: profile.address.city,
     state: profile.address.state,
+    postalCode: profile.address.postalCode,
     billingFullName: billingName,
     billingEmail: profileEmail,
     billingPhone: formatUsPhone(profile.phone ?? ""),
@@ -144,6 +153,8 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     accountSite: profile.accountSite?.trim() ?? "",
     masterProfileId: profile.masterProfileId,
     jigPresetName: profile.jigPresetName,
+    nameJigPresetName: profile.nameJigPresetName,
+    addressJigPresetName: profile.addressJigPresetName,
     creditCardLabel: resolveCreditCardProfileLabel(profile, cardList),
     creditCardId: profile.creditCardId,
     emailPoolId: profile.emailPoolId,
@@ -1122,16 +1133,13 @@ export async function getImapMail(accountId: string): Promise<StoredImapMessage[
       ...toStoredImapHeaders(message, message.fetchedAt),
       dateMs: Number.isFinite(message.dateMs) ? message.dateMs : toStoredImapHeaders(message).dateMs,
     }))
-    .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid)
-    .slice(0, IMAP_MAIL_CAP);
+    .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
 }
 
 export async function saveImapMail(accountId: string, messages: StoredImapMessage[]): Promise<void> {
   await ensureDataKey(KEYS.imapMail);
   const mail = readMap<StoredImapMessage[]>(KEYS.imapMail);
-  mail[accountId] = messages.slice(0, IMAP_MAIL_CAP).map((message) =>
-    toStoredImapHeaders(message, message.fetchedAt),
-  );
+  mail[accountId] = messages.map((message) => toStoredImapHeaders(message, message.fetchedAt));
   writeMap(KEYS.imapMail, mail);
   await persistMap();
 }
@@ -1148,11 +1156,73 @@ export async function compactImapMailIfNeeded(): Promise<void> {
     }
     next[id] = list
       .map((message) => toStoredImapHeaders(message, message.fetchedAt))
-      .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid)
-      .slice(0, IMAP_MAIL_CAP);
+      .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
   }
   if (!changed) return;
   writeMap(KEYS.imapMail, next);
+  await persistMap();
+}
+
+function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): ParsedOrder | null {
+  const orderId = raw.orderId?.trim() ?? "";
+  const id = raw.id?.trim() || (orderId ? `target:${orderId}` : "");
+  if (!id || !orderId) return null;
+  const events = Array.isArray(raw.events)
+    ? raw.events.filter((event) => event && event.uid && event.kind && event.accountId)
+    : [];
+  if (!events.some((event) => event.kind === "placed")) return null;
+  const retailer: OrderRetailer =
+    raw.retailer === "walmart" || raw.retailer === "pokemon-center" ? raw.retailer : "target";
+  return finalizeParsedOrder({
+    id,
+    retailer,
+    orderId,
+    status:
+      raw.status === "cancelled" ||
+      raw.status === "delivered" ||
+      raw.status === "picked_up" ||
+      raw.status === "shipped"
+        ? raw.status
+        : "placed",
+    fulfillment: raw.fulfillment === "pickup" || raw.fulfillment === "delivery" ? raw.fulfillment : undefined,
+    total: typeof raw.total === "number" && Number.isFinite(raw.total) ? raw.total : undefined,
+    currency: raw.currency?.trim() || (raw.total != null ? "USD" : undefined),
+    trackingNumber: raw.trackingNumber?.trim() || undefined,
+    items: (() => {
+      const items = Array.isArray(raw.items)
+        ? raw.items
+            .map((item) => ({
+              name: repairUtf8Mojibake(String(item?.name ?? "").trim()),
+              quantity: Number(item?.quantity),
+            }))
+            .filter((item) => item.name.length > 0 && Number.isFinite(item.quantity) && item.quantity > 0)
+        : [];
+      return items.length > 0 ? items : undefined;
+    })(),
+    recipientEmail: raw.recipientEmail?.trim() || undefined,
+    profileId: raw.profileId?.trim() || undefined,
+    profileName: raw.profileName?.trim() || undefined,
+    events,
+    placedAt: raw.placedAt || new Date().toISOString(),
+    updatedAt: raw.updatedAt || new Date().toISOString(),
+  });
+}
+
+export async function listOrders(): Promise<ParsedOrder[]> {
+  await ensureDataKey(KEYS.orders);
+  return Object.values(readMap<Partial<ParsedOrder>>(KEYS.orders))
+    .map((raw) => normalizeParsedOrder(raw ?? {}))
+    .filter((order): order is ParsedOrder => order != null)
+    .sort((a, b) => Date.parse(b.placedAt) - Date.parse(a.placedAt) || b.orderId.localeCompare(a.orderId));
+}
+
+export async function saveOrders(orders: ParsedOrder[]): Promise<void> {
+  const map: Record<string, ParsedOrder> = {};
+  for (const raw of orders) {
+    const order = normalizeParsedOrder(raw);
+    if (order) map[order.id] = order;
+  }
+  writeMap(KEYS.orders, map);
   await persistMap();
 }
 
@@ -1164,5 +1234,63 @@ export async function getGeocodioSettings(): Promise<import("./types").GeocodioS
 
 export async function saveGeocodioSettings(settings: import("./types").GeocodioSettings): Promise<void> {
   writeMap(KEYS.geocodioSettings, { apiKey: settings.apiKey.trim() });
+  await persistMap();
+}
+
+export async function getOpenAiSettings(): Promise<import("./types").OpenAiSettings> {
+  await ensureDataKey(KEYS.openaiSettings);
+  const stored = readMap<string>(KEYS.openaiSettings);
+  return { apiKey: (stored.apiKey ?? "").trim() };
+}
+
+export async function saveOpenAiSettings(settings: import("./types").OpenAiSettings): Promise<void> {
+  writeMap(KEYS.openaiSettings, { apiKey: settings.apiKey.trim() });
+  await persistMap();
+}
+
+function analysisStorageKey(site: string, email: string): string {
+  return `${site}:${email.trim().toLowerCase()}`;
+}
+
+function normalizeOrderAnalysis(raw: Partial<OrderAnalysisRecord> | undefined): OrderAnalysisRecord | null {
+  if (!raw) return null;
+  const site = raw.site;
+  const email = raw.email?.trim().toLowerCase() ?? "";
+  const display = raw.result?.display?.trim() ?? "";
+  if (site !== "target" && site !== "walmart" && site !== "pokemon-center") return null;
+  if (!email || !display) return null;
+  const cancelledAtCount = Number(raw.cancelledAtCount);
+  const promptVersion = Number(raw.promptVersion);
+  return {
+    site,
+    email,
+    cancelledAtCount: Number.isFinite(cancelledAtCount) ? cancelledAtCount : 0,
+    analyzedAt: raw.analyzedAt?.trim() || new Date().toISOString(),
+    promptVersion: Number.isFinite(promptVersion) && promptVersion > 0 ? promptVersion : undefined,
+    result: {
+      display,
+      severity: raw.result?.severity === "low" || raw.result?.severity === "high" ? raw.result.severity : "med",
+      causes: Array.isArray(raw.result?.causes) ? raw.result.causes : [],
+      confidence: typeof raw.result?.confidence === "number" ? raw.result.confidence : 0.5,
+      action: raw.result?.action?.trim() || "",
+      notes: raw.result?.notes?.trim() || undefined,
+    },
+  };
+}
+
+export async function listOrderAnalysis(): Promise<OrderAnalysisRecord[]> {
+  await ensureDataKey(KEYS.orderAnalysis);
+  return Object.values(readMap<Partial<OrderAnalysisRecord>>(KEYS.orderAnalysis))
+    .map((raw) => normalizeOrderAnalysis(raw))
+    .filter((record): record is OrderAnalysisRecord => record != null);
+}
+
+export async function upsertOrderAnalysis(record: OrderAnalysisRecord): Promise<void> {
+  await ensureDataKey(KEYS.orderAnalysis);
+  const normalized = normalizeOrderAnalysis(record);
+  if (!normalized) return;
+  const map = readMap<OrderAnalysisRecord>(KEYS.orderAnalysis);
+  map[analysisStorageKey(normalized.site, normalized.email)] = normalized;
+  writeMap(KEYS.orderAnalysis, map);
   await persistMap();
 }

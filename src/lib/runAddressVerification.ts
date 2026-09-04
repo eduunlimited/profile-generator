@@ -55,7 +55,7 @@ export async function verifyProfileAddresses(
   const apiKey = settings.apiKey.trim();
   if (!apiKey) {
     if (options.requireKey === false) return summary;
-    throw new Error("Set a Geocodio API key first (Address API).");
+    throw new Error("Set a Geocodio API key in Settings first.");
   }
 
   const loaded = (

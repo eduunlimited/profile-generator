@@ -208,7 +208,7 @@ export function RejigPanel({
           <p className="muted jig-option-hint">
             {geocodioConfigured
               ? "Keeps re-jigging Fail/Warn addresses up to 5 times until Geocodio Pass"
-              : "Set a Geocodio API key first (Address API)"}
+              : "Set a Geocodio API key in Settings first"}
           </p>
         </div>
         <button

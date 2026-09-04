@@ -179,20 +179,34 @@ pub fn test_imap(settings: ImapSettings) -> Result<ImapTestResult, String> {
     })
 }
 
-pub fn fetch_imap_inbox(settings: ImapSettings, limit: Option<u32>) -> Result<Vec<ImapMessage>, String> {
+fn inbox_fetch_range(exists: u32, take: u32, skip: u32) -> Option<(u32, u32)> {
+    if exists == 0 || exists <= skip {
+        return None;
+    }
+    let remaining = exists - skip;
+    let count = take.min(remaining);
+    let end = exists - skip;
+    let start = end - count + 1;
+    Some((start, end))
+}
+
+pub fn fetch_imap_inbox(
+    settings: ImapSettings,
+    limit: Option<u32>,
+    offset: Option<u32>,
+) -> Result<Vec<ImapMessage>, String> {
     let settings = normalize_settings(&settings)?;
     let take = limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let skip = offset.unwrap_or(0);
     with_session(&settings, |session| {
         let mailbox = session
             .select(&settings.mailbox)
             .map_err(|error| format!("Could not open {}: {error}", settings.mailbox))?;
-        if mailbox.exists == 0 {
+        let Some((start, range_end)) = inbox_fetch_range(mailbox.exists, take, skip) else {
             return Ok(Vec::new());
-        }
-        let count = take.min(mailbox.exists);
-        let start = mailbox.exists - count + 1;
+        };
         let mut messages = Vec::new();
-        let mut end = mailbox.exists;
+        let mut end = range_end;
         while end >= start {
             let batch_start = end.saturating_sub(HEADER_FETCH_BATCH - 1).max(start);
             messages.extend(fetch_sequence_range(session, batch_start, end, HEADER_FETCH_QUERIES, false)?);
@@ -234,6 +248,91 @@ pub fn fetch_imap_message(settings: ImapSettings, uid: u32) -> Result<ImapMessag
         }
         Err(last_error)
     })
+}
+
+pub fn search_imap_headers(settings: ImapSettings, subjects: Vec<String>) -> Result<Vec<ImapMessage>, String> {
+    let terms: Vec<String> = subjects
+        .into_iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    if terms.is_empty() {
+        return Err("At least one subject search term is required.".to_string());
+    }
+    let settings = normalize_settings(&settings)?;
+    with_session(&settings, |session| {
+        session
+            .select(&settings.mailbox)
+            .map_err(|error| format!("Could not open {}: {error}", settings.mailbox))?;
+        let mut uids = BTreeSet::new();
+        let mut last_error = String::new();
+        let mut any_ok = false;
+        for term in &terms {
+            let escaped = term.replace('\\', "\\\\").replace('"', "\\\"");
+            let query = format!("SUBJECT \"{escaped}\"");
+            match session.uid_search(&query) {
+                Ok(found) => {
+                    any_ok = true;
+                    uids.extend(found);
+                }
+                Err(error) => {
+                    last_error = format!("IMAP search failed: {error}");
+                }
+            }
+        }
+        if !any_ok {
+            return Err(if last_error.is_empty() {
+                "IMAP subject search failed.".to_string()
+            } else {
+                last_error
+            });
+        }
+        fetch_uid_headers(session, &uids)
+    })
+}
+
+fn fetch_uid_headers(
+    session: &mut imap::Session<native_tls::TlsStream<TcpStream>>,
+    uids: &BTreeSet<u32>,
+) -> Result<Vec<ImapMessage>, String> {
+    if uids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let uid_list: Vec<u32> = uids.iter().copied().collect();
+    let mut messages = Vec::new();
+    for chunk in uid_list.chunks(HEADER_FETCH_BATCH as usize) {
+        let set = chunk
+            .iter()
+            .map(|uid| uid.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
+        let mut got = false;
+        for query in HEADER_FETCH_QUERIES {
+            match session.uid_fetch(&set, *query) {
+                Ok(fetched) => {
+                    messages.extend(fetched.iter().filter_map(parse_fetch_message));
+                    got = true;
+                    break;
+                }
+                Err(_) => {}
+            }
+        }
+        if got {
+            continue;
+        }
+        for uid in chunk {
+            for query in HEADER_FETCH_QUERIES {
+                match session.uid_fetch(uid.to_string(), *query) {
+                    Ok(fetched) => {
+                        messages.extend(fetched.iter().filter_map(parse_fetch_message));
+                        break;
+                    }
+                    Err(_) => {}
+                }
+            }
+        }
+    }
+    Ok(messages)
 }
 
 fn fetch_sequence_range(
@@ -779,5 +878,15 @@ mod tests {
         extract_emails("Delivered-To: jig-14@shop.example", &mut emails);
         assert!(emails.contains("wally.target@shop.example"));
         assert!(emails.contains("jig-14@shop.example"));
+    }
+
+    #[test]
+    fn inbox_fetch_range_skips_newest_for_load_more() {
+        assert_eq!(inbox_fetch_range(0, 500, 0), None);
+        assert_eq!(inbox_fetch_range(200, 500, 0), Some((1, 200)));
+        assert_eq!(inbox_fetch_range(1000, 500, 0), Some((501, 1000)));
+        assert_eq!(inbox_fetch_range(1000, 500, 500), Some((1, 500)));
+        assert_eq!(inbox_fetch_range(1000, 500, 1000), None);
+        assert_eq!(inbox_fetch_range(1200, 500, 500), Some((201, 700)));
     }
 }

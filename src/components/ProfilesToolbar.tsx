@@ -25,7 +25,6 @@ interface ProfilesToolbarProps {
   onImport: () => void;
   onDeleteCategory: () => void;
   onVerifyAddresses?: () => void;
-  onOpenAddressApi?: () => void;
   addressVerifyBusy?: boolean;
   addressJobKind?: "idle" | "verify" | "rejig";
   addressJobStatus?: string | null;
@@ -62,7 +61,6 @@ export function ProfilesToolbar({
   onImport,
   onDeleteCategory,
   onVerifyAddresses,
-  onOpenAddressApi,
   addressVerifyBusy = false,
   addressJobKind = "idle",
   addressJobStatus = null,
@@ -162,18 +160,11 @@ export function ProfilesToolbar({
             title={
               geocodioConfigured
                 ? "Check selected billing addresses with Geocodio"
-                : "Set a Geocodio API key first"
+                : "Set a Geocodio API key in Settings first"
             }
             onClick={onVerifyAddresses}
           >
             {addressVerifyBusy && addressJobKind === "verify" ? "Verifying…" : "Verify address"}
-          </button>
-          <button
-            type="button"
-            className="btn-secondary btn-compact"
-            onClick={onOpenAddressApi}
-          >
-            Address API
           </button>
           <button
             type="button"

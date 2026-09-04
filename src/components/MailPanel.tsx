@@ -60,13 +60,14 @@ function formatMessageDate(value: string, dateMs?: number): string {
 async function refreshImapAccount(
   account: ImapAccount,
   existing: StoredImapMessage[],
-): Promise<{ account: ImapAccount; messages: StoredImapMessage[] }> {
-  const fetched = await fetchImapInbox(imapAccountToSettings(account), IMAP_MAIL_CAP);
+  offset = 0,
+): Promise<{ account: ImapAccount; messages: StoredImapMessage[]; fetchedCount: number }> {
+  const fetched = await fetchImapInbox(imapAccountToSettings(account), IMAP_MAIL_CAP, offset);
   const messages = mergeStoredImapMessages(existing, fetched);
   await saveImapMail(account.id, messages);
   const updated: ImapAccount = { ...account, lastFetchedAt: new Date().toISOString() };
   await saveImapAccount(updated);
-  return { account: updated, messages };
+  return { account: updated, messages, fetchedCount: fetched.length };
 }
 
 interface MailPanelProps {
@@ -88,7 +89,8 @@ export function MailPanel({ profiles }: MailPanelProps) {
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<string | null>(null);
-  const [busy, setBusy] = useState<"load" | "fetch" | "save" | "test" | "delete" | null>(null);
+  const [busy, setBusy] = useState<"load" | "fetch" | "sync" | "save" | "test" | "delete" | "more" | null>(null);
+  const [exhaustedIds, setExhaustedIds] = useState<Record<string, boolean>>({});
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [draft, setDraft] = useState<ImapAccount | null>(null);
   const [modalStatus, setModalStatus] = useState<string | null>(null);
@@ -276,12 +278,118 @@ export function MailPanel({ profiles }: MailPanelProps) {
     });
   };
 
-  const persistFetchedMail = async (account: ImapAccount) => {
+  const persistFetchedMail = async (account: ImapAccount, offset = 0) => {
     const existing = mailByAccount[account.id] ?? (await getImapMail(account.id));
-    const result = await refreshImapAccount(account, existing);
+    const result = await refreshImapAccount(account, existing, offset);
     setMailByAccount((current) => ({ ...current, [account.id]: result.messages }));
     upsertAccount(result.account);
-    return result.messages.length;
+    return { count: result.messages.length, added: result.messages.length - existing.length };
+  };
+
+  const handleSync = async () => {
+    const targets = visibleAccounts;
+    if (targets.length === 0) return;
+    setBusy("sync");
+    const nextMail = { ...mailByAccount };
+    const nextExhausted = { ...exhaustedIds };
+    const errors: string[] = [];
+    let addedTotal = 0;
+    try {
+      for (let index = 0; index < targets.length; index += 1) {
+        const account = targets[index];
+        const label = imapAccountLabel(account);
+        setStatus(
+          targets.length === 1
+            ? `Syncing ${label}…`
+            : `Syncing ${label} (${index + 1}/${targets.length})…`,
+        );
+        let existing = nextMail[account.id] ?? [];
+        let offset = 0;
+        try {
+          while (true) {
+            const result = await refreshImapAccount(account, existing, offset);
+            addedTotal += Math.max(0, result.messages.length - existing.length);
+            existing = result.messages;
+            nextMail[account.id] = existing;
+            setMailByAccount({ ...nextMail });
+            upsertAccount(result.account);
+            setStatus(
+              targets.length === 1
+                ? `Syncing ${label}… ${existing.length} stored`
+                : `Syncing ${label} (${index + 1}/${targets.length})… ${existing.length} stored`,
+            );
+            if (result.fetchedCount === 0) {
+              nextExhausted[account.id] = true;
+              break;
+            }
+            offset += result.fetchedCount;
+            if (result.fetchedCount < IMAP_MAIL_CAP) {
+              nextExhausted[account.id] = true;
+              break;
+            }
+          }
+        } catch (error) {
+          errors.push(`${label}: ${formatError(error, "sync failed")}`);
+        }
+      }
+      setMailByAccount(nextMail);
+      setExhaustedIds(nextExhausted);
+      const scope =
+        selectedAccountId === ALL_MAIL_ID && targets.length > 1
+          ? `${targets.length} IMAP key(s)`
+          : imapAccountLabel(targets[0]);
+      if (errors.length === 0) {
+        setStatus(
+          addedTotal === 0
+            ? `Synced ${scope}. No new messages.`
+            : `Synced ${scope}. ${addedTotal} new message(s).`,
+        );
+      } else {
+        setStatus(`Synced ${addedTotal} new message(s). ${errors.join(" ")}`);
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const handleLoadMore = async () => {
+    const targets = visibleAccounts.filter((account) => !exhaustedIds[account.id]);
+    if (targets.length === 0) return;
+    setBusy("more");
+    setStatus(
+      targets.length === 1
+        ? `Loading ${IMAP_MAIL_CAP} more from ${imapAccountLabel(targets[0])}…`
+        : `Loading ${IMAP_MAIL_CAP} more from ${targets.length} IMAP key(s)…`,
+    );
+    const nextMail = { ...mailByAccount };
+    const nextExhausted = { ...exhaustedIds };
+    const errors: string[] = [];
+    let addedTotal = 0;
+    try {
+      for (const account of targets) {
+        try {
+          const existing = nextMail[account.id] ?? [];
+          const result = await refreshImapAccount(account, existing, existing.length);
+          const added = result.messages.length - existing.length;
+          addedTotal += added;
+          if (added === 0) nextExhausted[account.id] = true;
+          nextMail[account.id] = result.messages;
+          setMailByAccount({ ...nextMail });
+          upsertAccount(result.account);
+        } catch (error) {
+          errors.push(`${imapAccountLabel(account)}: ${formatError(error, "load more failed")}`);
+        }
+      }
+      setMailByAccount(nextMail);
+      setExhaustedIds(nextExhausted);
+      if (errors.length === 0) {
+        setStatus(addedTotal === 0 ? "No older messages to load." : `Loaded ${addedTotal} older message(s).`);
+      } else {
+        setStatus(`Loaded ${addedTotal} older message(s). ${errors.join(" ")}`);
+      }
+    } finally {
+      setBusy(null);
+    }
   };
 
   useEffect(() => {
@@ -364,7 +472,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
       setDraft(null);
       setStatus(`Saved ${imapAccountLabel(account)}. Loading mail…`);
       try {
-        const count = await persistFetchedMail(account);
+        const { count } = await persistFetchedMail(account);
         setStatus(`Saved ${imapAccountLabel(account)} and stored ${count} message(s).`);
       } catch (error) {
         setStatus(`Saved ${imapAccountLabel(account)}. ${formatError(error, "Mail refresh failed.")}`);
@@ -387,6 +495,11 @@ export function MailPanel({ profiles }: MailPanelProps) {
           await deleteImapAccount(account.id);
           setAccounts((current) => current.filter((item) => item.id !== account.id));
           setMailByAccount((current) => {
+            const next = { ...current };
+            delete next[account.id];
+            return next;
+          });
+          setExhaustedIds((current) => {
             const next = { ...current };
             delete next[account.id];
             return next;
@@ -469,7 +582,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
               <div>
                 <h2>Mail</h2>
                 <p className="muted">
-                  {poolTitle} · {storedCount} stored (last {IMAP_MAIL_CAP} per IMAP key)
+                  {poolTitle} · {storedCount} stored
                 </p>
               </div>
             </div>
@@ -481,11 +594,39 @@ export function MailPanel({ profiles }: MailPanelProps) {
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />
+              <button
+                type="button"
+                className="btn-primary btn-compact"
+                disabled={busy !== null || visibleAccounts.length === 0}
+                onClick={() => void handleSync()}
+              >
+                {busy === "sync"
+                  ? "Syncing…"
+                  : selectedAccountId === ALL_MAIL_ID && visibleAccounts.length > 1
+                    ? "Sync all keys"
+                    : "Sync"}
+              </button>
+              <button
+                type="button"
+                className="btn-secondary btn-compact"
+                disabled={
+                  busy !== null ||
+                  visibleAccounts.length === 0 ||
+                  visibleAccounts.every((account) => exhaustedIds[account.id])
+                }
+                onClick={() => void handleLoadMore()}
+              >
+                {busy === "more"
+                  ? "Loading…"
+                  : selectedAccountId === ALL_MAIL_ID && visibleAccounts.length > 1
+                    ? `Load ${IMAP_MAIL_CAP} more per key`
+                    : `Load ${IMAP_MAIL_CAP} more`}
+              </button>
             </div>
 
             {status ? <p className="status-banner accounts-pool-status">{status}</p> : null}
 
-            {busy === "load" || busy === "fetch" || busy === "save" ? (
+            {(busy === "load" || busy === "save") && filteredRows.length === 0 ? (
               <p className="muted mail-empty">Loading messages…</p>
             ) : filteredRows.length === 0 ? (
               <p className="muted mail-empty">

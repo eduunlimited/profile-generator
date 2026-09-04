@@ -354,13 +354,27 @@ pub struct ChatMessageInput {
     content: String,
 }
 
+fn resolve_openai_api_key(api_key: Option<String>) -> Result<String, String> {
+    let from_arg = api_key
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    if let Some(value) = from_arg {
+        return Ok(value);
+    }
+    std::env::var("OPENAI_API_KEY")
+        .map(|value| value.trim().to_string())
+        .ok()
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| "OpenAI API key is not set.".to_string())
+}
+
 #[tauri::command]
 pub async fn openai_chat_completion(
     messages: Vec<ChatMessageInput>,
     model: Option<String>,
+    api_key: Option<String>,
 ) -> Result<String, String> {
-    let api_key =
-        std::env::var("OPENAI_API_KEY").map_err(|_| "OPENAI_API_KEY is not set.".to_string())?;
+    let api_key = resolve_openai_api_key(api_key)?;
     let model = model.unwrap_or_else(|| "gpt-4o-mini".to_string());
 
     let payload = json!({
@@ -402,6 +416,33 @@ pub async fn openai_chat_completion(
 }
 
 #[tauri::command]
+pub async fn test_openai_connection(api_key: Option<String>) -> Result<String, String> {
+    let api_key = resolve_openai_api_key(api_key)?;
+    let client = reqwest::Client::new();
+    let response = client
+        .get("https://api.openai.com/v1/models")
+        .bearer_auth(api_key)
+        .send()
+        .await
+        .map_err(|error| format!("OpenAI request failed: {error}"))?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body: Value = response
+            .json()
+            .await
+            .unwrap_or(json!({}));
+        let detail = body
+            .pointer("/error/message")
+            .and_then(|item| item.as_str())
+            .unwrap_or("Unknown OpenAI error");
+        return Err(format!("OpenAI API error ({status}): {detail}"));
+    }
+
+    Ok("OpenAI connection works.".to_string())
+}
+
+#[tauri::command]
 pub async fn test_proxy(proxy_server: String) -> Result<crate::browser::ProxyTestResult, String> {
     crate::browser::test_proxy(proxy_server).await
 }
@@ -424,8 +465,9 @@ pub async fn test_imap(settings: crate::imap::ImapSettings) -> Result<crate::ima
 pub async fn fetch_imap_inbox(
     settings: crate::imap::ImapSettings,
     limit: Option<u32>,
+    offset: Option<u32>,
 ) -> Result<Vec<crate::imap::ImapMessage>, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::imap::fetch_imap_inbox(settings, limit))
+    tauri::async_runtime::spawn_blocking(move || crate::imap::fetch_imap_inbox(settings, limit, offset))
         .await
         .map_err(|error| error.to_string())?
 }
@@ -436,6 +478,16 @@ pub async fn fetch_imap_message(
     uid: u32,
 ) -> Result<crate::imap::ImapMessage, String> {
     tauri::async_runtime::spawn_blocking(move || crate::imap::fetch_imap_message(settings, uid))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn search_imap_headers(
+    settings: crate::imap::ImapSettings,
+    subjects: Vec<String>,
+) -> Result<Vec<crate::imap::ImapMessage>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::imap::search_imap_headers(settings, subjects))
         .await
         .map_err(|error| error.to_string())?
 }

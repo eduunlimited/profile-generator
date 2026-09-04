@@ -9,6 +9,8 @@ const NAV_ITEMS: { id: AppTab; label: string; icon: string }[] = [
   { id: "emails", label: "Emails", icon: "@" },
   { id: "credentials", label: "Accounts", icon: "🔑" },
   { id: "mail", label: "Mail", icon: "✉" },
+  { id: "orders", label: "Orders", icon: "▣" },
+  { id: "performance", label: "Order Performance", icon: "▤" },
   { id: "jigs", label: "Jigs", icon: "⌘" },
 ];
 
@@ -38,6 +40,15 @@ export function AppNav({ activeTab, onTabChange }: AppNavProps) {
         ))}
       </div>
       <div className="app-nav-footer">
+        <button
+          type="button"
+          className={activeTab === "settings" ? "nav-item active" : "nav-item"}
+          onClick={() => onTabChange("settings")}
+          title="Settings"
+        >
+          <span className="nav-item-icon">⚙</span>
+          <span className="nav-item-label">Settings</span>
+        </button>
         <span className="app-nav-version">{APP_VERSION}</span>
       </div>
     </nav>

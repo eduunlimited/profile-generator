@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { maskProxyLabel, parseProxyLines } from "./proxyPool";
+import { formatProxyLabel, parseProxyLines } from "./proxyPool";
 import { PROXY_UNCATEGORIZED_GROUP_ID } from "./proxyGroupUtils";
 import type { ProxyEntry, ProxyGroup } from "./types";
 
@@ -240,6 +240,7 @@ export function ProxyPoolModal({
                   <thead>
                     <tr>
                       <th>Proxy</th>
+                      <th>User</th>
                       <th>Enabled</th>
                       <th />
                     </tr>
@@ -247,7 +248,12 @@ export function ProxyPoolModal({
                   <tbody>
                     {groupProxies.map((proxy) => (
                       <tr key={proxy.id}>
-                        <td>{maskProxyLabel(proxy)}</td>
+                        <td title={formatProxyLabel(proxy)}>
+                          {proxy.host}:{proxy.port}
+                        </td>
+                        <td className="proxy-pool-user-cell" title={proxy.username}>
+                          {proxy.username?.trim() || "—"}
+                        </td>
                         <td>
                           <input
                             type="checkbox"

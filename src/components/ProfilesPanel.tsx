@@ -58,9 +58,7 @@ import {
 } from "../lib/profileOpportunities";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
 import { BillingAddressCell } from "./BillingAddressCell";
-import { GeocodioSettingsModal } from "./GeocodioSettingsModal";
 import { addressCheckLabel, addressMasterMatchLabel } from "../lib/addressCheck";
-import { getGeocodioSettings, saveGeocodioSettings, testGeocodioConnection } from "../lib/api";
 import {
   resolveCategorySelection,
   type CategorySelection,
@@ -95,6 +93,14 @@ const PROFILE_TABLE_COLUMNS = [
   "notes",
 ] as const;
 const PROFILE_TABLE_LOCKED_COLUMNS = ["check"] as const;
+const PROFILE_TABLE_FLEX_COLUMNS = ["address"] as const;
+const PROFILE_TABLE_MAX_WIDTHS: Partial<Record<(typeof PROFILE_TABLE_COLUMNS)[number], number>> = {
+  check: 28,
+  index: 36,
+  phone: 108,
+  accounts: 88,
+  status: 86,
+};
 
 function clampSidebarWidth(width: number): number {
   return Math.min(PROFILES_SIDEBAR_MAX_WIDTH, Math.max(PROFILES_SIDEBAR_MIN_WIDTH, width));
@@ -127,7 +133,6 @@ interface ProfilesPanelProps {
   addressJobStatus?: string | null;
   addressJobTone?: "info" | "error" | "success";
   geocodioConfigured?: boolean;
-  onGeocodioConfiguredChange?: (configured: boolean) => void;
   onLastAction?: (label: string) => void;
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
@@ -166,7 +171,6 @@ export function ProfilesPanel({
   addressJobStatus = null,
   addressJobTone = "info",
   geocodioConfigured = false,
-  onGeocodioConfiguredChange,
   onLastAction,
   onSaveCategory,
   onDeleteCategory,
@@ -214,10 +218,6 @@ export function ProfilesPanel({
   const [dragOverCategoryId, setDragOverCategoryId] = useState<string | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(readSidebarWidth);
   const [showProfileModal, setShowProfileModal] = useState(false);
-  const [showGeocodioModal, setShowGeocodioModal] = useState(false);
-  const [geocodioApiKey, setGeocodioApiKey] = useState("");
-  const [geocodioStatus, setGeocodioStatus] = useState<string | null>(null);
-  const [geocodioBusy, setGeocodioBusy] = useState(false);
   const [editTargetIds, setEditTargetIds] = useState<string[]>([]);
   const [mixedFields, setMixedFields] = useState<ProfileMixedFields>(() => emptyProfileMixedFields());
   const [touchedFields, setTouchedFields] = useState<ProfileTouchedFields>(() => emptyProfileTouchedFields());
@@ -384,6 +384,8 @@ export function ProfilesPanel({
   const profileTableColumns = useResizableTableColumns({
     columnIds: PROFILE_TABLE_COLUMNS,
     lockedIds: PROFILE_TABLE_LOCKED_COLUMNS,
+    flexIds: PROFILE_TABLE_FLEX_COLUMNS,
+    maxWidths: PROFILE_TABLE_MAX_WIDTHS,
     storageKey: "profiles",
     fitKey: searchFilteredProfiles
       .map((profile) =>
@@ -683,7 +685,7 @@ export function ProfilesPanel({
 
   const handleVerifySelected = async () => {
     if (!geocodioConfigured) {
-      setStatus("Set a Geocodio API key first (Address API).");
+      setStatus("Set a Geocodio API key in Settings first.");
       return;
     }
     try {
@@ -692,44 +694,6 @@ export function ProfilesPanel({
       const message = error instanceof Error ? error.message : "Address verify failed.";
       setStatus(message);
       onLastAction?.(message);
-    }
-  };
-
-  const openGeocodioModal = async () => {
-    try {
-      const settings = await getGeocodioSettings();
-      setGeocodioApiKey(settings.apiKey);
-      setGeocodioStatus(null);
-      setShowGeocodioModal(true);
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Could not load Address API settings.");
-    }
-  };
-
-  const handleGeocodioTest = async () => {
-    setGeocodioBusy(true);
-    setGeocodioStatus("Testing…");
-    try {
-      const message = await testGeocodioConnection(geocodioApiKey);
-      setGeocodioStatus(message);
-    } catch (error) {
-      setGeocodioStatus(error instanceof Error ? error.message : "Geocodio test failed.");
-    } finally {
-      setGeocodioBusy(false);
-    }
-  };
-
-  const handleGeocodioSave = async () => {
-    setGeocodioBusy(true);
-    try {
-      await saveGeocodioSettings({ apiKey: geocodioApiKey });
-      onGeocodioConfiguredChange?.(Boolean(geocodioApiKey.trim()));
-      setShowGeocodioModal(false);
-      setStatus(geocodioApiKey.trim() ? "Geocodio API key saved." : "Geocodio API key cleared.");
-    } catch (error) {
-      setGeocodioStatus(error instanceof Error ? error.message : "Could not save API key.");
-    } finally {
-      setGeocodioBusy(false);
     }
   };
 
@@ -1249,7 +1213,6 @@ export function ProfilesPanel({
               onDelete={() => void handleToolbarDelete()}
               onRejig={onRejig}
               onVerifyAddresses={() => void handleVerifySelected()}
-              onOpenAddressApi={() => void openGeocodioModal()}
               addressVerifyBusy={addressVerifyBusy}
               addressJobKind={addressJobKind}
               addressJobStatus={addressJobStatus ?? status}
@@ -1288,22 +1251,22 @@ export function ProfilesPanel({
                         #
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="name">
-                        Profile Name
+                        Name
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="billingName">
-                        Billing Full Name
+                        Billing
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="email">
-                        Billing Email
+                        Email
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="phone">
                         Phone
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="address">
-                        Billing Full Address
+                        Address
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="card" className="col-card-profile">
-                        Card Profile
+                        Card
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="accounts">
                         Accounts
@@ -1346,8 +1309,8 @@ export function ProfilesPanel({
                               />
                             </td>
                             <td className="col-index">{index + 1}</td>
-                            <td>{profile.name || "—"}</td>
-                            <td>{profile.billingFullName || "—"}</td>
+                            <td className="col-name">{profile.name || "—"}</td>
+                            <td className="col-billing-name">{profile.billingFullName || "—"}</td>
                             <td className="col-email">{profile.billingEmail || "—"}</td>
                             <td className="col-phone">{profile.billingPhone || "—"}</td>
                             <td className="col-address">
@@ -1368,7 +1331,7 @@ export function ProfilesPanel({
                                 lastFour={profile.cardNumberMasked || profile.paymentNumber}
                               />
                             </td>
-                            <td>{profile.accounts || "—"}</td>
+                            <td className="col-accounts">{profile.accounts || "—"}</td>
                             <td className="col-status">
                               <AccountStatusDisplay status={profile.accountStatus ?? "good"} />
                             </td>
@@ -1480,16 +1443,6 @@ export function ProfilesPanel({
         onImport={onImportProfiles}
       />
 
-      <GeocodioSettingsModal
-        open={showGeocodioModal}
-        apiKey={geocodioApiKey}
-        busy={geocodioBusy}
-        status={geocodioStatus}
-        onApiKeyChange={setGeocodioApiKey}
-        onClose={() => setShowGeocodioModal(false)}
-        onTest={() => void handleGeocodioTest()}
-        onSave={() => void handleGeocodioSave()}
-      />
     </>
   );
 }

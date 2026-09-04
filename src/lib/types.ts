@@ -186,6 +186,45 @@ export interface GeocodioSettings {
   apiKey: string;
 }
 
+export interface OpenAiSettings {
+  apiKey: string;
+}
+
+export type OrderAnalysisSeverity = "low" | "med" | "high";
+
+export type OrderAnalysisCause =
+  | "street_too_aggressive"
+  | "street_type_combo"
+  | "unit_line_unrecognized"
+  | "name_too_aggressive"
+  | "name_card_mismatch"
+  | "geocodio_fail"
+  | "master_mismatch"
+  | "payment_or_card"
+  | "email_flagged"
+  | "no_warmup"
+  | "sku_pattern"
+  | "timing_cluster"
+  | "insufficient_data";
+
+export interface OrderAnalysisResult {
+  display: string;
+  severity: OrderAnalysisSeverity;
+  causes: OrderAnalysisCause[];
+  confidence: number;
+  action: string;
+  notes?: string;
+}
+
+export interface OrderAnalysisRecord {
+  site: OrderRetailer;
+  email: string;
+  cancelledAtCount: number;
+  analyzedAt: string;
+  promptVersion?: number;
+  result: OrderAnalysisResult;
+}
+
 export interface GeocodioLookupRequest {
   apiKey: string;
   street: string;
@@ -212,6 +251,7 @@ export interface ProfileSummary {
   email: string;
   city: string;
   state: string;
+  postalCode?: string;
   billingFullName: string;
   billingEmail: string;
   billingPhone: string;
@@ -223,6 +263,8 @@ export interface ProfileSummary {
   accounts: string;
   accountSite?: string;
   jigPresetName?: string;
+  nameJigPresetName?: string;
+  addressJigPresetName?: string;
   creditCardLabel?: string;
   creditCardId?: string;
   emailPoolId?: string;
@@ -480,6 +522,44 @@ export interface StoredImapMessage extends ImapMessage {
   fetchedAt: string;
 }
 
+export type OrderRetailer = "target" | "walmart" | "pokemon-center";
+export type OrderStatus = "placed" | "shipped" | "delivered" | "picked_up" | "cancelled";
+export type OrderEventKind = "placed" | "shipped" | "in_transit" | "delivered" | "picked_up" | "cancelled";
+export type OrderFulfillment = "pickup" | "delivery";
+
+export interface OrderEvent {
+  kind: OrderEventKind;
+  accountId: string;
+  uid: number;
+  messageId?: string;
+  subject: string;
+  date: string;
+  dateMs: number;
+}
+
+export interface OrderLineItem {
+  name: string;
+  quantity: number;
+}
+
+export interface ParsedOrder {
+  id: string;
+  retailer: OrderRetailer;
+  orderId: string;
+  status: OrderStatus;
+  fulfillment?: OrderFulfillment;
+  total?: number;
+  currency?: string;
+  trackingNumber?: string;
+  items?: OrderLineItem[];
+  recipientEmail?: string;
+  profileId?: string;
+  profileName?: string;
+  events: OrderEvent[];
+  placedAt: string;
+  updatedAt: string;
+}
+
 export type AppTab =
   | "profiles"
   | "master"
@@ -488,6 +568,9 @@ export type AppTab =
   | "credentials"
   | "jigs"
   | "sessions"
-  | "mail";
+  | "mail"
+  | "orders"
+  | "performance"
+  | "settings";
 
 export type ProfileEditorSection = "profile" | "addresses" | "creditCard" | "logins";

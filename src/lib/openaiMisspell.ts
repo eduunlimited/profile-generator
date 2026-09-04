@@ -694,19 +694,41 @@ function parseMisspellResponse(raw: string, request: OpenAiMisspellRequest): Ope
   return result;
 }
 
+let storedOpenAiApiKey = "";
+
+export function cacheOpenAiApiKey(apiKey: string) {
+  storedOpenAiApiKey = apiKey.trim();
+}
+
+async function resolveStoredOpenAiApiKey(): Promise<string> {
+  if (storedOpenAiApiKey) return storedOpenAiApiKey;
+  try {
+    const settings = await import("./browserStorage").then((mod) => mod.getOpenAiSettings());
+    storedOpenAiApiKey = settings.apiKey.trim();
+  } catch {
+    // Fall back to the environment key in Tauri or the Vite proxy.
+  }
+  return storedOpenAiApiKey;
+}
+
 async function callOpenAiChat(messages: ChatMessage[]): Promise<string> {
+  const apiKey = await resolveStoredOpenAiApiKey();
   if (isTauriRuntime()) {
     return invoke<string>("openai_chat_completion", {
       messages,
       model: DEFAULT_MODEL,
+      apiKey: apiKey || undefined,
     });
   }
 
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
+
   const response = await fetch("/openai/v1/chat/completions", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
+    headers,
     body: JSON.stringify({
       model: DEFAULT_MODEL,
       messages,
@@ -766,9 +788,7 @@ function isMisspellValidationError(error: unknown): boolean {
 }
 
 export async function misspellWithOpenAi(request: OpenAiMisspellRequest): Promise<OpenAiMisspellResult> {
-  const hasKeyHint = isTauriRuntime()
-    ? "Set OPENAI_API_KEY in the environment before launching the app."
-    : "Set OPENAI_API_KEY or VITE_OPENAI_API_KEY in .env for Vite dev.";
+  const hasKeyHint = "Set an OpenAI API key in Settings.";
 
   const baseUserPrompt = buildMisspellUserPrompt(request);
   const messages: ChatMessage[] = [
@@ -805,10 +825,24 @@ export async function misspellWithOpenAi(request: OpenAiMisspellRequest): Promis
 }
 
 export function isOpenAiMisspellConfigured(): boolean {
-  if (isTauriRuntime()) {
-    return true;
-  }
+  if (storedOpenAiApiKey) return true;
+  if (isTauriRuntime()) return true;
   return Boolean(import.meta.env.VITE_OPENAI_API_KEY);
+}
+
+export async function testOpenAiConnection(apiKey: string): Promise<string> {
+  const trimmed = apiKey.trim();
+  if (isTauriRuntime()) {
+    return invoke<string>("test_openai_connection", { apiKey: trimmed || undefined });
+  }
+  const headers: Record<string, string> = {};
+  if (trimmed) headers.Authorization = `Bearer ${trimmed}`;
+  const response = await fetch("/openai/v1/models", { headers });
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`OpenAI test failed (${response.status}): ${detail || response.statusText}`);
+  }
+  return "OpenAI connection works.";
 }
 
 export interface IndexedMisspellRequest {
@@ -924,9 +958,7 @@ export async function misspellBatchWithOpenAi(
     return new Map([[only.index, result]]);
   }
 
-  const hasKeyHint = isTauriRuntime()
-    ? "Set OPENAI_API_KEY in the environment before launching the app."
-    : "Set OPENAI_API_KEY or VITE_OPENAI_API_KEY in .env for Vite dev.";
+  const hasKeyHint = "Set an OpenAI API key in Settings.";
 
   const baseUserPrompt = buildBatchMisspellUserPrompt(items, options);
   const messages: ChatMessage[] = [

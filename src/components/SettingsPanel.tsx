@@ -1,0 +1,173 @@
+import { useEffect, useState } from "react";
+import {
+  getGeocodioSettings,
+  getOpenAiSettings,
+  saveGeocodioSettings,
+  saveOpenAiSettings,
+  testGeocodioConnection,
+  testOpenAiConnection,
+} from "../lib/api";
+import { formatError } from "../lib/errorUtils";
+import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
+import { Field } from "./ui";
+
+interface SettingsPanelProps {
+  onGeocodioConfiguredChange?: (configured: boolean) => void;
+}
+
+type KeyStatus = { tone: "ok" | "error"; text: string } | null;
+
+export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps) {
+  const [geocodioKey, setGeocodioKey] = useState("");
+  const [openAiKey, setOpenAiKey] = useState("");
+  const [geocodioBusy, setGeocodioBusy] = useState(false);
+  const [openAiBusy, setOpenAiBusy] = useState(false);
+  const [geocodioStatus, setGeocodioStatus] = useState<KeyStatus>(null);
+  const [openAiStatus, setOpenAiStatus] = useState<KeyStatus>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [geocodio, openai] = await Promise.all([getGeocodioSettings(), getOpenAiSettings()]);
+        if (cancelled) return;
+        setGeocodioKey(geocodio.apiKey);
+        setOpenAiKey(openai.apiKey);
+        cacheOpenAiApiKey(openai.apiKey);
+      } catch (error) {
+        if (!cancelled) {
+          setGeocodioStatus({ tone: "error", text: formatError(error, "Could not load API keys.") });
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const saveGeocodio = async () => {
+    setGeocodioBusy(true);
+    try {
+      await saveGeocodioSettings({ apiKey: geocodioKey });
+      onGeocodioConfiguredChange?.(Boolean(geocodioKey.trim()));
+      setGeocodioStatus({
+        tone: "ok",
+        text: geocodioKey.trim() ? "Geocodio API key saved." : "Geocodio API key cleared.",
+      });
+    } catch (error) {
+      setGeocodioStatus({ tone: "error", text: formatError(error, "Could not save Geocodio API key.") });
+    } finally {
+      setGeocodioBusy(false);
+    }
+  };
+
+  const testGeocodio = async () => {
+    setGeocodioBusy(true);
+    setGeocodioStatus({ tone: "ok", text: "Testing…" });
+    try {
+      const message = await testGeocodioConnection(geocodioKey);
+      setGeocodioStatus({ tone: "ok", text: message });
+    } catch (error) {
+      setGeocodioStatus({ tone: "error", text: formatError(error, "Geocodio test failed.") });
+    } finally {
+      setGeocodioBusy(false);
+    }
+  };
+
+  const saveOpenAi = async () => {
+    setOpenAiBusy(true);
+    try {
+      await saveOpenAiSettings({ apiKey: openAiKey });
+      cacheOpenAiApiKey(openAiKey);
+      setOpenAiStatus({
+        tone: "ok",
+        text: openAiKey.trim() ? "OpenAI API key saved." : "OpenAI API key cleared.",
+      });
+    } catch (error) {
+      setOpenAiStatus({ tone: "error", text: formatError(error, "Could not save OpenAI API key.") });
+    } finally {
+      setOpenAiBusy(false);
+    }
+  };
+
+  const testOpenAi = async () => {
+    setOpenAiBusy(true);
+    setOpenAiStatus({ tone: "ok", text: "Testing…" });
+    try {
+      const message = await testOpenAiConnection(openAiKey);
+      setOpenAiStatus({ tone: "ok", text: message });
+    } catch (error) {
+      setOpenAiStatus({ tone: "error", text: formatError(error, "OpenAI test failed.") });
+    } finally {
+      setOpenAiBusy(false);
+    }
+  };
+
+  return (
+    <div className="settings-layout">
+      <section className="card settings-card">
+        <div className="card-header">
+          <h2>API keys</h2>
+        </div>
+        <p className="muted">
+          Keys stay on this machine and are never printed. More app settings will land here later.
+        </p>
+
+        <h3 className="subsection-title">Geocodio</h3>
+        <p className="muted">
+          Address verification uses Geocodio ZIP+4 exact match (not CASS/DPV). Get a free key at geocod.io.
+        </p>
+        <div className="form-grid">
+          <Field label="Geocodio API key" className="form-grid-span">
+            <input
+              type="password"
+              value={geocodioKey}
+              onChange={(event) => setGeocodioKey(event.target.value)}
+              autoComplete="new-password"
+              placeholder="Paste API key"
+            />
+          </Field>
+        </div>
+        <div className="button-row">
+          <button type="button" className="btn-secondary" disabled={geocodioBusy} onClick={() => void testGeocodio()}>
+            Test connection
+          </button>
+          <button type="button" className="btn-primary" disabled={geocodioBusy} onClick={() => void saveGeocodio()}>
+            {geocodioBusy ? "Saving…" : "Save"}
+          </button>
+        </div>
+        {geocodioStatus ? (
+          <p className={geocodioStatus.tone === "error" ? "is-error" : "muted"}>{geocodioStatus.text}</p>
+        ) : null}
+
+        <h3 className="subsection-title">OpenAI</h3>
+        <p className="muted">
+          Name and street misspell jigs use OpenAI. A key here overrides <code>OPENAI_API_KEY</code> in the
+          environment.
+        </p>
+        <div className="form-grid">
+          <Field label="OpenAI API key" className="form-grid-span">
+            <input
+              type="password"
+              value={openAiKey}
+              onChange={(event) => setOpenAiKey(event.target.value)}
+              autoComplete="new-password"
+              placeholder="Paste API key"
+            />
+          </Field>
+        </div>
+        <div className="button-row">
+          <button type="button" className="btn-secondary" disabled={openAiBusy} onClick={() => void testOpenAi()}>
+            Test connection
+          </button>
+          <button type="button" className="btn-primary" disabled={openAiBusy} onClick={() => void saveOpenAi()}>
+            {openAiBusy ? "Saving…" : "Save"}
+          </button>
+        </div>
+        {openAiStatus ? (
+          <p className={openAiStatus.tone === "error" ? "is-error" : "muted"}>{openAiStatus.text}</p>
+        ) : null}
+      </section>
+    </div>
+  );
+}

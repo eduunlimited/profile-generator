@@ -34,6 +34,12 @@ import { ProfilesPanel } from "./components/ProfilesPanel";
 
 import { MailPanel } from "./components/MailPanel";
 
+import { OrdersPanel } from "./components/OrdersPanel";
+
+import { OrderPerformancePanel } from "./components/OrderPerformancePanel";
+
+import { SettingsPanel } from "./components/SettingsPanel";
+
 import { LicenseGate, useAppUpdateChecks } from "./components/LicenseGate";
 
 import { BrowserSessionsPanel } from "./modules/browserSessions";
@@ -58,9 +64,12 @@ const TAB_CONTEXT: Record<AppTab, { title: string; hint: string }> = {
   cards: { title: "Credit Cards", hint: "Pool · assign · categories" },
   emails: { title: "Emails", hint: "Pool · assign · categories" },
   credentials: { title: "Accounts", hint: "Credentials · site links" },
-  mail: { title: "Mail", hint: "IMAP keys · last 500 messages" },
+  mail: { title: "Mail", hint: "Stored inbox" },
+  orders: { title: "Orders", hint: "Confirmations · shipment · cancel" },
+  performance: { title: "Order Performance", hint: "Cancelled emails · per site · jigs · payment" },
   jigs: { title: "Jig Presets", hint: "Name · address · export rules" },
   sessions: { title: "Browser Sessions", hint: "Account pool · Camoufox · cookies" },
+  settings: { title: "Settings", hint: "API keys · app settings" },
 };
 
 import { createEmptyMasterProfile, masterProfileLabel } from "./lib/masterProfileUtils";
@@ -193,6 +202,9 @@ function AppContent() {
 
 
   const [activeTab, setActiveTab] = useState<AppTab>("profiles");
+  const [ordersTabOpened, setOrdersTabOpened] = useState(false);
+  const [mailTabOpened, setMailTabOpened] = useState(false);
+  const [performanceTabOpened, setPerformanceTabOpened] = useState(false);
 
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([]);
 
@@ -558,7 +570,15 @@ function AppContent() {
 
     <div className="app-root">
 
-      <AppNav activeTab={activeTab} onTabChange={setActiveTab} />
+      <AppNav
+        activeTab={activeTab}
+        onTabChange={(tab) => {
+          if (tab === "orders") setOrdersTabOpened(true);
+          if (tab === "mail") setMailTabOpened(true);
+          if (tab === "performance") setPerformanceTabOpened(true);
+          setActiveTab(tab);
+        }}
+      />
 
 
 
@@ -661,8 +681,6 @@ function AppContent() {
                 addressJobTone={addressJobTone}
 
                 geocodioConfigured={geocodioConfigured}
-
-                onGeocodioConfiguredChange={markGeocodioConfigured}
 
                 onSaveCategory={upsertProfileCategory}
 
@@ -898,13 +916,27 @@ function AppContent() {
 
 
 
-          {activeTab === "mail" ? (
-            <div className="accounts-panel">
+          {activeTab === "mail" || mailTabOpened ? (
+            <div className={`accounts-panel${activeTab === "mail" ? "" : " is-tab-hidden"}`}>
               <MailPanel profiles={profiles} />
             </div>
           ) : null}
 
+          {activeTab === "orders" || ordersTabOpened ? (
+            <div className={`accounts-panel${activeTab === "orders" ? "" : " is-tab-hidden"}`}>
+              <OrdersPanel profiles={profiles} poolEmails={poolEmails} />
+            </div>
+          ) : null}
 
+          {activeTab === "performance" || performanceTabOpened ? (
+            <div className={`accounts-panel${activeTab === "performance" ? "" : " is-tab-hidden"}`}>
+              <OrderPerformancePanel
+                profiles={profiles}
+                poolEmails={poolEmails}
+                active={activeTab === "performance"}
+              />
+            </div>
+          ) : null}
 
           {activeTab === "sessions" ? (
 
@@ -913,6 +945,12 @@ function AppContent() {
           ) : null}
 
 
+
+          {activeTab === "settings" ? (
+            <div className="panel-scroll">
+              <SettingsPanel onGeocodioConfiguredChange={markGeocodioConfigured} />
+            </div>
+          ) : null}
 
           {activeTab === "jigs" ? (
 

@@ -1,7 +1,7 @@
 {
   "name": "profile-generator",
   "private": true,
-  "version": "0.2.24",
+  "version": "0.2.49",
   "type": "module",
   "scripts": {
     "dev": "vite",

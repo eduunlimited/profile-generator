@@ -326,7 +326,9 @@ export function BrowserSessionsPanel({ credentials, profiles }: BrowserSessionsP
                           </td>
                           <td>
                             <div className="browser-sessions-proxy-cell">
-                              <span>{proxy ? formatProxyLabel(proxy) : "—"}</span>
+                              <span title={proxy ? formatProxyLabel(proxy) : undefined}>
+                                {proxy ? formatProxyLabel(proxy) : "—"}
+                              </span>
                               <button
                                 type="button"
                                 className="proxy-refresh-btn"

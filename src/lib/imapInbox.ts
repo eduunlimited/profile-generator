@@ -144,7 +144,7 @@ export function toStoredImapHeaders(
   const snippet = (stored.snippet || stored.body).replace(/\s+/g, " ").trim().slice(0, 280);
   return {
     ...stored,
-    dateMs: Number.isFinite(existingMs) && (existingMs ?? 0) > 0 ? existingMs : stored.dateMs,
+    dateMs: existingMs && existingMs > 0 ? existingMs : stored.dateMs,
     snippet,
     body: "",
     htmlBody: undefined,
@@ -154,7 +154,7 @@ export function toStoredImapHeaders(
 export function mergeStoredImapMessages(
   existing: StoredImapMessage[],
   incoming: ImapMessage[],
-  cap = IMAP_MAIL_CAP,
+  cap?: number,
 ): StoredImapMessage[] {
   const fetchedAt = new Date().toISOString();
   const byKey = new Map<string, StoredImapMessage>();
@@ -173,7 +173,6 @@ export function mergeStoredImapMessages(
     }
     byKey.set(storedImapMessageKey(stored), stored);
   }
-  return [...byKey.values()]
-    .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid)
-    .slice(0, cap);
+  const merged = [...byKey.values()].sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
+  return cap ? merged.slice(0, cap) : merged;
 }

@@ -238,13 +238,14 @@ export function parseProxyLine(line: string, groupId?: string): ProxyEntry | nul
       if (!host || !Number.isFinite(port)) {
         return null;
       }
+      const username = decodeURIComponent(url.username || "");
       return buildProxyEntry(
         host,
         port,
-        decodeURIComponent(url.username || ""),
+        username,
         decodeURIComponent(url.password || ""),
         parseProtocol(url.protocol.replace(":", "")),
-        host,
+        undefined,
         groupId,
       );
     }
@@ -265,7 +266,7 @@ export function parseProxyLine(line: string, groupId?: string): ProxyEntry | nul
 
   const username = parts[2]?.trim();
   const password = parts.slice(3).join(":").trim();
-  return buildProxyEntry(host, port, username, password, "http", `${host}:${port}`, groupId);
+  return buildProxyEntry(host, port, username, password, "http", undefined, groupId);
 }
 
 export function parseProxyLines(text: string, groupId?: string): ProxyEntry[] {
@@ -289,13 +290,25 @@ export function formatProxyServer(proxy: ProxyEntry): string {
   return `${proxy.protocol}://${auth}${proxy.host}:${proxy.port}`;
 }
 
-export function formatProxyLabel(proxy: ProxyEntry): string {
-  if (proxy.label?.trim()) {
-    return proxy.label.trim();
-  }
+function hostPortLabel(proxy: Pick<ProxyEntry, "host" | "port">): string {
   return `${proxy.host}:${proxy.port}`;
 }
 
+function isGenericHostLabel(label: string, proxy: Pick<ProxyEntry, "host" | "port">): boolean {
+  const normalized = label.trim().toLowerCase();
+  return normalized === proxy.host.toLowerCase() || normalized === hostPortLabel(proxy).toLowerCase();
+}
+
+export function formatProxyLabel(proxy: ProxyEntry): string {
+  const hostPort = hostPortLabel(proxy);
+  const user = proxy.username?.trim();
+  const custom = proxy.label?.trim();
+  if (custom && !isGenericHostLabel(custom, proxy)) {
+    return user ? `${custom} · ${user}` : custom;
+  }
+  return user ? `${user} @ ${hostPort}` : hostPort;
+}
+
 export function maskProxyLabel(proxy: ProxyEntry): string {
-  return `${proxy.host}:${proxy.port}`;
+  return formatProxyLabel(proxy);
 }

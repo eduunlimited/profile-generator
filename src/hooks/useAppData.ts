@@ -48,7 +48,9 @@ import {
   saveProfiles,
   seedDefaults,
   getGeocodioSettings,
+  getOpenAiSettings,
 } from "../lib/api";
+import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
 import {
   clearStaleAddressCheck,
   errorAddressCheck,
@@ -259,8 +261,9 @@ export function useAppData() {
       setCardCategories(cardCats);
       setEmailCategories(emailCats);
       setProfileCategories(profileCats);
-      const geocodio = await getGeocodioSettings();
+      const [geocodio, openai] = await Promise.all([getGeocodioSettings(), getOpenAiSettings()]);
       setGeocodioConfigured(Boolean(geocodio.apiKey.trim()));
+      cacheOpenAiApiKey(openai.apiKey);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load app data.");
     } finally {
@@ -606,7 +609,7 @@ export function useAppData() {
       if (options.untilPass) {
         const settings = await getGeocodioSettings();
         if (!settings.apiKey.trim()) {
-          throw new Error("Set a Geocodio API key first (Address API).");
+          throw new Error("Set a Geocodio API key in Settings first.");
         }
         if (addressJig.rules.length === 0) {
           throw new Error("Select at least one address jig to re-jig until pass.");

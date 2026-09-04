@@ -31,3 +31,35 @@ export async function saveTextFile(filename: string, content: string): Promise<b
   URL.revokeObjectURL(url);
   return true;
 }
+
+/** Opens a file picker and returns the text, or null if the user cancels. */
+export async function pickTextFile(options?: { extensions?: string[] }): Promise<string | null> {
+  const extensions = options?.extensions ?? ["json"];
+  if (isTauriRuntime()) {
+    const { open } = await import("@tauri-apps/plugin-dialog");
+    const { readTextFile } = await import("@tauri-apps/plugin-fs");
+    const path = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "Backup", extensions }],
+    });
+    if (!path || Array.isArray(path)) return null;
+    return readTextFile(path);
+  }
+
+  return new Promise((resolve, reject) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = extensions.map((ext) => `.${ext}`).join(",");
+    input.addEventListener("change", () => {
+      const file = input.files?.[0];
+      if (!file) {
+        resolve(null);
+        return;
+      }
+      file.text().then(resolve).catch(reject);
+    });
+    input.addEventListener("cancel", () => resolve(null));
+    input.click();
+  });
+}

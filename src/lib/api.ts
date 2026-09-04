@@ -94,6 +94,40 @@ export async function deleteExportTemplate(id: string): Promise<void> {
   await backend.deleteExportTemplate(id);
 }
 
+export async function replaceAllJigPresets(presets: JigPreset[]): Promise<void> {
+  if (isTauriRuntime() && !usesProjectDataFiles()) {
+    const current = await listJigPresets();
+    const keep = new Set(presets.map((preset) => preset.id));
+    for (const preset of current) {
+      if (!keep.has(preset.id)) {
+        await deleteJigPreset(preset.id);
+      }
+    }
+    for (const preset of presets) {
+      await saveJigPreset(preset);
+    }
+    return;
+  }
+  await browserStorage.replaceAllJigPresets(presets);
+}
+
+export async function replaceAllExportTemplates(templates: ExportTemplate[]): Promise<void> {
+  if (isTauriRuntime() && !usesProjectDataFiles()) {
+    const current = await listExportTemplates();
+    const keep = new Set(templates.map((template) => template.id));
+    for (const template of current) {
+      if (!keep.has(template.id)) {
+        await deleteExportTemplate(template.id);
+      }
+    }
+    for (const template of templates) {
+      await saveExportTemplate(template);
+    }
+    return;
+  }
+  await browserStorage.replaceAllExportTemplates(templates);
+}
+
 export async function seedDefaults(
   jigPresets: JigPreset[],
   exportTemplates: ExportTemplate[],
@@ -388,4 +422,8 @@ export async function listOrderAnalysis() {
 
 export async function upsertOrderAnalysis(record: import("./types").OrderAnalysisRecord) {
   return browserStorage.upsertOrderAnalysis(record);
+}
+
+export async function replaceAllOrderAnalysis(records: import("./types").OrderAnalysisRecord[]) {
+  return browserStorage.replaceAllOrderAnalysis(records);
 }

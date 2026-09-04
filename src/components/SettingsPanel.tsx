@@ -7,6 +7,7 @@ import {
   testGeocodioConnection,
   testOpenAiConnection,
 } from "../lib/api";
+import { exportAppBackupFile, importAppBackupFile, type AppBackupSummary } from "../lib/appBackup";
 import { formatError } from "../lib/errorUtils";
 import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
 import { Field } from "./ui";
@@ -24,6 +25,8 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
   const [openAiBusy, setOpenAiBusy] = useState(false);
   const [geocodioStatus, setGeocodioStatus] = useState<KeyStatus>(null);
   const [openAiStatus, setOpenAiStatus] = useState<KeyStatus>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupStatus, setBackupStatus] = useState<KeyStatus>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -90,6 +93,54 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
     }
   };
 
+  const formatBackupSummary = (summary: AppBackupSummary) => {
+    const keys = [
+      summary.hasGeocodioKey ? "Geocodio" : null,
+      summary.hasOpenAiKey ? "OpenAI" : null,
+    ].filter(Boolean);
+    const keyText = keys.length > 0 ? `API keys: ${keys.join(", ")}.` : "No API keys in this backup.";
+    return `${summary.profiles} profiles, ${summary.cards} cards, ${summary.emails} emails, ${summary.accounts} accounts, ${summary.imapAccounts} IMAP, ${summary.proxies} proxies, ${summary.orders} orders. ${keyText}`;
+  };
+
+  const exportBackup = async () => {
+    setBackupBusy(true);
+    setBackupStatus({ tone: "ok", text: "Preparing backup…" });
+    try {
+      const summary = await exportAppBackupFile();
+      if (!summary) {
+        setBackupStatus({ tone: "ok", text: "Export cancelled." });
+        return;
+      }
+      setBackupStatus({ tone: "ok", text: `Exported. ${formatBackupSummary(summary)}` });
+    } catch (error) {
+      setBackupStatus({ tone: "error", text: formatError(error, "Could not export backup.") });
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const importBackup = async () => {
+    const confirmed = window.confirm(
+      "Import replaces everything in this app — profiles, cards, emails, accounts, proxies, mail, orders, and API keys. This cannot be undone. Continue?",
+    );
+    if (!confirmed) return;
+    setBackupBusy(true);
+    setBackupStatus({ tone: "ok", text: "Importing…" });
+    try {
+      const summary = await importAppBackupFile();
+      if (!summary) {
+        setBackupStatus({ tone: "ok", text: "Import cancelled." });
+        setBackupBusy(false);
+        return;
+      }
+      setBackupStatus({ tone: "ok", text: `Imported. Reloading… ${formatBackupSummary(summary)}` });
+      window.setTimeout(() => window.location.reload(), 250);
+    } catch (error) {
+      setBackupStatus({ tone: "error", text: formatError(error, "Could not import backup.") });
+      setBackupBusy(false);
+    }
+  };
+
   const testOpenAi = async () => {
     setOpenAiBusy(true);
     setOpenAiStatus({ tone: "ok", text: "Testing…" });
@@ -110,7 +161,7 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
           <h2>API keys</h2>
         </div>
         <p className="muted">
-          Keys stay on this machine and are never printed. More app settings will land here later.
+          Keys stay on this machine. Use Backup below to copy them to another install.
         </p>
 
         <h3 className="subsection-title">Geocodio</h3>
@@ -166,6 +217,28 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
         </div>
         {openAiStatus ? (
           <p className={openAiStatus.tone === "error" ? "is-error" : "muted"}>{openAiStatus.text}</p>
+        ) : null}
+      </section>
+
+      <section className="card settings-card">
+        <div className="card-header">
+          <h2>Backup</h2>
+        </div>
+        <p className="muted">
+          Export or replace everything on this machine: profiles, cards, emails, accounts, proxies, mail,
+          orders, analysis, jig presets, and API keys (Geocodio, OpenAI, IMAP passwords). Treat the file
+          like a password vault.
+        </p>
+        <div className="button-row">
+          <button type="button" className="btn-secondary" disabled={backupBusy} onClick={() => void exportBackup()}>
+            {backupBusy ? "Working…" : "Export all"}
+          </button>
+          <button type="button" className="btn-primary" disabled={backupBusy} onClick={() => void importBackup()}>
+            Import all
+          </button>
+        </div>
+        {backupStatus ? (
+          <p className={backupStatus.tone === "error" ? "is-error" : "muted"}>{backupStatus.text}</p>
         ) : null}
       </section>
     </div>

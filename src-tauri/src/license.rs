@@ -70,7 +70,9 @@ fn licensing_enabled() -> bool {
             .map(|value| value == "1" || value.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
     }
-    true
+    option_env!("LICENSE_API_URL")
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
 }
 
 fn license_store_path(app: &AppHandle) -> Result<PathBuf, String> {

@@ -284,6 +284,34 @@ export async function deleteExportTemplate(id: string): Promise<void> {
   await persistMap();
 }
 
+export async function replaceAllJigPresets(presetsToRestore: JigPreset[]): Promise<void> {
+  const presets: Record<string, JigPreset> = {};
+  for (const preset of presetsToRestore) {
+    if (preset?.id) presets[preset.id] = preset;
+  }
+  writeMap(KEYS.jigPresets, presets);
+  await persistMap();
+}
+
+export async function replaceAllExportTemplates(templatesToRestore: ExportTemplate[]): Promise<void> {
+  const templates: Record<string, ExportTemplate> = {};
+  for (const template of templatesToRestore) {
+    if (template?.id) templates[template.id] = template;
+  }
+  writeMap(KEYS.exportTemplates, templates);
+  await persistMap();
+}
+
+export async function replaceAllOrderAnalysis(recordsToRestore: OrderAnalysisRecord[]): Promise<void> {
+  const map: Record<string, OrderAnalysisRecord> = {};
+  for (const record of recordsToRestore) {
+    const normalized = normalizeOrderAnalysis(record);
+    if (normalized) map[analysisStorageKey(normalized.site, normalized.email)] = normalized;
+  }
+  writeMap(KEYS.orderAnalysis, map);
+  await persistMap();
+}
+
 export async function seedDefaults(
   jigPresets: JigPreset[],
   exportTemplates: ExportTemplate[],

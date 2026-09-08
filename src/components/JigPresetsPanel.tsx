@@ -16,6 +16,7 @@ const NAME_RULE_TYPES: NameRule["type"][] = ["nameMisspell"];
 
 const ADDRESS_RULE_TYPES: AddressRule["type"][] = [
   "streetRandomLetters",
+  "houseNumberLetter",
   "streetTypeCombo",
   "randomUnitLine",
   "addUnit",
@@ -124,7 +125,7 @@ export function JigPresetsPanel({ presets, onSave }: JigPresetsPanelProps) {
           <div>
             <h2>Jig presets</h2>
             <p className="muted">
-              Name misspellings, street type combo, street letter noise, and random apt/suite on line 2.
+              Name misspellings, house number letter, street type combo, street letter noise, and random apt/suite on line 2.
             </p>
           </div>
           <button type="button" className="btn-secondary btn-compact" onClick={startNew}>

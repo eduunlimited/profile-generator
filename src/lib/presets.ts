@@ -39,10 +39,18 @@ export const BUILTIN_JIG_PRESETS: JigPreset[] = [
     ],
   },
   {
+    id: "builtin-house-number-letter",
+    name: "House number letter",
+    description:
+      "Adds a random lowercase letter to the house number (161 → 161a). Skips L and O so they are not read as 1 or 0.",
+    nameRules: [],
+    addressRules: [{ type: "houseNumberLetter" }, { type: "splitLines" }],
+  },
+  {
     id: "builtin-street-type-combo",
     name: "Street type combo (PKC/Target)",
     description:
-      "Swaps street type (st/street, dr/drive, ave/avenue, pl/place) and direction form (SE/Southeast) on line 1.",
+      "House number letter plus street type (st/street, dr/drive, ave/avenue, pl/place) and direction form (SE/Southeast) on line 1.",
     nameRules: [],
     addressRules: [{ type: "streetTypeCombo" }, { type: "splitLines" }],
   },

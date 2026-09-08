@@ -309,7 +309,8 @@ export type AddressRuleType =
   | "prefixRandom"
   | "suffixRandom"
   | "streetRandomLetters"
-  | "streetTypeCombo";
+  | "streetTypeCombo"
+  | "houseNumberLetter";
 
 export interface NameRule {
   type: NameRuleType;

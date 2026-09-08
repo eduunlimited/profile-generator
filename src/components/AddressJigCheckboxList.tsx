@@ -47,7 +47,7 @@ export function AddressJigCheckboxList({
   return (
     <Field
       label="Address jigs"
-      hint="Select one or more — street letters, type combo, apt/suite line 2, misspell"
+      hint="Select one or more — street letters, house number letter, type combo, apt/suite line 2, misspell"
       className={[className, "address-jig-field"].filter(Boolean).join(" ")}
     >
       {list}

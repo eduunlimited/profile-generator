@@ -162,6 +162,31 @@ function peelRandomLetterBlocks(tokens: string[]): {
   return { prefix, suffix, core };
 }
 
+/** Lowercase letters that do not look like 1 or 0. */
+const HOUSE_NUMBER_LETTERS = "abcdefghijkmnpqrstuvwxyz";
+
+function randomHouseNumberLetter(): string {
+  return HOUSE_NUMBER_LETTERS[Math.floor(Math.random() * HOUSE_NUMBER_LETTERS.length)];
+}
+
+function applyHouseNumberLetter(street: string): string {
+  const tokens = tokenizeStreet(street);
+  if (tokens.length === 0) return street;
+
+  const { prefix, suffix, core } = peelRandomLetterBlocks(tokens);
+  if (core.length === 0) {
+    return [prefix, suffix].filter(Boolean).join(" ");
+  }
+
+  const house = core[0];
+  if (!/^\d+$/.test(house)) {
+    return [prefix, ...core, suffix].filter(Boolean).join(" ");
+  }
+
+  core[0] = `${house}${randomHouseNumberLetter()}`;
+  return [prefix, ...core, suffix].filter(Boolean).join(" ");
+}
+
 function applyStreetTypeCombo(street: string): string {
   const tokens = tokenizeStreet(street);
   if (tokens.length === 0) return street;
@@ -178,7 +203,7 @@ function applyStreetTypeCombo(street: string): string {
   const coreTokens = matchedType ? afterDirection.slice(0, -1) : afterDirection;
 
   if (!matchedType && !direction) {
-    return [prefix, core.join(" "), suffix].filter(Boolean).join(" ");
+    return applyHouseNumberLetter([prefix, core.join(" "), suffix].filter(Boolean).join(" "));
   }
 
   const house = coreTokens[0] && /^\d/.test(coreTokens[0]) ? coreTokens[0] : "";
@@ -189,7 +214,9 @@ function applyStreetTypeCombo(street: string): string {
   const typeText = typePair ? (Math.random() < 0.5 ? typePair.short : typePair.long) : "";
   const directionText = direction ? pickRandom(direction.group.variants) : "";
 
-  return [prefix, house, name, typeText, directionText, suffix].filter(Boolean).join(" ");
+  return applyHouseNumberLetter(
+    [prefix, house, name, typeText, directionText, suffix].filter(Boolean).join(" "),
+  );
 }
 
 function randomLetters(count: number): string {
@@ -347,6 +374,9 @@ export function applyAddressRules(address: ProfileAddress, rules: AddressRule[])
         break;
       case "streetTypeCombo":
         next.street = applyStreetTypeCombo(next.street);
+        break;
+      case "houseNumberLetter":
+        next.street = applyHouseNumberLetter(next.street);
         break;
       case "addUnit":
         next.unit = substituteUnitFormat(rule.unitFormat ?? "Apt {random}");

@@ -341,7 +341,11 @@ export async function seedDefaults(
 
   for (const preset of jigPresets) {
     const existing = storedPresets[preset.id];
-    if (!existing || existing.name !== preset.name) {
+    if (
+      !existing ||
+      existing.name !== preset.name ||
+      (existing.description ?? "") !== (preset.description ?? "")
+    ) {
       storedPresets[preset.id] = preset;
       presetsChanged = true;
     }

@@ -27,6 +27,7 @@ export const ADDRESS_RULE_LABELS: Record<AddressRule["type"], string> = {
   suffixRandom: "Random suffix on field",
   streetRandomLetters: "Street random letters",
   streetTypeCombo: "Street type combo (PKC/Target)",
+  houseNumberLetter: "House number letter",
 };
 
 export const AFFIX_MODE_LABELS: Record<StreetAffixMode, string> = {
@@ -49,6 +50,7 @@ export const RECOMMENDED_ADDRESS_JIG_IDS = [
   "builtin-street-random-letters",
   "builtin-street-prefix-letters",
   "builtin-street-suffix-letters",
+  "builtin-house-number-letter",
   "builtin-street-type-combo",
   "builtin-random-unit-line",
   "builtin-address-misspell",

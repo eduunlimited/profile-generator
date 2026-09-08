@@ -25,7 +25,8 @@ import {
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
 } from "./profileCategoryUtils";
 import { toStoredImapHeaders } from "./imapInbox";
-import { finalizeParsedOrder } from "./orderEmail/merge";
+import { canonicalizeOrderId, orderRecordId } from "./orderEmail/classify";
+import { finalizeParsedOrder, upsertParsedOrders } from "./orderEmail/merge";
 import { repairUtf8Mojibake } from "./orderEmail/parse";
 import {
   ensureDataKey,
@@ -1204,15 +1205,15 @@ export async function compactImapMailIfNeeded(): Promise<void> {
 }
 
 function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): ParsedOrder | null {
-  const orderId = raw.orderId?.trim() ?? "";
-  const id = raw.id?.trim() || (orderId ? `target:${orderId}` : "");
-  if (!id || !orderId) return null;
+  const retailer: OrderRetailer =
+    raw.retailer === "walmart" || raw.retailer === "pokemon-center" ? raw.retailer : "target";
+  const orderId = canonicalizeOrderId(raw.orderId ?? "") || canonicalizeOrderId(raw.id ?? "");
+  if (!orderId) return null;
+  const id = orderRecordId(retailer, orderId);
   const events = Array.isArray(raw.events)
     ? raw.events.filter((event) => event && event.uid && event.kind && event.accountId)
     : [];
   if (!events.some((event) => event.kind === "placed")) return null;
-  const retailer: OrderRetailer =
-    raw.retailer === "walmart" || raw.retailer === "pokemon-center" ? raw.retailer : "target";
   return finalizeParsedOrder({
     id,
     retailer,
@@ -1234,6 +1235,10 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
             .map((item) => ({
               name: repairUtf8Mojibake(String(item?.name ?? "").trim()),
               quantity: Number(item?.quantity),
+              price:
+                typeof item?.price === "number" && Number.isFinite(item.price) && item.price > 0
+                  ? item.price
+                  : undefined,
             }))
             .filter((item) => item.name.length > 0 && Number.isFinite(item.quantity) && item.quantity > 0)
         : [];
@@ -1250,18 +1255,19 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
 
 export async function listOrders(): Promise<ParsedOrder[]> {
   await ensureDataKey(KEYS.orders);
-  return Object.values(readMap<Partial<ParsedOrder>>(KEYS.orders))
+  const orders = Object.values(readMap<Partial<ParsedOrder>>(KEYS.orders))
     .map((raw) => normalizeParsedOrder(raw ?? {}))
-    .filter((order): order is ParsedOrder => order != null)
-    .sort((a, b) => Date.parse(b.placedAt) - Date.parse(a.placedAt) || b.orderId.localeCompare(a.orderId));
+    .filter((order): order is ParsedOrder => order != null);
+  return upsertParsedOrders([], orders);
 }
 
 export async function saveOrders(orders: ParsedOrder[]): Promise<void> {
+  const folded = upsertParsedOrders(
+    [],
+    orders.map((raw) => normalizeParsedOrder(raw)).filter((order): order is ParsedOrder => order != null),
+  );
   const map: Record<string, ParsedOrder> = {};
-  for (const raw of orders) {
-    const order = normalizeParsedOrder(raw);
-    if (order) map[order.id] = order;
-  }
+  for (const order of folded) map[order.id] = order;
   writeMap(KEYS.orders, map);
   await persistMap();
 }

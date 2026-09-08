@@ -155,8 +155,11 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
     setUpdateBusy(true);
     setUpdateStatus({ tone: "ok", text: "Checking…" });
     try {
-      await checkForAppUpdates();
-      setUpdateStatus({ tone: "ok", text: "Check complete." });
+      const result = await checkForAppUpdates();
+      setUpdateStatus({
+        tone: "ok",
+        text: result.available ? "An update is available." : "You are running the latest version.",
+      });
     } catch (error) {
       setUpdateStatus({ tone: "error", text: formatError(error, "Could not check for updates.") });
     } finally {

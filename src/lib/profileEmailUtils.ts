@@ -3,7 +3,7 @@ import { parseCardNumberDigits } from "./creditCardUtils";
 import { normalizeUsPhone } from "./phoneUtils";
 import type { Profile, ProfileName } from "./types";
 
-export const ACCOUNT_SITES = ["Target", "Walmart"] as const;
+export const ACCOUNT_SITES = ["Target", "Walmart", "Pokemon Center"] as const;
 export type AccountSite = (typeof ACCOUNT_SITES)[number];
 
 export const DEFAULT_ACCOUNT_SITE: AccountSite = "Target";

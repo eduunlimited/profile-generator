@@ -10,6 +10,7 @@ import {
   ORDER_SITES,
   orderEmailKey,
   orderInPeriod,
+  orderTableItem,
   PARSED_ORDER_SITES,
   refreshTargetOrders,
   repairUtf8Mojibake,
@@ -68,13 +69,25 @@ function orderItems(order: ParsedOrder): OrderLineItem[] {
 function formatItemNames(order: ParsedOrder): string {
   const items = orderItems(order);
   if (items.length === 0) return "—";
+  if (order.retailer === "pokemon-center") {
+    return orderTableItem({ ...order, items })?.name ?? items[0].name;
+  }
   return items.map((item) => item.name).join(", ");
 }
 
 function formatItemQty(order: ParsedOrder): string {
   const items = orderItems(order);
   if (items.length === 0) return "—";
+  if (order.retailer === "pokemon-center") {
+    return String(items.reduce((sum, item) => sum + item.quantity, 0));
+  }
   return items.map((item) => String(item.quantity)).join(", ");
+}
+
+function itemSearchText(order: ParsedOrder): string {
+  return orderItems(order)
+    .map((item) => item.name)
+    .join(" ");
 }
 
 function cardNameByEmailMap(profiles: ProfileSummary[], poolEmails: PoolEmail[]): Map<string, string> {
@@ -103,10 +116,10 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
   const [query, setQuery] = useState("");
   const [listFilter, setListFilter] = useState<OrderListFilter>("all");
   const [emailFilter, setEmailFilter] = useState<string | null>(null);
-  const [spendPeriod, setSpendPeriod] = useState<SpendPeriod>("1m");
+  const [spendPeriod, setSpendPeriod] = useState<SpendPeriod>("3m");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Scan IMAP for Target confirmation emails.");
+  const [status, setStatus] = useState("Scan IMAP for Target and Pokemon Center confirmation emails.");
   const [tone, setTone] = useState<"ok" | "error">("ok");
   const busyRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
@@ -116,7 +129,7 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    setStatus(hourly ? "Hourly order refresh…" : "Scanning Target confirmation emails…");
+    setStatus(hourly ? "Hourly order refresh…" : "Scanning confirmation emails…");
     setTone("ok");
     try {
       const result = await refreshTargetOrders();
@@ -204,6 +217,7 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
           order.trackingNumber ?? "",
           order.recipientEmail ?? "",
           formatItemNames(order),
+          itemSearchText(order),
           formatItemQty(order),
           cardNameFor(order),
           order.total != null ? formatTotal(order) : "",
@@ -370,9 +384,11 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
             <p className="table-empty">
               {siteFilter !== "all" && !PARSED_ORDER_SITES.has(siteFilter)
                 ? `${siteFilterLabel(siteFilter)} order emails are not parsed yet.`
-                : orders.length === 0
-                  ? "No Target orders with a confirmation email yet. Refresh to scan the loaded mail."
-                  : "No orders match this filter or timeframe."}
+                : siteOrders.length > 0
+                  ? `No ${siteFilterLabel(siteFilter)} orders in this timeframe. ${siteOrders.length} older order(s) are outside ${periodLabel}.`
+                  : orders.length === 0
+                    ? "No orders with a confirmation email yet. Refresh to scan the loaded mail."
+                    : "No orders match this filter or timeframe."}
             </p>
           ) : (
             <table className="profiles-table orders-table">
@@ -421,7 +437,7 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
                       <td className="orders-email-cell" title={order.recipientEmail || undefined}>
                         {order.recipientEmail || "—"}
                       </td>
-                      <td className="orders-item-cell" title={formatItemNames(order)}>
+                      <td className="orders-item-cell" title={itemSearchText(order) || formatItemNames(order)}>
                         {formatItemNames(order)}
                       </td>
                       <td>{formatItemQty(order)}</td>

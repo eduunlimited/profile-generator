@@ -373,18 +373,81 @@ export async function fetchImapInbox(
   return invoke<import("./types").ImapMessage[]>("fetch_imap_inbox", { settings, limit, offset });
 }
 
-export async function fetchImapMessage(settings: import("./types").ImapSettings, uid: number) {
-  if (!isTauriRuntime()) {
-    throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
+async function fetchImapMessagesFromDevServer(
+  settings: import("./types").ImapSettings,
+  uids: number[],
+): Promise<import("./types").ImapMessage[]> {
+  const response = await fetch("/__imap/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings, uids }),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | import("./types").ImapMessage[]
+    | { error?: string }
+    | null;
+  if (!response.ok) {
+    const message =
+      payload && !Array.isArray(payload) && payload.error?.trim()
+        ? payload.error
+        : "IMAP reading needs the desktop app, or the local Vite IMAP helper.";
+    throw new Error(message);
   }
-  return invoke<import("./types").ImapMessage>("fetch_imap_message", { settings, uid });
+  return Array.isArray(payload) ? payload : [];
+}
+
+export async function fetchImapMessage(settings: import("./types").ImapSettings, uid: number) {
+  if (isTauriRuntime()) {
+    return invoke<import("./types").ImapMessage>("fetch_imap_message", { settings, uid });
+  }
+  const [message] = await fetchImapMessagesFromDevServer(settings, [uid]);
+  if (!message) {
+    throw new Error(`Could not load message ${uid}.`);
+  }
+  return message;
+}
+
+export async function fetchImapMessages(
+  settings: import("./types").ImapSettings,
+  uids: number[],
+): Promise<import("./types").ImapMessage[]> {
+  const unique = [...new Set(uids.filter((uid) => Number.isFinite(uid) && uid > 0))];
+  if (unique.length === 0) return [];
+  if (!isTauriRuntime()) {
+    return fetchImapMessagesFromDevServer(settings, unique);
+  }
+  const messages: import("./types").ImapMessage[] = [];
+  for (const uid of unique) {
+    try {
+      messages.push(await fetchImapMessage(settings, uid));
+    } catch {
+      // Keep going; the caller reports how many bodies were missing.
+    }
+  }
+  return messages;
 }
 
 export async function searchImapHeaders(settings: import("./types").ImapSettings, subjects: string[]) {
-  if (!isTauriRuntime()) {
-    throw new Error("IMAP reading needs the desktop app. Run npm run tauri dev.");
+  if (isTauriRuntime()) {
+    return invoke<import("./types").ImapMessage[]>("search_imap_headers", { settings, subjects });
   }
-  return invoke<import("./types").ImapMessage[]>("search_imap_headers", { settings, subjects });
+  const response = await fetch("/__imap/headers", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings, subjects }),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | import("./types").ImapMessage[]
+    | { error?: string }
+    | null;
+  if (!response.ok) {
+    const message =
+      payload && !Array.isArray(payload) && payload.error?.trim()
+        ? payload.error
+        : "IMAP reading needs the desktop app, or the local Vite IMAP helper.";
+    throw new Error(message);
+  }
+  return Array.isArray(payload) ? payload : [];
 }
 
 export async function listOrders() {

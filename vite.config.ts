@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import { imapDevPlugin } from "./vite-plugin-imap";
 import { localDataPlugin } from "./vite-plugin-local-data";
 
 // @ts-expect-error process is a nodejs global
@@ -9,7 +10,7 @@ const openAiApiKey = process.env.OPENAI_API_KEY || process.env.VITE_OPENAI_API_K
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [react(), localDataPlugin()],
+  plugins: [react(), localDataPlugin(), imapDevPlugin()],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //

@@ -1,13 +1,15 @@
 import { normalizeMailboxEmail } from "../imapInbox";
 import type { OrderEvent, OrderFulfillment, OrderStatus, ParsedOrder } from "../types";
 import {
+  canonicalizeOrderId,
+  classifyPokemonCenterMessage,
   classifyTargetMessage,
   isTargetPickupConfirmationText,
   orderRecordId,
   type ClassifiedOrderMessage,
 } from "./classify";
 import { sortOrdersByPlaced } from "./dashboard";
-import { extractOrderTotal, extractTrackingNumber } from "./parse";
+import { extractOrderItems, extractOrderTotal, extractTrackingNumber, mergeOrderItems } from "./parse";
 
 const STATUS_RANK: Record<OrderStatus, number> = {
   placed: 1,
@@ -65,12 +67,14 @@ export function classifyStoredMessage(
   accountId: string,
   message: ClassifiedOrderMessage["message"] & { dateMs?: number },
 ): ClassifiedOrderMessage | null {
-  const classified = classifyTargetMessage(
-    message.subject ?? "",
-    message.snippet ?? "",
-    message.body ?? "",
-    message.htmlBody ?? "",
-  );
+  const parts = [message.snippet ?? "", message.body ?? "", message.htmlBody ?? ""];
+  const target = classifyTargetMessage(message.subject ?? "", ...parts);
+  const pokemon = target ? null : classifyPokemonCenterMessage(message.subject ?? "", ...parts);
+  const classified = target
+    ? { ...target, retailer: "target" as const }
+    : pokemon
+      ? { ...pokemon, retailer: "pokemon-center" as const }
+      : null;
   if (!classified) return null;
   const parsed = Date.parse(message.date);
   const dateMs =
@@ -80,9 +84,9 @@ export function classifyStoredMessage(
         ? parsed
         : 0;
   return {
-    retailer: "target",
+    retailer: classified.retailer,
     kind: classified.kind,
-    orderId: classified.orderId,
+    orderId: canonicalizeOrderId(classified.orderId),
     accountId,
     message,
     dateMs,
@@ -134,7 +138,15 @@ function groupFulfillment(group: ClassifiedOrderMessage[]): OrderFulfillment | u
   return undefined;
 }
 
+function withCanonicalIds(order: ParsedOrder): ParsedOrder {
+  const orderId = canonicalizeOrderId(order.orderId);
+  return { ...order, orderId, id: orderRecordId(order.retailer, orderId) };
+}
+
 function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrder | null {
+  const retailer = group.find((item) => item.kind === "placed")?.retailer ?? group[0]?.retailer;
+  if (!retailer) return null;
+  orderId = canonicalizeOrderId(orderId);
   const placed = group.filter((item) => item.kind === "placed").sort((a, b) => a.dateMs - b.dateMs);
   if (placed.length === 0) return null;
   const events = [...group]
@@ -160,20 +172,29 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
         shipped.message.htmlBody ?? "",
       )
     : undefined;
+  const items = group.reduce(
+    (current, item) =>
+      mergeOrderItems(
+        current,
+        extractOrderItems(item.message.htmlBody ?? "", item.message.body ?? "", item.message.snippet ?? ""),
+      ),
+    undefined as { name: string; quantity: number }[] | undefined,
+  );
   const withEmail = [...placed, ...group]
     .map((item) => orderRecipientEmail(item.message))
     .find(Boolean);
   const placedAt = new Date(placed[0].dateMs || Date.parse(placed[0].message.date) || Date.now()).toISOString();
   const updatedMs = Math.max(...orderedEvents.map((event) => event.dateMs), placed[0].dateMs);
   return finalizeParsedOrder({
-    id: orderRecordId("target", orderId),
-    retailer: "target",
+    id: orderRecordId(retailer, orderId),
+    retailer,
     orderId,
     status: "placed",
     fulfillment: groupFulfillment(group),
     total,
     currency: total != null ? "USD" : undefined,
     trackingNumber,
+    items,
     recipientEmail: withEmail,
     events: orderedEvents,
     placedAt,
@@ -184,25 +205,27 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
 export function mergeClassifiedOrders(classified: ClassifiedOrderMessage[]): ParsedOrder[] {
   const groups = new Map<string, ClassifiedOrderMessage[]>();
   for (const item of classified) {
-    const list = groups.get(item.orderId) ?? [];
+    const key = orderRecordId(item.retailer, item.orderId);
+    const list = groups.get(key) ?? [];
     list.push(item);
-    groups.set(item.orderId, list);
+    groups.set(key, list);
   }
   const orders: ParsedOrder[] = [];
-  for (const [orderId, group] of groups) {
-    const order = buildOrder(orderId, group);
+  for (const group of groups.values()) {
+    const order = buildOrder(canonicalizeOrderId(group[0].orderId), group);
     if (order) orders.push(order);
   }
   return sortOrdersByPlaced(orders);
 }
 
 export function upsertParsedOrders(existing: ParsedOrder[], incoming: ParsedOrder[]): ParsedOrder[] {
-  const byId = new Map(existing.map((order) => [order.id, order]));
-  for (const next of incoming) {
+  const byId = new Map<string, ParsedOrder>();
+  const fold = (raw: ParsedOrder) => {
+    const next = withCanonicalIds(raw);
     const previous = byId.get(next.id);
     if (!previous) {
       byId.set(next.id, finalizeParsedOrder(next));
-      continue;
+      return;
     }
     const events = new Map<string, OrderEvent>();
     for (const event of previous.events) events.set(eventKey(event), event);
@@ -218,18 +241,22 @@ export function upsertParsedOrders(existing: ParsedOrder[], incoming: ParsedOrde
       finalizeParsedOrder({
         ...previous,
         ...next,
+        id: next.id,
+        orderId: next.orderId,
         fulfillment: next.fulfillment ?? previous.fulfillment,
         total: next.total ?? previous.total,
         currency: next.total != null ? (next.currency ?? "USD") : previous.currency,
         trackingNumber: next.trackingNumber ?? previous.trackingNumber,
-        items: next.items && next.items.length > 0 ? next.items : previous.items,
+        items: mergeOrderItems(previous.items, next.items ?? []) ?? next.items ?? previous.items,
         recipientEmail: next.recipientEmail ?? previous.recipientEmail,
         events: mergedEvents,
         placedAt: previous.placedAt || next.placedAt,
         updatedAt: new Date(updatedMs || Date.now()).toISOString(),
       }),
     );
-  }
+  };
+  for (const order of existing) fold(order);
+  for (const order of incoming) fold(order);
   return sortOrdersByPlaced([...byId.values()].map(finalizeParsedOrder));
 }
 
@@ -238,19 +265,31 @@ export function attachClassifiedEvents(
   classified: ClassifiedOrderMessage[],
 ): ParsedOrder[] {
   if (classified.length === 0) return orders.map(finalizeParsedOrder);
-  const byOrderId = new Map(orders.map((order) => [order.orderId, order]));
+  const byOrderId = new Map(orders.map((order) => [order.id, order]));
   for (const item of classified) {
-    const previous = byOrderId.get(item.orderId);
+    const previous = byOrderId.get(orderRecordId(item.retailer, item.orderId));
     if (!previous) continue;
     const event = toEvent(item);
     if (previous.events.some((existing) => eventKey(existing) === eventKey(event))) continue;
     const events = [...previous.events, event].sort((a, b) => a.dateMs - b.dateMs || a.uid - b.uid);
     const updatedMs = Math.max(Date.parse(previous.updatedAt) || 0, item.dateMs);
+    const trackingNumber =
+      previous.trackingNumber ||
+      (item.kind === "shipped" || item.kind === "delivered"
+        ? extractTrackingNumber(
+            item.orderId,
+            item.message.subject,
+            item.message.snippet ?? "",
+            item.message.body ?? "",
+            item.message.htmlBody ?? "",
+          )
+        : undefined);
     byOrderId.set(
-      item.orderId,
+      previous.id,
       finalizeParsedOrder({
         ...previous,
-        fulfillment: item.kind === "picked_up" ? "pickup" : previous.fulfillment,
+        fulfillment: item.kind === "picked_up" ? "pickup" : previous.fulfillment ?? "delivery",
+        trackingNumber,
         events,
         updatedAt: new Date(updatedMs || Date.now()).toISOString(),
       }),

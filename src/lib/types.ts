@@ -540,6 +540,7 @@ export interface OrderEvent {
 export interface OrderLineItem {
   name: string;
   quantity: number;
+  price?: number;
 }
 
 export interface ParsedOrder {

@@ -18,7 +18,7 @@ export const PERFORMANCE_SITES: { id: OrderRetailer; label: string }[] = [
   { id: "pokemon-center", label: "Pokemon Center" },
 ];
 
-export const PARSED_ORDER_SITES = new Set<OrderRetailer>(["target"]);
+export const PARSED_ORDER_SITES = new Set<OrderRetailer>(["target", "pokemon-center"]);
 
 export function retailerLabel(retailer: OrderRetailer): string {
   if (retailer === "walmart") return "Walmart";

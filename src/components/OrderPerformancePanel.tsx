@@ -97,7 +97,7 @@ export function OrderPerformancePanel({
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    setStatus("Scanning Target confirmation emails…");
+    setStatus("Scanning confirmation emails…");
     setTone("ok");
     try {
       const result = await refreshTargetOrders();

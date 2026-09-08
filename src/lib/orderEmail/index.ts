@@ -1,12 +1,33 @@
 export {
   TARGET_SEARCH_SUBJECTS,
+  POKEMON_CENTER_SEARCH_SUBJECTS,
+  ORDER_SEARCH_SUBJECTS,
   classifyTargetSubject,
   classifyTargetMessage,
+  classifyPokemonCenterMessage,
   extractTargetOrderId,
+  extractPokemonCenterOrderId,
+  canonicalizeOrderId,
+  orderRecordId,
   extractTargetPickupLastFour,
+  isTargetPickupSubject,
   isTargetPickupConfirmationText,
+  isPokemonCenterConfirmationSubject,
+  isPokemonCenterCancelledSubject,
+  isPokemonCenterShippedSubject,
+  isPokemonCenterDeliveredSubject,
+  isPokemonCenterOrderSubject,
 } from "./classify";
-export { extractOrderTotal, extractTrackingNumber, extractOrderItems, repairUtf8Mojibake } from "./parse";
+export {
+  extractOrderTotal,
+  extractTrackingNumber,
+  extractOrderItems,
+  extractPokemonCenterItems,
+  itemsLookIncomplete,
+  mergeOrderItems,
+  orderTableItem,
+  repairUtf8Mojibake,
+} from "./parse";
 export {
   classifyStoredMessage,
   mergeClassifiedOrders,

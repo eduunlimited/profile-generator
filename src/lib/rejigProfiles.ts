@@ -254,9 +254,10 @@ export async function rejigProfiles(
         incrementCategoryStreetUse(occupiedByCategory, categoryId, fingerprint);
       }
 
-      let phone = profile.phone ?? master.phone ?? "";
+      let phone = profile.phone;
       if (params.phoneJigLastFour) {
-        const baseDigits = normalizeUsPhone(master.phone ?? profile.phone ?? "");
+        const phoneBase = profile.phone ?? master.phone ?? "";
+        const baseDigits = normalizeUsPhone(phoneBase);
         if (baseDigits.length < 4) {
           if (attempt >= maxAttempts - 1) {
             failedIds.push(profile.id);
@@ -273,26 +274,36 @@ export async function rejigProfiles(
         }
 
         occupiedPhoneLastFours.add(lastFour);
-        phone = applyPhoneLastFourJig(master.phone ?? profile.phone ?? "", lastFour);
+        phone = applyPhoneLastFourJig(phoneBase, lastFour);
       }
+
+      const nextName = namePreset ? jigged.name : profile.name;
+      const nameLabel = namePreset?.name ?? profile.nameJigPresetName;
+      const addressLabel = hasAddressJig ? addressJig.label : profile.addressJigPresetName;
 
       merged = {
         ...profile,
-        nameJigPresetId: namePreset?.id,
-        nameJigPresetName: namePreset?.name,
-        addressJigPresetIds: addressJig.presetIds.length > 0 ? addressJig.presetIds : undefined,
-        addressJigPresetName: addressJig.label,
-        jigPresetName:
-          [namePreset?.name, addressJig.label].filter(Boolean).join(" + ") || undefined,
-        name: jigged.name,
-        address,
-        phone,
-        cardHolderName: namePreset
-          ? `${jigged.name.first} ${jigged.name.last}`.trim()
-          : profile.cardHolderSameAsShipping !== false
-            ? billingFullName({ ...profile, name: jigged.name })
-            : profile.cardHolderName,
-        addressCheck: undefined,
+        ...(namePreset
+          ? {
+              nameJigPresetId: namePreset.id,
+              nameJigPresetName: namePreset.name,
+              name: nextName,
+              cardHolderName:
+                profile.cardHolderSameAsShipping !== false
+                  ? billingFullName({ ...profile, name: nextName })
+                  : profile.cardHolderName,
+            }
+          : {}),
+        ...(hasAddressJig
+          ? {
+              addressJigPresetIds: addressJig.presetIds.length > 0 ? addressJig.presetIds : undefined,
+              addressJigPresetName: addressJig.label,
+              address,
+              addressCheck: undefined,
+            }
+          : {}),
+        ...(params.phoneJigLastFour ? { phone } : {}),
+        jigPresetName: [nameLabel, addressLabel].filter(Boolean).join(" + ") || undefined,
         updatedAt: now,
       };
       break;

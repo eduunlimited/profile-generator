@@ -302,21 +302,15 @@ export function GeneratePanel({
           <div className="generate-modal-jig-row">
             <div className="generate-modal-name-jigs">
               <Field label="Name jig" hint="One fat-finger typo per selected name part">
-                <div className="jig-option-block">
-                  <select value={nameJigPresetId} onChange={(e) => setNameJigPresetId(e.target.value)}>
-                    <option value="">None (use master name)</option>
-                    {sortedNamePresets.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.name}
-                      </option>
-                    ))}
-                  </select>
-                  <NameMisspellScopeField
-                    enabled={Boolean(nameJigPresetId)}
-                    scope={nameMisspellScope}
-                    onScopeChange={setNameMisspellScope}
-                  />
-                </div>
+                <NameMisspellScopeField
+                  enabled={Boolean(nameJigPresetId)}
+                  scope={nameMisspellScope}
+                  radioName="generate-name-misspell-scope"
+                  onEnabledChange={(enabled) =>
+                    setNameJigPresetId(enabled ? (sortedNamePresets[0]?.id ?? "builtin-name-misspell") : "")
+                  }
+                  onScopeChange={setNameMisspellScope}
+                />
               </Field>
               <Field label="Phone jig" hint="Keeps area code and prefix; randomizes last 4">
                 <PhoneLastFourJigField enabled={phoneJigLastFour} onEnabledChange={setPhoneJigLastFour} />

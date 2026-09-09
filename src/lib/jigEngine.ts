@@ -265,7 +265,9 @@ function randomUpperLetters(count: number): string {
 function applyStreetRandomLetters(street: string, rule: AddressRule): string {
   const count = rule.charCount ?? randomInt(1, 4);
   const mode = rule.affixMode ?? "both";
-  let value = street.trim();
+  const tokens = tokenizeStreet(street);
+  const { core } = peelRandomLetterBlocks(tokens);
+  let value = core.join(" ").trim() || street.trim();
   if (mode === "prefix" || mode === "both") {
     value = `${randomUpperLetters(count)} ${value}`;
   }
@@ -606,20 +608,18 @@ export function applyLocalJigRulesToMaster(
   );
 }
 
-/** Re-jig: keep the profile name. Line-2 jigs stay on the current address; line-1 jigs start from the master. */
+/** Re-jig: apply only the selected rules to the current profile name and address. */
 export function applyLocalJigRulesToProfile(
   profile: Profile,
-  master: MasterProfile,
+  _master: MasterProfile,
   namePreset: JigPreset | null,
   addressPresets: JigPreset[],
   addressRulesOverride?: AddressRule[],
   nameMisspellScope: NameMisspellScope = "both",
 ): LocalJigSlot {
-  const addressRules = resolveAddressRules(addressPresets, addressRulesOverride);
-  const addressBase = addressRulesChangeStreetLine(addressRules) ? master.address : profile.address;
   return buildLocalJigSlot(
     profile.name,
-    addressBase,
+    profile.address,
     namePreset,
     addressPresets,
     addressRulesOverride,

@@ -18,6 +18,7 @@ import type {
   RejigProfilesResult,
   StreetAffixMode,
 } from "../lib/types";
+import type { JigPreviewBase } from "./JigAddressPreview";
 import { Field } from "./ui";
 
 interface RejigPanelProps {
@@ -68,14 +69,45 @@ export function RejigPanel({
     return masterProfiles[0] ?? null;
   }, [masterProfiles, selectedProfiles]);
 
+  const previewBase = useMemo((): JigPreviewBase | null => {
+    const summary = selectedProfiles[0];
+    if (!summary || !previewMaster) return null;
+    const tokens = summary.billingFullName.trim().split(/\s+/).filter(Boolean);
+    const first = tokens[0] || previewMaster.name.first;
+    const last = tokens.slice(1).join(" ") || previewMaster.name.last;
+    return {
+      name: {
+        first,
+        last,
+        full: summary.billingFullName.trim() || `${first} ${last}`.trim(),
+      },
+      address: {
+        street: summary.billingAddressLine1,
+        unit: summary.billingAddressLine2.trim() || undefined,
+        city: summary.city,
+        state: summary.state,
+        postalCode: summary.postalCode ?? "",
+        country: previewMaster.address.country,
+      },
+      phone: summary.billingPhone || previewMaster.phone,
+    };
+  }, [previewMaster, selectedProfiles]);
+
+  const hasAddressJigSelected = streetRandomLettersEnabled || addressJigPresetIds.length > 0;
+  const hasSelectedJig = Boolean(nameJigPresetId) || phoneJigLastFour || hasAddressJigSelected;
   const canRejig = selectedCount > 0 && selectedProfiles.every((profile) => profile.masterProfileId);
+  const canSubmit = canRejig && hasSelectedJig;
 
   const run = async () => {
     if (!canRejig) {
       setStatus("Selected profiles must be linked to a master profile.");
       return;
     }
-    if (untilPass && geocodioConfigured && addressJigPresetIds.length === 0 && !streetRandomLettersEnabled) {
+    if (!hasSelectedJig) {
+      setStatus("Select at least one jig to re-jig.");
+      return;
+    }
+    if (untilPass && geocodioConfigured && !hasAddressJigSelected) {
       setStatus("Select at least one address jig to re-jig until pass.");
       return;
     }
@@ -133,21 +165,15 @@ export function RejigPanel({
           <div className="generate-modal-jig-row">
             <div className="generate-modal-name-jigs">
               <Field label="Name jig" hint="One fat-finger typo per selected name part">
-                <div className="jig-option-block">
-                  <select value={nameJigPresetId} onChange={(event) => setNameJigPresetId(event.target.value)}>
-                    <option value="">None (keep current name)</option>
-                    {sortedNamePresets.map((preset) => (
-                      <option key={preset.id} value={preset.id}>
-                        {preset.name}
-                      </option>
-                    ))}
-                  </select>
-                  <NameMisspellScopeField
-                    enabled={Boolean(nameJigPresetId)}
-                    scope={nameMisspellScope}
-                    onScopeChange={setNameMisspellScope}
-                  />
-                </div>
+                <NameMisspellScopeField
+                  enabled={Boolean(nameJigPresetId)}
+                  scope={nameMisspellScope}
+                  radioName="rejig-name-misspell-scope"
+                  onEnabledChange={(enabled) =>
+                    setNameJigPresetId(enabled ? (sortedNamePresets[0]?.id ?? "builtin-name-misspell") : "")
+                  }
+                  onScopeChange={setNameMisspellScope}
+                />
               </Field>
               <Field label="Phone jig" hint="Keeps area code and prefix; randomizes last 4">
                 <PhoneLastFourJigField enabled={phoneJigLastFour} onEnabledChange={setPhoneJigLastFour} />
@@ -182,6 +208,7 @@ export function RejigPanel({
         <div className="generate-modal-preview">
           <JigAddressPreview
             master={previewMaster}
+            base={previewBase}
             nameJigPresetId={nameJigPresetId}
             nameMisspellScope={nameMisspellScope}
             phoneJigLastFour={phoneJigLastFour}
@@ -199,22 +226,24 @@ export function RejigPanel({
           <label className="checkbox-row">
             <input
               type="checkbox"
-              checked={untilPass && geocodioConfigured}
-              disabled={!geocodioConfigured || busy}
+              checked={untilPass && geocodioConfigured && hasAddressJigSelected}
+              disabled={!geocodioConfigured || !hasAddressJigSelected || busy}
               onChange={(event) => setUntilPass(event.target.checked)}
             />
             <span>Re-jig until pass</span>
           </label>
           <p className="muted jig-option-hint">
-            {geocodioConfigured
-              ? "Keeps re-jigging Fail/Warn addresses up to 5 times until Geocodio Pass"
-              : "Set a Geocodio API key in Settings first"}
+            {!geocodioConfigured
+              ? "Set a Geocodio API key in Settings first"
+              : !hasAddressJigSelected
+                ? "Select an address jig to re-jig until pass"
+                : "Keeps re-jigging Fail/Warn addresses up to 5 times until Geocodio Pass"}
           </p>
         </div>
         <button
           type="button"
           className="btn-primary"
-          disabled={busy || !canRejig}
+          disabled={busy || !canSubmit}
           aria-busy={busy}
           onClick={() => void run()}
         >

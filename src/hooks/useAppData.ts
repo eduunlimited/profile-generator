@@ -606,6 +606,10 @@ export function useAppData() {
         ? jigPresets.find((p) => p.id === options.nameJigPresetId) ?? getJigPresetById(options.nameJigPresetId) ?? null
         : null;
       const addressJig = resolveAddressJigFromGenerateOptions(options, jigPresets);
+      const hasAddressJig = addressJig.rules.some((rule) => rule.type !== "splitLines");
+      if (!namePreset && !hasAddressJig && !options.phoneJigLastFour) {
+        throw new Error("Select at least one jig to re-jig.");
+      }
       if (options.untilPass) {
         const settings = await getGeocodioSettings();
         if (!settings.apiKey.trim()) {
@@ -669,10 +673,12 @@ export function useAppData() {
             message,
           };
         }
-        void enqueueAddressVerify(
-          updated.map((profile) => profile.id),
-          { requireKey: false },
-        );
+        if (hasAddressJig) {
+          void enqueueAddressVerify(
+            updated.map((profile) => profile.id),
+            { requireKey: false },
+          );
+        }
       }
 
       if (updated.length === 0 && failedIds.length > 0) {

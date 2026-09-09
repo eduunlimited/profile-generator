@@ -506,6 +506,13 @@ button:disabled {
   background: rgba(57, 255, 20, 0.22);
 }
 
+.btn-primary:disabled {
+  opacity: 1;
+  border-color: #3a3a3a;
+  background: #1a1a1a;
+  color: var(--text-muted);
+}
+
 .btn-secondary {
   border: 1px solid var(--cyan);
   background: transparent;

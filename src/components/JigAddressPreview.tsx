@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   applyLocalJigRulesToMaster,
+  applyLocalJigRulesToProfile,
   finalizeJigFromLocalAndMisspell,
+  finalizeRejigFromLocalAndMisspell,
   formatAddress,
   type LocalJigSlot,
 } from "../lib/jigEngine";
@@ -18,14 +20,23 @@ import type {
   GenerateFromMasterOptions,
   JigPreset,
   MasterProfile,
+  Profile,
   ProfileAddress,
   ProfileName,
   NameMisspellScope,
   StreetAffixMode,
 } from "../lib/types";
 
+export interface JigPreviewBase {
+  name: ProfileName;
+  address: ProfileAddress;
+  phone?: string;
+}
+
 interface JigAddressPreviewProps {
   master: MasterProfile | null;
+  /** When set, preview applies selected jigs to this current profile instead of the master. */
+  base?: JigPreviewBase | null;
   nameJigPresetId: string;
   nameMisspellScope: NameMisspellScope;
   phoneJigLastFour: boolean;
@@ -67,6 +78,25 @@ function formatPreviewBlock(
   return lines.join("\n");
 }
 
+function previewProfileFromBase(base: JigPreviewBase): Profile {
+  return {
+    id: "preview",
+    locale: "en_US",
+    email: "",
+    categoryId: "",
+    accountStatus: "good",
+    notes: "",
+    name: base.name,
+    address: base.address,
+    phone: base.phone,
+    payment: { number: "", expiry: "", cvv: "", brand: "" },
+    credentialIds: [],
+    logins: [],
+    createdAt: "",
+    updatedAt: "",
+  };
+}
+
 function buildSamplePreviewText(
   master: MasterProfile,
   local: LocalJigSlot,
@@ -74,20 +104,31 @@ function buildSamplePreviewText(
   namePreset: JigPreset | null,
   hasNameJig: boolean,
   hasPhoneJig: boolean,
+  hasAddressJig: boolean,
+  base?: JigPreviewBase | null,
 ): string {
-  const jigged = finalizeJigFromLocalAndMisspell(master, local, misspell, namePreset);
-  let samplePhone = master.phone ?? "";
+  const sourcePhone = base?.phone ?? master.phone ?? "";
+  const jigged = base
+    ? finalizeRejigFromLocalAndMisspell(
+        previewProfileFromBase(base),
+        master,
+        local,
+        misspell,
+        namePreset,
+      )
+    : finalizeJigFromLocalAndMisspell(master, local, misspell, namePreset);
+  const address = hasAddressJig || !base ? jigged.address : base.address;
+  let samplePhone = sourcePhone;
   if (hasPhoneJig) {
     const lastFour = randomUniquePhoneLastFour(new Set());
-    samplePhone = lastFour
-      ? applyPhoneLastFourJig(master.phone ?? "", lastFour)
-      : master.phone ?? "";
+    samplePhone = lastFour ? applyPhoneLastFourJig(sourcePhone, lastFour) : sourcePhone;
   }
-  return formatPreviewBlock(jigged.name, jigged.address, hasNameJig, samplePhone);
+  return formatPreviewBlock(jigged.name, address, hasNameJig, samplePhone);
 }
 
 export function JigAddressPreview({
   master,
+  base = null,
   nameJigPresetId,
   nameMisspellScope,
   phoneJigLastFour,
@@ -118,6 +159,9 @@ export function JigAddressPreview({
         streetRandomCharCount,
         addressJigPresetIds,
         masterId: master?.id,
+        baseStreet: base?.address.street,
+        baseName: base?.name.full,
+        basePhone: base?.phone,
         previewSeed,
       }),
     [
@@ -129,6 +173,7 @@ export function JigAddressPreview({
       streetRandomCharCount,
       addressJigPresetIds,
       master?.id,
+      base,
       previewSeed,
     ],
   );
@@ -166,11 +211,23 @@ export function JigAddressPreview({
 
     const resolved = resolveAddressJigFromGenerateOptions(generateOptions, jigPresets);
     const hasNameJig = Boolean(namePreset);
-    const hasAddressJigs = resolved.rules.length > 0;
-    const hasPhoneJig = phoneJigLastFour && Boolean(master.phone?.trim());
+    const hasAddressJigs = resolved.rules.some((rule) => rule.type !== "splitLines");
+    const sourceName = base?.name ?? master.name;
+    const sourceAddress = base?.address ?? master.address;
+    const sourcePhone = base?.phone ?? master.phone;
+    const hasPhoneJig = phoneJigLastFour && Boolean(sourcePhone?.trim());
     const hasJigs = hasNameJig || hasAddressJigs || hasPhoneJig;
-    const masterText = formatPreviewBlock(master.name, master.address, false, master.phone);
-    const local = applyLocalJigRulesToMaster(master, namePreset, [], resolved.rules, nameMisspellScope);
+    const masterText = formatPreviewBlock(sourceName, sourceAddress, false, sourcePhone);
+    const local = base
+      ? applyLocalJigRulesToProfile(
+          previewProfileFromBase(base),
+          master,
+          namePreset,
+          [],
+          resolved.rules,
+          nameMisspellScope,
+        )
+      : applyLocalJigRulesToMaster(master, namePreset, [], resolved.rules, nameMisspellScope);
     const needsOpenAi = local.needsNameMisspell || local.needsStreetMisspell;
 
     if (!hasJigs) {
@@ -189,7 +246,16 @@ export function JigAddressPreview({
       setPreview({
         hasJigs: true,
         masterText,
-        sampleText: buildSamplePreviewText(master, local, undefined, namePreset, hasNameJig, hasPhoneJig),
+        sampleText: buildSamplePreviewText(
+          master,
+          local,
+          undefined,
+          namePreset,
+          hasNameJig,
+          hasPhoneJig,
+          hasAddressJigs,
+          base,
+        ),
         hasNameJig,
         loading: false,
         error: null,
@@ -208,7 +274,7 @@ export function JigAddressPreview({
       error: null,
     }));
 
-    const nameParts = namePartsForMisspell(master.name);
+    const nameParts = namePartsForMisspell(sourceName);
     const request = buildMisspellRequest(
       local.needsNameMisspell ? nameParts.first : undefined,
       local.needsNameMisspell ? nameParts.last : undefined,
@@ -227,7 +293,16 @@ export function JigAddressPreview({
         setPreview({
           hasJigs: true,
           masterText,
-          sampleText: buildSamplePreviewText(master, local, misspell, namePreset, hasNameJig, hasPhoneJig),
+          sampleText: buildSamplePreviewText(
+            master,
+            local,
+            misspell,
+            namePreset,
+            hasNameJig,
+            hasPhoneJig,
+            hasAddressJigs,
+            base,
+          ),
           hasNameJig,
           loading: false,
           error: null,
@@ -239,7 +314,16 @@ export function JigAddressPreview({
           setPreview({
             hasJigs: true,
             masterText,
-            sampleText: buildSamplePreviewText(master, local, undefined, namePreset, false, hasPhoneJig),
+            sampleText: buildSamplePreviewText(
+              master,
+              local,
+              undefined,
+              namePreset,
+              false,
+              hasPhoneJig,
+              hasAddressJigs,
+              base,
+            ),
             hasNameJig: false,
             loading: false,
             error:
@@ -289,7 +373,7 @@ export function JigAddressPreview({
       </div>
       <div className="jig-preview-grid">
         <div className="jig-preview-col">
-          <span className="jig-preview-label">Master</span>
+          <span className="jig-preview-label">{base ? "Current" : "Master"}</span>
           <pre className="jig-preview-text">{preview.masterText}</pre>
         </div>
         <div className="jig-preview-col">
@@ -316,7 +400,9 @@ export function JigAddressPreview({
         <p className="muted jig-preview-note">
           {usesOpenAi
             ? "Name and street misspell samples use OpenAI when selected. Other jigs are local. Each profile will differ."
-            : "Preview uses local jigs only. Each generated profile will differ."}
+            : base
+              ? "Only the selected jigs change. Everything else stays as it is now."
+              : "Preview uses local jigs only. Each generated profile will differ."}
         </p>
       ) : null}
     </div>

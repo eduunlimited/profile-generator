@@ -28,6 +28,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # pwsh treats a missing release (gh exit 1) as a failed step otherwise.
+          $PSNativeCommandUseErrorActionPreference = $false
           $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
           if (-not $version) { throw "package.json version is missing." }
           $tag = "v$version"

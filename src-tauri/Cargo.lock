@@ -2959,7 +2959,7 @@ dependencies = [
 
 [[package]]
 name = "profile-generator"
-version = "0.2.66"
+version = "0.2.67"
 dependencies = [
  "imap",
  "imap-proto",

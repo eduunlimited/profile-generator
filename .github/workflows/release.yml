@@ -44,6 +44,8 @@ jobs:
           } else {
             Write-Host "Will publish $tag"
           }
+          # gh exit 1 for a missing tag must not become the step exit code.
+          exit 0
 
       - name: Setup Node
         if: steps.meta.outputs.skip != 'true'

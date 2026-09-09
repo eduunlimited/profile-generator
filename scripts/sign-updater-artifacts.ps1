@@ -40,6 +40,9 @@ if (Test-Path -LiteralPath $sigPath) {
 }
 
 Write-Host "Signing $nsisName"
+# `-f` and TAURI_SIGNING_PRIVATE_KEY cannot be set together.
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY -ErrorAction SilentlyContinue
+Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
 node $tauri signer sign -f $keyFile --password= -- $exe
 if (-not (Test-Path -LiteralPath $sigPath)) {
     throw "Signer did not write $sigPath"

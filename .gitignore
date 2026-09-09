@@ -38,6 +38,7 @@ src-tauri/resources/python-win/
 
 # Tauri build artifacts
 src-tauri/target/
+release-assets/
 
 # Local recovery snapshots (may contain profile/account data)
 .recovery/

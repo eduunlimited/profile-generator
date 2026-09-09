@@ -42,18 +42,20 @@ npm run dev:app
 
 ## OTA updates
 
-Release tags like `v0.2.8` trigger [`.github/workflows/release.yml`](.github/workflows/release.yml), which uploads:
+Pushing `main` (or a `v*` tag) with a new `package.json` version runs [`.github/workflows/release.yml`](.github/workflows/release.yml). It builds the Windows installer, signs it, and publishes:
 
-- NSIS installer + signatures
+- `ProfileGenerator_<version>_x64-setup.exe` + `.sig`
 - `latest.json` for the Tauri updater
 
-Installed apps check for updates on startup and every hour.
+If `v<version>` already exists, the workflow skips. Installed apps check that feed on startup and every hour.
 
-Configure GitHub repository variables/secrets:
+Required GitHub secret:
 
-- `LICENSE_API_URL` (repository variable)
-- `TAURI_SIGNING_PRIVATE_KEY`
-- `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` (if used)
+- `TAURI_SIGNING_PRIVATE_KEY` — contents of `~/.tauri/profile-generator.key`
+
+Optional repository variable:
+
+- `LICENSE_API_URL`
 
 Update `plugins.updater.pubkey` in [`src-tauri/tauri.conf.json`](src-tauri/tauri.conf.json) with the public key from `npx tauri signer generate`.
 

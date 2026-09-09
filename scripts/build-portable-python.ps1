@@ -14,6 +14,12 @@ $TempDir = Join-Path $env:TEMP "epgs-python-build"
 Write-Host "Building portable Python runtime for Profile Generator..."
 Write-Host "Output: $OutDir"
 
+$pythonExe = Join-Path $OutDir "python.exe"
+if ($env:FORCE_PYTHON_REBUILD -ne "1" -and (Test-Path $pythonExe)) {
+    Write-Host "Portable Python already exists at $OutDir. Skipping rebuild (set FORCE_PYTHON_REBUILD=1 to force)."
+    exit 0
+}
+
 if (Test-Path $OutDir) {
     Remove-Item -Recurse -Force $OutDir
 }

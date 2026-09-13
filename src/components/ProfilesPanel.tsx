@@ -191,7 +191,7 @@ interface ProfilesPanelProps {
   onAssignEmails: () => void;
   onUnassignEmails: (profileIds: string[]) => Promise<number>;
   onMassDistribute: () => void;
-  onExport: () => void;
+  onExport: (profileIds: string[]) => void;
   creditCards: CreditCard[];
   poolEmails?: PoolEmail[];
   credentials?: Credential[];
@@ -1326,7 +1326,13 @@ export function ProfilesPanel({
               onAssignEmails={onAssignEmails}
               onUnassignEmails={() => void handleUnassignEmails()}
               onMassDistribute={onMassDistribute}
-              onExport={onExport}
+              onExport={() => {
+                onExport(
+                  selectedIds.length > 0
+                    ? selectedIds
+                    : searchFilteredProfiles.map((profile) => profile.id),
+                );
+              }}
               onImport={() => setShowImportModal(true)}
               onDeleteCategory={() => void handleDeleteCategory()}
             />

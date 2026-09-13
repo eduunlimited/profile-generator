@@ -200,6 +200,7 @@ export async function listProfiles(): Promise<ProfileSummary[]> {
 }
 
 export async function getProfile(id: string): Promise<Profile> {
+  await ensureDataKey(KEYS.profiles);
   const profile = readMap<Profile>(KEYS.profiles)[id];
   if (!profile) throw new Error("Profile not found.");
   return normalizeProfile({
@@ -242,6 +243,7 @@ export async function deleteProfile(id: string): Promise<void> {
 }
 
 export async function loadAllProfiles(): Promise<Profile[]> {
+  await ensureDataKey(KEYS.profiles);
   const profiles = Object.values(readMap<Profile>(KEYS.profiles));
   return profiles.map((profile) =>
     normalizeProfile({

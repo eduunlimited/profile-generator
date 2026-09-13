@@ -248,6 +248,8 @@ function AppContent() {
 
   const [showExportModal, setShowExportModal] = useState(false);
 
+  const [exportProfileIds, setExportProfileIds] = useState<string[]>([]);
+
   const {
     pending: undoConfirm,
     busy: undoConfirmBusy,
@@ -504,7 +506,6 @@ function AppContent() {
 
 
 
-  const exportIds = selectedProfileIds.length > 0 ? selectedProfileIds : profiles.map((profile) => profile.id);
 
 
 
@@ -606,7 +607,17 @@ function AppContent() {
 
   const handleSelectedProfileIdsChange = useCallback((ids: string[]) => {
 
-    setSelectedProfileIds(ids);
+    setSelectedProfileIds((current) => {
+
+      if (current.length === ids.length && current.every((id, index) => id === ids[index])) {
+
+        return current;
+
+      }
+
+      return ids;
+
+    });
 
   }, []);
 
@@ -770,7 +781,13 @@ function AppContent() {
 
                 onMassDistribute={() => setShowMassDistributeModal(true)}
 
-                onExport={() => setShowExportModal(true)}
+                onExport={(ids) => {
+
+                  setExportProfileIds(ids);
+
+                  setShowExportModal(true);
+
+                }}
 
                 creditCards={creditCards}
 
@@ -1028,7 +1045,7 @@ function AppContent() {
 
           <ExportModal
             open={showExportModal}
-            selectedProfileIds={exportIds}
+            selectedProfileIds={exportProfileIds}
             exportTemplates={exportTemplates}
             masterProfiles={masterProfiles}
             profileCategories={profileCategories}

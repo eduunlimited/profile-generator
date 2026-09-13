@@ -2,7 +2,7 @@ import { stringify as yamlStringify } from "yaml";
 import { exportProfileAddress, exportProfileName } from "./exportProfileFields";
 import { exportAycdJson, exportStellarAioJson } from "./botExportFormats";
 import { masterProfileLabel } from "./masterProfileUtils";
-import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
+import { PROFILE_UNGROUPED_GROUP_ID, profileGroupId } from "./profileGroupUtils";
 import type {
   ExportFormat,
   ExportOptions,
@@ -13,8 +13,8 @@ import type {
 } from "./types";
 
 export interface ExportFilenameContext {
-  masterName: string;
-  categoryName: string;
+  groupNames: string[];
+  masterNames: string[];
   exportedAt?: Date;
 }
 
@@ -24,13 +24,22 @@ function uniqueSortedNames(names: string[]): string[] {
   );
 }
 
-function sanitizeFilenameSegment(value: string, fallback: string): string {
+function sanitizeFilenameSegment(value: string, fallback = ""): string {
   const cleaned = value
     .replace(/[<>:"/\\|?*]+/g, " ")
-    .replace(/\s+/g, " ")
-    .trim()
-    .replace(/[. ]+$/g, "");
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^[-.]+|[-.]+$/g, "")
+    .trim();
   return cleaned || fallback;
+}
+
+function formatFilenameLabel(format: ExportFormat): string {
+  if (format === "aycd") return "AYCD";
+  if (format === "stellar_aio") return "Stellar_AIO";
+  if (format === "jsonl") return "JSONL";
+  if (format === "template") return "Template";
+  return format.replace(/_/g, "-").toUpperCase();
 }
 
 function exportDateStamp(date = new Date()): string {
@@ -40,22 +49,22 @@ function exportDateStamp(date = new Date()): string {
   return `${year}-${month}-${day}`;
 }
 
-function botFormatFilenameLabel(format: ExportFormat): string | undefined {
-  if (format === "aycd") return "AYCD";
-  if (format === "stellar_aio") return "Stellar_AIO";
-  return undefined;
-}
-
 type FlatProfile = Record<string, string>;
 
 export function buildExportFilenameContext(
-  profiles: Profile[],
+  profiles: Array<Pick<Profile, "masterProfileId" | "groupId" | "categoryId">>,
   masters: MasterProfile[] = [],
-  categories: ProfileCategory[] = [],
+  groups: ProfileCategory[] = [],
 ): ExportFilenameContext {
   const masterById = new Map(masters.map((master) => [master.id, master]));
-  const categoryById = new Map(categories.map((category) => [category.id, category]));
+  const groupById = new Map(groups.map((group) => [group.id, group]));
 
+  const groupNames = uniqueSortedNames(
+    profiles.map((profile) => {
+      const groupId = profileGroupId(profile);
+      return groupById.get(groupId)?.name.trim() || (groupId === PROFILE_UNGROUPED_GROUP_ID ? "Ungrouped" : "");
+    }),
+  );
   const masterNames = uniqueSortedNames(
     profiles.map((profile) => {
       if (!profile.masterProfileId) return "";
@@ -63,17 +72,8 @@ export function buildExportFilenameContext(
       return master ? masterProfileLabel(master) : "";
     }),
   );
-  const categoryNames = uniqueSortedNames(
-    profiles.map((profile) => {
-      const categoryId = profile.groupId?.trim() || profile.categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
-      return categoryById.get(categoryId)?.name.trim() || (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID ? "Ungrouped" : "");
-    }),
-  );
 
-  return {
-    masterName: masterNames.join(" + ") || "No Master",
-    categoryName: categoryNames.join(" + ") || "Ungrouped",
-  };
+  return { groupNames, masterNames };
 }
 
 export function buildExportFilename(
@@ -82,12 +82,11 @@ export function buildExportFilename(
   extras: { profileStem?: string; templateExtension?: string } = {},
 ): string {
   const parts = [
-    sanitizeFilenameSegment(context.masterName, "No Master"),
-    sanitizeFilenameSegment(context.categoryName, "Uncategorized"),
+    ...context.groupNames.map((name) => sanitizeFilenameSegment(name)).filter(Boolean),
+    ...context.masterNames.map((name) => sanitizeFilenameSegment(name)).filter(Boolean),
     exportDateStamp(context.exportedAt),
+    formatFilenameLabel(format),
   ];
-  const botLabel = botFormatFilenameLabel(format);
-  if (botLabel) parts.push(botLabel);
   if (extras.profileStem) {
     parts.push(sanitizeFilenameSegment(extras.profileStem, "profile"));
   }

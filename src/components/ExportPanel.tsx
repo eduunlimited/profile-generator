@@ -13,7 +13,7 @@ import type {
   Profile,
   ProfileCategory,
 } from "../lib/types";
-import { getProfile } from "../lib/api";
+import { loadAllProfiles } from "../lib/api";
 import { saveTextFile } from "../lib/saveFile";
 import { copyToClipboard } from "../hooks/useAppData";
 import { formatError } from "../lib/errorUtils";
@@ -75,10 +75,12 @@ export function ExportPanel({
   });
   const [status, setStatus] = useState<string | null>(null);
   const [profilesLoading, setProfilesLoading] = useState(false);
+  const selectedProfileKey = selectedProfileIds.join("\0");
 
   useEffect(() => {
     let cancelled = false;
-    if (selectedProfileIds.length === 0) {
+    const ids = selectedProfileKey ? selectedProfileKey.split("\0") : [];
+    if (ids.length === 0) {
       setProfiles([]);
       setProfilesLoading(false);
       return () => {
@@ -88,31 +90,31 @@ export function ExportPanel({
 
     setProfilesLoading(true);
     void (async () => {
-      const results = await Promise.all(
-        selectedProfileIds.map(async (id) => {
-          try {
-            return await getProfile(id);
-          } catch (error) {
-            console.error(`Failed to load profile ${id} for export:`, error);
-            return null;
-          }
-        }),
-      );
-      if (cancelled) return;
-      const loaded = results.filter((profile): profile is Profile => profile !== null);
-      setProfiles(loaded);
-      setProfilesLoading(false);
-      if (loaded.length === 0) {
+      try {
+        const all = await loadAllProfiles();
+        if (cancelled) return;
+        const wanted = new Set(ids);
+        const loaded = all.filter((profile) => wanted.has(profile.id));
+        setProfiles(loaded);
+        if (loaded.length === 0) {
+          setStatus("Could not load the selected profiles for export.");
+        } else if (loaded.length < ids.length) {
+          setStatus(`Loaded ${loaded.length} of ${ids.length} selected profiles.`);
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to load profiles for export:", error);
+        setProfiles([]);
         setStatus("Could not load the selected profiles for export.");
-      } else if (loaded.length < selectedProfileIds.length) {
-        setStatus(`Loaded ${loaded.length} of ${selectedProfileIds.length} selected profiles.`);
+      } finally {
+        if (!cancelled) setProfilesLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [selectedProfileIds]);
+  }, [selectedProfileKey]);
 
   useEffect(() => {
     if (selectedFormats.length === 0) return;

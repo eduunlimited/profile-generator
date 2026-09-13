@@ -692,9 +692,7 @@ function AppContent() {
 
 
 
-          {activeTab === "profiles" ? (
-
-            <div className="profiles-panel">
+          <div className={`profiles-panel${activeTab === "profiles" ? "" : " is-tab-hidden"}`}>
 
               <ProfilesPanel
 
@@ -875,9 +873,7 @@ function AppContent() {
 
               />
 
-            </div>
-
-          ) : null}
+          </div>
 
 
 

@@ -1641,6 +1641,10 @@ input.mass-edit-mixed[readonly] {
   overflow: hidden;
 }
 
+.profiles-panel.is-tab-hidden {
+  display: none;
+}
+
 .cards-layout {
   display: flex;
   align-items: stretch;

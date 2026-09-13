@@ -126,7 +126,36 @@ function readSidebarWidth(): number {
   return Number.isFinite(parsed) ? clampSidebarWidth(parsed) : PROFILES_SIDEBAR_DEFAULT_WIDTH;
 }
 
+const PROFILES_FILTER_KEY = "profile-generator:profiles-filter";
+
 type ProfilesSelectedCategoryId = "all" | string;
+
+type ProfilesFilterState = {
+  tableQuery: string;
+  selectedCategoryId: ProfilesSelectedCategoryId;
+};
+
+function readProfilesFilterState(): ProfilesFilterState {
+  try {
+    const raw = sessionStorage.getItem(PROFILES_FILTER_KEY);
+    if (!raw) return { tableQuery: "", selectedCategoryId: "all" };
+    const parsed = JSON.parse(raw) as Partial<ProfilesFilterState>;
+    const selectedCategoryId =
+      typeof parsed.selectedCategoryId === "string" && parsed.selectedCategoryId.trim()
+        ? parsed.selectedCategoryId
+        : "all";
+    return {
+      tableQuery: typeof parsed.tableQuery === "string" ? parsed.tableQuery : "",
+      selectedCategoryId,
+    };
+  } catch {
+    return { tableQuery: "", selectedCategoryId: "all" };
+  }
+}
+
+function writeProfilesFilterState(state: ProfilesFilterState) {
+  sessionStorage.setItem(PROFILES_FILTER_KEY, JSON.stringify(state));
+}
 
 interface ProfilesPanelProps {
   profiles: ProfileSummary[];
@@ -215,9 +244,11 @@ export function ProfilesPanel({
   );
   const [status, setStatus] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
-  const [selectedCategoryId, setSelectedCategoryId] = useState<ProfilesSelectedCategoryId>("all");
+  const [selectedCategoryId, setSelectedCategoryId] = useState<ProfilesSelectedCategoryId>(
+    () => readProfilesFilterState().selectedCategoryId,
+  );
   const [categorySearch, setCategorySearch] = useState("");
-  const [tableQuery, setTableQuery] = useState("");
+  const [tableQuery, setTableQuery] = useState(() => readProfilesFilterState().tableQuery);
   const [activeOpportunityId, setActiveOpportunityId] = useState<ProfileOpportunityId | null>(null);
   const [showCreateCategory, setShowCreateCategory] = useState(false);
   const { pending: deleteConfirm, busy: deleteConfirmBusy, askConfirm, closeConfirm, acceptConfirm } =
@@ -543,6 +574,10 @@ export function ProfilesPanel({
   useEffect(() => {
     localStorage.setItem(PROFILES_SIDEBAR_WIDTH_KEY, String(sidebarWidth));
   }, [sidebarWidth]);
+
+  useEffect(() => {
+    writeProfilesFilterState({ tableQuery, selectedCategoryId });
+  }, [selectedCategoryId, tableQuery]);
 
   useEffect(() => {
     onSelectedIdsChange?.(selectedIds);

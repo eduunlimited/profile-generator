@@ -74,6 +74,7 @@ export function MasterProfileEditor({
   };
 
   const isComplete = useMemo(() => isMasterProfileComplete(master), [master]);
+  const validationError = isComplete ? null : getMasterProfileValidationError(master);
 
   const groupOptions = useMemo(() => {
     let options = sortProfileCategories(profileGroups);
@@ -90,15 +91,16 @@ export function MasterProfileEditor({
     !isNew ||
     groupSelection.kind === "existing" ||
     (groupSelection.kind === "new" && groupSelection.name.trim().length > 0);
+  const saveBlocker =
+    validationError ??
+    (groupReady ? null : "Enter a group name.") ??
+    (isNew && selectedGroupLocked
+      ? "Unlock this group or choose another before creating a master."
+      : null);
 
   const handleSave = async () => {
-    const validationError = getMasterProfileValidationError(master);
-    if (validationError) {
-      setStatus(validationError);
-      return;
-    }
-    if (isNew && selectedGroupLocked) {
-      setStatus("Unlock the group before creating a master against it.");
+    if (saveBlocker) {
+      setStatus(saveBlocker);
       return;
     }
 
@@ -122,6 +124,7 @@ export function MasterProfileEditor({
 
       const next = withResolvedMasterProfileName({
         ...master,
+        ...(isNew && groupId ? { groupId } : {}),
         updatedAt: new Date().toISOString(),
       });
       await onSave(next, groupId);
@@ -151,7 +154,7 @@ export function MasterProfileEditor({
           <button
             type="button"
             className="btn-secondary"
-            disabled={(isNew ? false : !isDirty) || !isComplete || !groupReady || selectedGroupLocked || saving}
+            disabled={(isNew ? false : !isDirty) || Boolean(saveBlocker) || saving}
             onClick={() => void handleSave()}
           >
             {saving ? (isNew ? "Creating..." : "Saving...") : isNew ? "Create master" : "Save master"}
@@ -159,7 +162,7 @@ export function MasterProfileEditor({
         </div>
       </div>
 
-      {status ? <p className="status-inline">{status}</p> : null}
+      {status || saveBlocker ? <p className="status-inline">{status ?? saveBlocker}</p> : null}
 
       <div className="editor-body">
         {isNew ? (
@@ -174,7 +177,11 @@ export function MasterProfileEditor({
               uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
               addOptionLabel="+ Add group"
               newPlaceholder="Enter group name"
+              allowLocked
             />
+            {selectedGroupLocked ? (
+              <p className="muted">This group is locked. Unlock it or choose another.</p>
+            ) : null}
           </Field>
         ) : null}
         <Field label="Master Profile Name">
@@ -185,14 +192,14 @@ export function MasterProfileEditor({
           />
         </Field>
         <div className="form-grid two-col">
-          <Field label="First name" hint="Billing">
+          <Field label="First name" hint="Required">
             <input
               value={master.name.first}
               onChange={(event) => setField("name.first", event.target.value)}
               placeholder="Jane"
             />
           </Field>
-          <Field label="Last name" hint="Billing">
+          <Field label="Last name" hint="Required">
             <input
               value={master.name.last}
               onChange={(event) => setField("name.last", event.target.value)}
@@ -201,7 +208,7 @@ export function MasterProfileEditor({
           </Field>
         </div>
         <div className="form-grid two-col">
-          <Field label="Phone">
+          <Field label="Phone" hint="Required">
             <input
               value={formatUsPhone(master.phone ?? "")}
               onChange={(event) => setField("phone", event.target.value)}
@@ -212,7 +219,7 @@ export function MasterProfileEditor({
         </div>
 
         <Section title="Address" description="Base shipping/billing address for the master profile.">
-          <Field label="Address line 1">
+          <Field label="Address line 1" hint="Required">
             <input
               value={master.address.street}
               onChange={(event) => setField("address.street", event.target.value)}
@@ -227,21 +234,21 @@ export function MasterProfileEditor({
             />
           </Field>
           <div className="form-grid two-col">
-            <Field label="City">
+            <Field label="City" hint="Required">
               <input
                 value={master.address.city}
                 onChange={(event) => setField("address.city", event.target.value)}
                 placeholder="Springfield"
               />
             </Field>
-            <Field label="State">
+            <Field label="State" hint="Required">
               <input
                 value={master.address.state}
                 onChange={(event) => setField("address.state", event.target.value)}
                 placeholder="IL"
               />
             </Field>
-            <Field label="Postal code">
+            <Field label="Postal code" hint="Required">
               <input
                 value={master.address.postalCode}
                 onChange={(event) => setField("address.postalCode", event.target.value)}

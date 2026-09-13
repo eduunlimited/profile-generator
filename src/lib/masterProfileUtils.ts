@@ -58,6 +58,7 @@ export function normalizeMasterProfile(master: Partial<MasterProfile>): MasterPr
     phone: normalizeUsPhone(master.phone ?? ""),
     name: { ...empty.name, ...master.name },
     address: { ...empty.address, ...master.address },
+    groupId: master.groupId?.trim() || undefined,
     updatedAt: master.updatedAt ?? empty.updatedAt,
   };
 }

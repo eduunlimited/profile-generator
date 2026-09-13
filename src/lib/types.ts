@@ -84,6 +84,8 @@ export interface MasterProfile {
   phone?: string;
   name: ProfileName;
   address: ProfileAddress;
+  /** Group this master was created against; keeps it visible before any jigs exist. */
+  groupId?: string;
   updatedAt: string;
 }
 

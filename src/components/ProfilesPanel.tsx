@@ -10,6 +10,7 @@ import {
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
   profileCategoryId,
   reorderCategoryIds,
+  resolveStoredProfileGroupId,
   sortProfileCategories,
 } from "../lib/profileCategoryUtils";
 import {
@@ -150,6 +151,7 @@ interface ProfilesPanelProps {
   onCreateMaster: (groupId?: string) => void;
   createMasterDisabled?: boolean;
   focusGroupId?: string | null;
+  focusMasterId?: string | null;
   onFocusGroupConsumed?: () => void;
   onOpenMaster: (masterId: string) => void;
   onDeleteMaster: (masterId: string) => Promise<void>;
@@ -190,6 +192,7 @@ export function ProfilesPanel({
   onCreateMaster,
   createMasterDisabled = false,
   focusGroupId = null,
+  focusMasterId = null,
   onFocusGroupConsumed,
   onOpenMaster,
   onDeleteMaster,
@@ -253,10 +256,20 @@ export function ProfilesPanel({
     return counts;
   }, [categories, profiles]);
 
-  const activeCategories = useMemo(
-    () => categoriesWithProfiles(categories, profiles),
-    [categories, profiles],
-  );
+  const activeCategories = useMemo(() => {
+    let groups = categoriesWithProfiles(categories, profiles);
+    const hasOrphanEmptyMaster = masterProfiles.some((master) => {
+      if (master.groupId?.trim()) return false;
+      return !profiles.some((profile) => profile.masterProfileId === master.id);
+    });
+    if (
+      hasOrphanEmptyMaster &&
+      !groups.some((group) => group.id === PROFILE_UNCATEGORIZED_CATEGORY_ID)
+    ) {
+      groups = sortProfileCategories([createUncategorizedProfileCategory(), ...groups]);
+    }
+    return groups;
+  }, [categories, masterProfiles, profiles]);
 
   const canReorderCategories = Boolean(onReorderCategories) && categorySearch.trim().length === 0;
 
@@ -329,12 +342,19 @@ export function ProfilesPanel({
       const query = categorySearch.trim().toLowerCase();
       return masterProfiles.filter((master) => {
         const count = counts?.get(master.id) ?? 0;
-        if (count === 0) return false;
+        const homeGroupId = master.groupId?.trim();
+        const belongs =
+          count > 0 ||
+          (homeGroupId
+            ? resolveStoredProfileGroupId(homeGroupId) === groupId
+            : (masterChildCounts.get(master.id) ?? 0) === 0 &&
+              groupId === PROFILE_UNCATEGORIZED_CATEGORY_ID);
+        if (!belongs) return false;
         if (!query) return true;
         return masterProfileLabel(master).toLowerCase().includes(query);
       });
     },
-    [categorySearch, groupMasterCounts, masterProfiles],
+    [categorySearch, groupMasterCounts, masterChildCounts, masterProfiles],
   );
 
   const filteredGroups = useMemo(() => {
@@ -500,9 +520,16 @@ export function ProfilesPanel({
 
   useEffect(() => {
     if (!focusGroupId) return;
-    setSelectedCategoryId(groupSidebarId(focusGroupId));
+    setSelectedCategoryId(
+      focusMasterId
+        ? groupMasterSidebarId(focusGroupId, focusMasterId)
+        : groupSidebarId(focusGroupId),
+    );
+    if (focusMasterId) {
+      onActiveMasterChange(focusMasterId);
+    }
     onFocusGroupConsumed?.();
-  }, [focusGroupId, onFocusGroupConsumed]);
+  }, [focusGroupId, focusMasterId, onActiveMasterChange, onFocusGroupConsumed]);
 
   useEffect(() => {
     if (!selectedMasterId) return;

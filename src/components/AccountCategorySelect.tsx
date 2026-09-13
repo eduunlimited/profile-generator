@@ -18,6 +18,8 @@ interface AccountCategorySelectProps {
   addOptionLabel?: string;
   newPlaceholder?: string;
   requiredMessage?: string;
+  /** When true, locked groups stay selectable (create-master destination). */
+  allowLocked?: boolean;
 }
 
 export function AccountCategorySelect({
@@ -27,6 +29,7 @@ export function AccountCategorySelect({
   uncategorizedCategoryId = UNCATEGORIZED_CATEGORY_ID,
   addOptionLabel = "+ Add category",
   newPlaceholder = "Enter category name",
+  allowLocked = false,
 }: AccountCategorySelectProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -68,7 +71,11 @@ export function AccountCategorySelect({
       }}
     >
       {categories.map((category) => (
-        <option key={category.id} value={category.id} disabled={Boolean(category.locked)}>
+        <option
+          key={category.id}
+          value={category.id}
+          disabled={!allowLocked && Boolean(category.locked)}
+        >
           {category.locked ? `🔒 ${category.name}` : category.name}
         </option>
       ))}

@@ -238,6 +238,8 @@ function AppContent() {
 
   const [focusProfileGroupId, setFocusProfileGroupId] = useState<string | null>(null);
 
+  const [focusSidebarMasterId, setFocusSidebarMasterId] = useState<string | null>(null);
+
   const createMasterLockRef = useRef(false);
 
   const [masterDraft, setMasterDraft] = useState<MasterProfile | null>(null);
@@ -408,6 +410,8 @@ function AppContent() {
 
         setFocusProfileGroupId(groupId);
 
+        setFocusSidebarMasterId(master.id);
+
         openGenerateModal([master.id], groupId);
 
       } else {
@@ -451,6 +455,22 @@ function AppContent() {
     setGenerateMasterId(ids[0] ?? null);
 
     setGenerateCategoryId(categoryId ?? null);
+
+    if (categoryId) {
+
+      for (const id of ids) {
+
+        const master = masterProfiles.find((item) => item.id === id);
+
+        if (master && !master.groupId?.trim()) {
+
+          void updateMasterProfile({ ...master, groupId: categoryId });
+
+        }
+
+      }
+
+    }
 
     if (ids.length === 1 && !categoryId) setActiveMasterId(ids[0]);
 
@@ -722,7 +742,15 @@ function AppContent() {
 
                 focusGroupId={focusProfileGroupId}
 
-                onFocusGroupConsumed={() => setFocusProfileGroupId(null)}
+                focusMasterId={focusSidebarMasterId}
+
+                onFocusGroupConsumed={() => {
+
+                  setFocusProfileGroupId(null);
+
+                  setFocusSidebarMasterId(null);
+
+                }}
 
                 onOpenMaster={openMasterEditor}
 

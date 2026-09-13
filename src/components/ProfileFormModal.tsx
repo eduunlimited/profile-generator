@@ -18,12 +18,15 @@ import {
   updateProfileField,
   updateProfilePaymentField,
 } from "../lib/profileUtils";
+import { masterProfileLabel, mastersInProfileGroup } from "../lib/masterProfileUtils";
 import type {
   AccountReviewStatus,
   Credential,
   CreditCard,
+  MasterProfile,
   Profile,
   ProfileCategory,
+  ProfileSummary,
 } from "../lib/types";
 import { AccountCategorySelect, type CategorySelection } from "./AccountCategorySelect";
 import { AccountSiteSelect } from "./AccountSiteSelect";
@@ -43,6 +46,8 @@ interface ProfileFormModalProps {
   mixedFields?: ProfileMixedFields;
   touchedFields?: ProfileTouchedFields;
   formCategories: ProfileCategory[];
+  masterProfiles: MasterProfile[];
+  profiles: ProfileSummary[];
   draftCategorySelection: CategorySelection;
   canDeleteDraftCategory: boolean;
   status: string | null;
@@ -97,6 +102,8 @@ export function ProfileFormModal({
   mixedFields,
   touchedFields,
   formCategories,
+  masterProfiles,
+  profiles,
   draftCategorySelection,
   canDeleteDraftCategory,
   status,
@@ -157,6 +164,40 @@ export function ProfileFormModal({
   };
 
   const mixedTextValue = (field: ProfileEditField, value: string) => (showMixed(field) ? "" : value);
+
+  const draftGroupId =
+    draftCategorySelection.kind === "existing"
+      ? draftCategorySelection.categoryId
+      : PROFILE_UNCATEGORIZED_CATEGORY_ID;
+  const mastersInGroup = mastersInProfileGroup(masterProfiles, profiles, draftGroupId);
+  const currentMaster = profile.masterProfileId
+    ? masterProfiles.find((master) => master.id === profile.masterProfileId)
+    : undefined;
+  const masterOptions =
+    currentMaster && !mastersInGroup.some((master) => master.id === currentMaster.id)
+      ? [currentMaster, ...mastersInGroup]
+      : mastersInGroup;
+
+  const applyGroupSelection = (selection: CategorySelection) => {
+    if (isMassEditing) touch("categoryId");
+    onDraftCategorySelectionChange(selection);
+    const nextGroupId =
+      selection.kind === "existing" ? selection.categoryId : PROFILE_UNCATEGORIZED_CATEGORY_ID;
+    const stillValid =
+      Boolean(profile.masterProfileId) &&
+      mastersInProfileGroup(masterProfiles, profiles, nextGroupId).some(
+        (master) => master.id === profile.masterProfileId,
+      );
+    if (profile.masterProfileId && !stillValid) {
+      if (isMassEditing) touch("masterProfileId");
+      onProfileDraftChange({ ...profile, masterProfileId: undefined });
+    }
+  };
+
+  const setMasterProfileId = (masterId: string) => {
+    if (isMassEditing) touch("masterProfileId");
+    onProfileDraftChange({ ...profile, masterProfileId: masterId.trim() || undefined });
+  };
 
   return (
     <div className="modal-overlay">
@@ -262,14 +303,34 @@ export function ProfileFormModal({
                       <AccountCategorySelect
                         categories={formCategories}
                         selection={draftCategorySelection}
-                        onSelectionChange={(selection) => {
-                          if (isMassEditing) touch("categoryId");
-                          onDraftCategorySelectionChange(selection);
-                        }}
+                        onSelectionChange={applyGroupSelection}
                         uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
                         addOptionLabel="+ Add group"
                         newPlaceholder="Enter group name"
                       />
+                    )}
+                  </Field>
+                  <Field label="Master" className="field-w-grow" hint="Same group only">
+                    {showMixed("masterProfileId") ? (
+                      <input
+                        className="mass-edit-mixed"
+                        readOnly
+                        value=""
+                        placeholder={MASS_EDIT_PLACEHOLDER}
+                        onFocus={() => touch("masterProfileId")}
+                      />
+                    ) : (
+                      <select
+                        value={profile.masterProfileId ?? ""}
+                        onChange={(event) => setMasterProfileId(event.target.value)}
+                      >
+                        <option value="">{masterOptions.length === 0 ? "No masters in this group" : "Select master"}</option>
+                        {masterOptions.map((master) => (
+                          <option key={master.id} value={master.id}>
+                            {masterProfileLabel(master)}
+                          </option>
+                        ))}
+                      </select>
                     )}
                   </Field>
                   <Field label="Status" className="field-w-md">

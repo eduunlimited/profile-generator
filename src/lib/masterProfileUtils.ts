@@ -1,5 +1,10 @@
-import type { MasterProfile } from "./types";
+import type { MasterProfile, ProfileSummary } from "./types";
 import { normalizeUsPhone } from "./phoneUtils";
+import {
+  PROFILE_UNGROUPED_GROUP_ID,
+  profileGroupId,
+  resolveStoredProfileGroupId,
+} from "./profileGroupUtils";
 
 export function createEmptyMasterProfile(): MasterProfile {
   return {
@@ -171,5 +176,32 @@ export function sortMasterProfiles(masters: MasterProfile[]): MasterProfile[] {
     (a, b) =>
       masterProfileLabel(a).localeCompare(masterProfileLabel(b)) ||
       a.updatedAt.localeCompare(b.updatedAt),
+  );
+}
+
+export function masterBelongsToProfileGroup(
+  master: MasterProfile,
+  groupId: string,
+  profiles: Array<Pick<ProfileSummary, "masterProfileId" | "groupId" | "categoryId">>,
+): boolean {
+  const resolved = resolveStoredProfileGroupId(groupId);
+  const homeGroupId = master.groupId?.trim();
+  if (homeGroupId && resolveStoredProfileGroupId(homeGroupId) === resolved) {
+    return true;
+  }
+  const jigs = profiles.filter((profile) => profile.masterProfileId === master.id);
+  if (jigs.some((profile) => profileGroupId(profile) === resolved)) {
+    return true;
+  }
+  return jigs.length === 0 && !homeGroupId && resolved === PROFILE_UNGROUPED_GROUP_ID;
+}
+
+export function mastersInProfileGroup(
+  masters: MasterProfile[],
+  profiles: Array<Pick<ProfileSummary, "masterProfileId" | "groupId" | "categoryId">>,
+  groupId: string,
+): MasterProfile[] {
+  return sortMasterProfiles(
+    masters.filter((master) => masterBelongsToProfileGroup(master, groupId, profiles)),
   );
 }

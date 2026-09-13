@@ -10,7 +10,6 @@ import {
   PROFILE_UNCATEGORIZED_CATEGORY_ID,
   profileCategoryId,
   reorderCategoryIds,
-  resolveStoredProfileGroupId,
   sortProfileCategories,
 } from "../lib/profileCategoryUtils";
 import {
@@ -51,6 +50,7 @@ import {
   groupMasterSidebarId,
   groupSidebarId,
   masterProfileLabel,
+  mastersInProfileGroup,
   parseProfilesSidebarSelection,
 } from "../lib/masterProfileUtils";
 import {
@@ -338,23 +338,13 @@ export function ProfilesPanel({
 
   const mastersForGroup = useCallback(
     (groupId: string) => {
-      const counts = groupMasterCounts.get(groupId);
       const query = categorySearch.trim().toLowerCase();
-      return masterProfiles.filter((master) => {
-        const count = counts?.get(master.id) ?? 0;
-        const homeGroupId = master.groupId?.trim();
-        const belongs =
-          count > 0 ||
-          (homeGroupId
-            ? resolveStoredProfileGroupId(homeGroupId) === groupId
-            : (masterChildCounts.get(master.id) ?? 0) === 0 &&
-              groupId === PROFILE_UNCATEGORIZED_CATEGORY_ID);
-        if (!belongs) return false;
+      return mastersInProfileGroup(masterProfiles, profiles, groupId).filter((master) => {
         if (!query) return true;
         return masterProfileLabel(master).toLowerCase().includes(query);
       });
     },
-    [categorySearch, groupMasterCounts, masterChildCounts, masterProfiles],
+    [categorySearch, masterProfiles, profiles],
   );
 
   const filteredGroups = useMemo(() => {
@@ -1448,6 +1438,8 @@ export function ProfilesPanel({
         mixedFields={mixedFields}
         touchedFields={touchedFields}
         formCategories={formCategories}
+        masterProfiles={masterProfiles}
+        profiles={profiles}
         draftCategorySelection={draftCategorySelection}
         canDeleteDraftCategory={canDeleteDraftCategory && !isMassEditing}
         status={status}

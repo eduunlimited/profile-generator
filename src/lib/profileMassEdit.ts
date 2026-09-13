@@ -21,6 +21,7 @@ export type ProfileEditField =
   | "accountSite"
   | "oneCheckoutPerProfile"
   | "categoryId"
+  | "masterProfileId"
   | "accountStatus"
   | "cardHolderSameAsShipping"
   | "cardHolderName"
@@ -56,6 +57,7 @@ export const PROFILE_EDIT_FIELDS: ProfileEditField[] = [
   "accountSite",
   "oneCheckoutPerProfile",
   "categoryId",
+  "masterProfileId",
   "accountStatus",
   "cardHolderSameAsShipping",
   "cardHolderName",
@@ -148,6 +150,7 @@ export function buildProfileMassEditDraft(
   const accountSite = pickString(selected, (profile) => (profile.accountSite ?? "").trim());
   const oneCheckout = pickBool(selected, oneCheckoutPerProfile, true);
   const category = pickString(selected, (profile) => profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID);
+  const masterProfileId = pickString(selected, (profile) => profile.masterProfileId ?? "");
   const accountStatus = pickString(selected, (profile) => profile.accountStatus);
   const cardHolderSame = pickBool(selected, cardHolderSameAsShipping, true);
   const cardHolderName = pickString(selected, (profile) =>
@@ -165,6 +168,7 @@ export function buildProfileMassEditDraft(
   draft.accountSite = accountSite.value;
   draft.oneCheckoutPerProfile = oneCheckout.value;
   draft.categoryId = category.mixed ? PROFILE_UNCATEGORIZED_CATEGORY_ID : category.value;
+  draft.masterProfileId = masterProfileId.mixed ? undefined : masterProfileId.value || undefined;
   draft.accountStatus = (accountStatus.mixed ? "good" : accountStatus.value) as AccountReviewStatus;
   draft.cardHolderSameAsShipping = cardHolderSame.value;
   draft.cardHolderName = cardHolderName.value;
@@ -234,6 +238,7 @@ export function buildProfileMassEditDraft(
     accountSite: accountSite.mixed,
     oneCheckoutPerProfile: oneCheckout.mixed,
     categoryId: category.mixed,
+    masterProfileId: masterProfileId.mixed,
     accountStatus: accountStatus.mixed,
     cardHolderSameAsShipping: cardHolderSame.mixed,
     cardHolderName: cardHolderName.mixed,
@@ -290,6 +295,9 @@ export function applyProfileMassEditPatch(
   if (touchedFields.categoryId && categoryId) {
     next.groupId = categoryId;
     next.categoryId = categoryId;
+  }
+  if (touchedFields.masterProfileId) {
+    next.masterProfileId = draft.masterProfileId?.trim() || undefined;
   }
   if (touchedFields.accountStatus) {
     next.accountStatus = draft.accountStatus;

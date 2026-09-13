@@ -1,3 +1,5 @@
+import type { OrderAddress, OrderPayment } from "../types";
+
 /** Windows-1252 / Latin-1 code units so UTF-8 mojibake (PokÃ©mon, â€”) can be reversed. */
 const WINDOWS_1252_FROM_CHAR = new Map<number, number>([
   [0x20ac, 0x80], // €
@@ -120,6 +122,271 @@ function maybeDecodeQuotedPrintable(value: string): string {
 function parseMoney(raw: string): number | undefined {
   const amount = Number(raw.replace(/,/g, ""));
   return Number.isFinite(amount) ? amount : undefined;
+}
+
+const SHIPPING_ADDRESS_LABEL =
+  /^(?:shipping\s+address|delivers?\s+to|delivering\s+to|delivery\s+address|ship(?:ping)?\s+to)\s*:?\s*$/i;
+const SHIPPING_ADDRESS_INLINE =
+  /^(?:shipping\s+address|delivers?\s+to|delivering\s+to|delivery\s+address|ship(?:ping)?\s+to)\s*:\s*(.+)$/i;
+const PICKUP_ADDRESS_LABEL = /^(?:pickup\s+location|pick-?up\s+location|picking\s+up\s+at)\s*:?\s*$/i;
+const ADDRESS_HARD_STOP =
+  /^(?:order\s+summary|qty\.?|quantity|items?|subtotal|order\s+total|estimated(?:\s+arrival)?|perfect pairings|need\s+help|questions)/i;
+const ADDRESS_SKIP_LINE =
+  /^(?:payment(?:\s+method)?|billing(?:\s+address)?|visa\b|mastercard|amex|american express|discover|redcard|ending in|\*{2,}\d{4}|gift(?:\s+message)?|track(?:ing)?|view\s+order|promo|circle|shop|http|www\.|target\.com|write a review|visit|thanks|color|size|style|dcpi|sku|new releases|customer service)/i;
+const CITY_STATE_ZIP = /^(.+?),?\s+([A-Za-z]{2}),?\s+(\d{5}(?:-\d{4})?)$/;
+const COUNTRY_LINE = /^(?:united states|usa|u\.s\.a\.?)$/i;
+
+function isAddressLabelLine(line: string): boolean {
+  return SHIPPING_ADDRESS_LABEL.test(line) || PICKUP_ADDRESS_LABEL.test(line);
+}
+
+function collectLabeledAddressLines(text: string, kind: "shipping" | "pickup"): string[] | undefined {
+  const lines = emailPlainText(text)
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const isLabel = kind === "shipping" ? SHIPPING_ADDRESS_LABEL : PICKUP_ADDRESS_LABEL;
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const inline = kind === "shipping" ? line.match(SHIPPING_ADDRESS_INLINE) : null;
+    const labeled = isLabel.test(line);
+    if (!labeled && !inline) continue;
+    const collected: string[] = [];
+    if (inline?.[1]?.trim()) collected.push(inline[1].trim());
+    for (let next = index + 1; next < lines.length && collected.length < 6; next += 1) {
+      const value = lines[next];
+      if (isAddressLabelLine(value) || ADDRESS_HARD_STOP.test(value)) break;
+      if (COUNTRY_LINE.test(value) || ADDRESS_SKIP_LINE.test(value)) continue;
+      collected.push(value);
+      if (CITY_STATE_ZIP.test(value) && collected.length >= 2) break;
+      if (collected.length === 1 && parseCommaSeparatedAddress(value, kind)) break;
+    }
+    if (collected.length >= 2) return collected;
+    if (collected.length === 1 && parseCommaSeparatedAddress(collected[0], kind)) return collected;
+  }
+  return undefined;
+}
+
+function extractShippingLinesFromHtml(html: string): string[] | undefined {
+  const scoped = scopedOrderContent(html);
+  const shipClass = scoped.match(
+    /class=["'][^"']*ship-address[^"']*["'][^>]*>([\s\S]{0,600}?)<\/h[1-6]>/i,
+  );
+  if (shipClass?.[1]) {
+    const text = emailPlainText(shipClass[1])
+      .replace(/^delivers?\s+to:?\s*/i, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (text.length >= 10) return [text];
+  }
+  const delivers = scoped.match(
+    /delivers?\s+to:?\s*(?:<br\s*\/?>\s*)?(?:<span[^>]*>)?\s*([^<]{10,240})/i,
+  );
+  if (delivers?.[1]) {
+    const text = decodeEntities(delivers[1]).replace(/\s+/g, " ").trim();
+    if (text.length >= 10) return [text];
+  }
+  const match = scoped.match(
+    /(?:shipping\s+address|delivers?\s+to|delivering\s+to|delivery\s+address|ship(?:ping)?\s+to)[\s\S]{0,160}?(?:<\/(?:h[1-6]|strong|b|span|p|td|th)>)([\s\S]{0,800}?)(?:payment(?:\s+method)?|billing(?:\s+address)?|order\s+summary|qty\.?|estimated|track(?:ing)?\s+order)/i,
+  );
+  if (!match?.[1]) return undefined;
+  const lines = emailPlainText(match[1])
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !COUNTRY_LINE.test(line) && !isAddressLabelLine(line));
+  return lines.length > 0 ? lines.slice(0, 6) : undefined;
+}
+
+function parseCommaSeparatedAddress(value: string, source: "shipping" | "pickup"): OrderAddress | undefined {
+  const line = decodeEntities(value).replace(/\s+/g, " ").trim();
+  const tail = line.match(/^(.*),\s*([A-Za-z]{2}),?\s+(\d{5}(?:-\d{4})?)$/);
+  if (!tail) return undefined;
+  const parts = tail[1]
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (parts.length < 2) return undefined;
+  const city = parts[parts.length - 1];
+  const before = parts.slice(0, -1);
+  let name: string | undefined;
+  let street = before;
+  if (!/^\d/.test(before[0] ?? "") && before.length >= 2) {
+    name = before[0];
+    street = before.slice(1);
+  }
+  const line1 = street[0];
+  const line2 = street.slice(1).join(", ").trim() || undefined;
+  if (!line1 || !city) return undefined;
+  const state = tail[2].toUpperCase();
+  const postalCode = tail[3];
+  return {
+    name,
+    line1,
+    line2,
+    city,
+    state,
+    postalCode,
+    source,
+    raw: [name, line1, line2, `${city}, ${state} ${postalCode}`].filter(Boolean).join("\n"),
+  };
+}
+
+function parseAddressLines(lines: string[], source: "shipping" | "pickup"): OrderAddress | undefined {
+  const cleaned = lines
+    .map((line) => decodeEntities(line).replace(/\s+/g, " ").trim())
+    .filter((line) => line.length > 0 && !COUNTRY_LINE.test(line));
+  if (cleaned.length === 1) return parseCommaSeparatedAddress(cleaned[0], source);
+  const fromComma = cleaned[0] ? parseCommaSeparatedAddress(cleaned[0], source) : undefined;
+  if (fromComma) return fromComma;
+  if (cleaned.length < 2) return undefined;
+
+  let city: string | undefined;
+  let state: string | undefined;
+  let postalCode: string | undefined;
+  let cityIndex = -1;
+  for (let index = cleaned.length - 1; index >= 0; index -= 1) {
+    const match = cleaned[index].match(CITY_STATE_ZIP);
+    if (!match) continue;
+    city = match[1].replace(/,+$/, "").trim();
+    state = match[2].toUpperCase();
+    postalCode = match[3];
+    cityIndex = index;
+    break;
+  }
+  const before = cityIndex >= 0 ? cleaned.slice(0, cityIndex) : cleaned;
+  if (before.length === 0 && !city) return undefined;
+
+  let name: string | undefined;
+  let street = before;
+  const firstIsStreet = /^\d/.test(before[0] ?? "");
+  if (!firstIsStreet && before.length >= 1 && (before.length >= 2 || city)) {
+    name = before[0];
+    street = before.slice(1);
+  }
+  const line1 = street[0];
+  const line2 = street.slice(1).join(" ").trim() || undefined;
+  const lastLine = city && state && postalCode ? `${city}, ${state} ${postalCode}` : cleaned[cityIndex];
+  const raw = [name, ...street, lastLine].filter(Boolean).join("\n");
+  if (!raw) return undefined;
+  return { name, line1, line2, city, state, postalCode, source, raw };
+}
+
+export function formatOrderAddress(address?: OrderAddress): string {
+  if (!address) return "";
+  if (address.raw.trim()) return address.raw.trim();
+  const lastLine = [address.city, address.state].filter(Boolean).join(", ");
+  return [address.name, address.line1, address.line2, [lastLine, address.postalCode].filter(Boolean).join(" ")]
+    .filter((line) => line?.trim())
+    .join("\n");
+}
+
+export function mergeOrderAddress(incoming?: OrderAddress, current?: OrderAddress): OrderAddress | undefined {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  const score = (value?: OrderAddress) =>
+    [value?.line1, value?.city, value?.postalCode, value?.name].filter((part) => part?.trim()).length;
+  return score(incoming) >= score(current) ? incoming : current;
+}
+
+const PAYMENT_BRAND =
+  /visa|mastercard|master\s*card|american\s*express|amex|discover|redcard|red\s*card|target(?:\s+circle)?(?:\s+red)?(?:\s+card)?/i;
+
+function parsePaymentLabel(value: string): OrderPayment | undefined {
+  const text = decodeEntities(value).replace(/\s+/g, " ").trim();
+  if (!text || text.length > 80) return undefined;
+  const branded = text.match(
+    new RegExp(
+      `^(${PAYMENT_BRAND.source})(?:\\s+(?:card|debit|credit))*\\s*(?:\\*{1,8}|x{1,8}|ending\\s+in\\s*\\*?)\\s*(\\d{4})$`,
+      "i",
+    ),
+  );
+  if (branded?.[1] && branded[2]) {
+    return { brand: branded[1].replace(/\s+/g, " ").trim(), last4: branded[2], raw: text };
+  }
+  const last4Only = text.match(/^(?:\*{1,8}|x{1,8}|ending\s+in)\s*(\d{4})$/i);
+  if (last4Only?.[1]) return { last4: last4Only[1], raw: text };
+  return undefined;
+}
+
+export function mergeOrderPayment(incoming?: OrderPayment, current?: OrderPayment): OrderPayment | undefined {
+  if (!incoming) return current;
+  if (!current) return incoming;
+  if (incoming.last4 && !current.last4) return incoming;
+  if (current.last4 && !incoming.last4) return current;
+  return incoming.raw.length >= current.raw.length ? incoming : current;
+}
+
+export function extractTargetOrderPayment(...parts: string[]): OrderPayment | undefined {
+  const joined = parts.filter(Boolean).map(maybeDecodeQuotedPrintable);
+  if (joined.length === 0) return undefined;
+
+  for (const html of joined.filter((part) => /<[a-z][\s\S]*>/i.test(part))) {
+    const scoped = scopedOrderContent(html);
+    const classBlock = scoped.match(
+      /class=["'][^"']*payment[^"']*["'][^>]*>([\s\S]{0,400}?)<\/(?:p|td|div|span|h[1-6]|li)>/i,
+    );
+    if (classBlock?.[1]) {
+      const parsed = parsePaymentLabel(emailPlainText(classBlock[1]));
+      if (parsed) return parsed;
+    }
+    const afterLabel = scoped.match(
+      /payment(?:\s+method)?\s*[:\-]?\s*(?:<\/[^>]+>\s*){0,8}([^<]{3,80})/i,
+    );
+    if (afterLabel?.[1]) {
+      const parsed = parsePaymentLabel(decodeEntities(afterLabel[1]));
+      if (parsed) return parsed;
+    }
+  }
+
+  const text = emailPlainText(joined.join("\n"));
+  const labeled =
+    text.match(/payment(?:\s+method)?\s*[:\-]?\s*([^\n]{3,80})/i) ??
+    text.match(/payment(?:\s+method)?\s*[:\-]?\s*\n\s*([^\n]{3,80})/i);
+  if (labeled?.[1]) {
+    const parsed = parsePaymentLabel(labeled[1]);
+    if (parsed) return parsed;
+  }
+
+  const standalone = text.match(
+    new RegExp(
+      `\\b(${PAYMENT_BRAND.source})(?:\\s+(?:card|debit|credit))*\\s*(?:\\*{1,8}|x{1,8}|ending\\s+in\\s*\\*?)\\s*(\\d{4})\\b`,
+      "i",
+    ),
+  );
+  if (standalone?.[1] && standalone[2]) {
+    return parsePaymentLabel(`${standalone[1]} *${standalone[2]}`) ?? {
+      brand: standalone[1].replace(/\s+/g, " ").trim(),
+      last4: standalone[2],
+      raw: `${standalone[1].replace(/\s+/g, " ").trim()} *${standalone[2]}`,
+    };
+  }
+  return undefined;
+}
+
+export function extractTargetOrderAddress(...parts: string[]): OrderAddress | undefined {
+  const joined = parts.filter(Boolean).map(maybeDecodeQuotedPrintable);
+  if (joined.length === 0) return undefined;
+  const htmlParts = joined.filter((part) => /<[a-z][\s\S]*>/i.test(part));
+  for (const html of htmlParts) {
+    const fromHtml = extractShippingLinesFromHtml(html);
+    const parsed = fromHtml ? parseAddressLines(fromHtml, "shipping") : undefined;
+    if (parsed) return parsed;
+  }
+  const text = joined.join("\n");
+  const shipping = collectLabeledAddressLines(text, "shipping");
+  const fromShipping = shipping ? parseAddressLines(shipping, "shipping") : undefined;
+  if (fromShipping) return fromShipping;
+  const pickup = collectLabeledAddressLines(text, "pickup");
+  const fromPickup = pickup ? parseAddressLines(pickup, "pickup") : undefined;
+  if (fromPickup) return fromPickup;
+  const store = emailPlainText(text).match(
+    /prepping your order\s+(.+?)\s+(\d+[^,\n]*,\s*[^,\n]+,\s*[A-Za-z]{2}\s+\d{5}(?:-\d{4})?)/i,
+  );
+  if (store?.[1] && store[2]) {
+    const parsed = parseCommaSeparatedAddress(`${store[1].trim()}, ${store[2].trim()}`, "pickup");
+    if (parsed) return parsed;
+  }
+  return undefined;
 }
 
 export function extractOrderTotal(...parts: string[]): number | undefined {

@@ -1,25 +1,62 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatUsPhone } from "../lib/phoneUtils";
-import type { MasterProfile } from "../lib/types";
+import type { MasterProfile, ProfileCategory } from "../lib/types";
 import {
   getMasterProfileValidationError,
   isMasterProfileComplete,
   updateMasterField,
   withResolvedMasterProfileName,
 } from "../lib/masterProfileUtils";
+import {
+  createUncategorizedProfileCategory,
+  isProfileCategoryLocked,
+  nextProfileCategorySortOrder,
+  PROFILE_UNCATEGORIZED_CATEGORY_ID,
+  sortProfileCategories,
+} from "../lib/profileCategoryUtils";
+import {
+  AccountCategorySelect,
+  resolveCategorySelection,
+  type CategorySelection,
+} from "./AccountCategorySelect";
 import { Field, Section } from "./ui";
 
 interface MasterProfileEditorProps {
   isNew?: boolean;
   master: MasterProfile;
   onChange: (master: MasterProfile) => void;
-  onSave: (master: MasterProfile) => Promise<void>;
+  onSave: (master: MasterProfile, groupId?: string) => Promise<void>;
+  profileGroups?: ProfileCategory[];
+  initialGroupId?: string | null;
+  onSaveGroup?: (group: ProfileCategory) => Promise<void>;
 }
 
-export function MasterProfileEditor({ isNew = false, master, onChange, onSave }: MasterProfileEditorProps) {
+function existingGroupSelection(groupId?: string | null): CategorySelection {
+  return {
+    kind: "existing",
+    categoryId: groupId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID,
+  };
+}
+
+export function MasterProfileEditor({
+  isNew = false,
+  master,
+  onChange,
+  onSave,
+  profileGroups = [],
+  initialGroupId = null,
+  onSaveGroup,
+}: MasterProfileEditorProps) {
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [savedSnapshot, setSavedSnapshot] = useState(JSON.stringify(master));
+  const [groupSelection, setGroupSelection] = useState<CategorySelection>(() =>
+    existingGroupSelection(initialGroupId),
+  );
+
+  useEffect(() => {
+    setGroupSelection(existingGroupSelection(initialGroupId));
+  }, [initialGroupId, master.id]);
 
   useEffect(() => {
     setSavedSnapshot(JSON.stringify(master));
@@ -38,23 +75,61 @@ export function MasterProfileEditor({ isNew = false, master, onChange, onSave }:
 
   const isComplete = useMemo(() => isMasterProfileComplete(master), [master]);
 
+  const groupOptions = useMemo(() => {
+    let options = sortProfileCategories(profileGroups);
+    if (!options.some((group) => group.id === PROFILE_UNCATEGORIZED_CATEGORY_ID)) {
+      options = sortProfileCategories([createUncategorizedProfileCategory(), ...options]);
+    }
+    return options;
+  }, [profileGroups]);
+
+  const selectedGroupLocked =
+    groupSelection.kind === "existing" &&
+    isProfileCategoryLocked(profileGroups, groupSelection.categoryId);
+  const groupReady =
+    !isNew ||
+    groupSelection.kind === "existing" ||
+    (groupSelection.kind === "new" && groupSelection.name.trim().length > 0);
+
   const handleSave = async () => {
     const validationError = getMasterProfileValidationError(master);
     if (validationError) {
       setStatus(validationError);
       return;
     }
+    if (isNew && selectedGroupLocked) {
+      setStatus("Unlock the group before creating a master against it.");
+      return;
+    }
 
     setSaving(true);
     try {
+      let groupId: string | undefined;
+      if (isNew && onSaveGroup) {
+        groupId = await resolveCategorySelection(groupSelection, async (name) => {
+          const group: ProfileCategory = {
+            id: crypto.randomUUID(),
+            name: name.trim(),
+            createdAt: new Date().toISOString(),
+            sortOrder: nextProfileCategorySortOrder(profileGroups),
+          };
+          await onSaveGroup(group);
+          return group;
+        });
+      } else if (isNew && groupSelection.kind === "existing") {
+        groupId = groupSelection.categoryId;
+      }
+
       const next = withResolvedMasterProfileName({
         ...master,
         updatedAt: new Date().toISOString(),
       });
-      await onSave(next);
+      await onSave(next, groupId);
       onChange(next);
       setSavedSnapshot(JSON.stringify(next));
       setStatus(isNew ? "Master profile created." : "Master profile saved.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Could not create master profile.");
     } finally {
       setSaving(false);
     }
@@ -76,7 +151,7 @@ export function MasterProfileEditor({ isNew = false, master, onChange, onSave }:
           <button
             type="button"
             className="btn-secondary"
-            disabled={(isNew ? false : !isDirty) || !isComplete || saving}
+            disabled={(isNew ? false : !isDirty) || !isComplete || !groupReady || selectedGroupLocked || saving}
             onClick={() => void handleSave()}
           >
             {saving ? (isNew ? "Creating..." : "Saving...") : isNew ? "Create master" : "Save master"}
@@ -87,6 +162,21 @@ export function MasterProfileEditor({ isNew = false, master, onChange, onSave }:
       {status ? <p className="status-inline">{status}</p> : null}
 
       <div className="editor-body">
+        {isNew ? (
+          <Field
+            label="Group"
+            hint="Jigs generated from this master go into this group. Email, phone, and cards stay unique here."
+          >
+            <AccountCategorySelect
+              categories={groupOptions}
+              selection={groupSelection}
+              onSelectionChange={setGroupSelection}
+              uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
+              addOptionLabel="+ Add group"
+              newPlaceholder="Enter group name"
+            />
+          </Field>
+        ) : null}
         <Field label="Master Profile Name">
           <input
             value={master.profileName ?? ""}

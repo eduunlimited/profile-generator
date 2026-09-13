@@ -1,10 +1,12 @@
 import {
   addressRulesChangeStreetLine,
   applyJigRulesBatchToMasterAsync,
+  applyLocalJigRulesToMaster,
   applyLocalJigRulesToProfile,
   buildStreetUseCounts,
   canAssignStreetLine,
   collectUniqueStreetLines,
+  finalizeJigFromLocalAndMisspell,
   finalizeRejigFromLocalAndMisspell,
   incrementStreetUse,
   streetLineFingerprint,
@@ -28,6 +30,8 @@ const MAX_BATCH_MISSPELL_PASSES = 3;
 export interface RejigProfilesParams {
   nameMisspellScope?: NameMisspellScope;
   phoneJigLastFour?: boolean;
+  /** Jig from the master's clean address/name instead of the profile's current jig. */
+  sourceFromMaster?: boolean;
 }
 
 function profileCategoryId(profile: Profile): string {
@@ -112,6 +116,7 @@ export async function rejigProfiles(
 ): Promise<{ updated: Profile[]; failedIds: string[] }> {
   const reJigIds = new Set(profilesToUpdate.map((profile) => profile.id));
   const nameMisspellScope = params.nameMisspellScope ?? "both";
+  const sourceFromMaster = Boolean(params.sourceFromMaster);
   const occupiedByCategory = buildStreetUseCountsByCategory(allProfiles, reJigIds);
   const categoryIds = new Set(profilesToUpdate.map(profileCategoryId));
   const now = new Date().toISOString();
@@ -124,10 +129,22 @@ export async function rejigProfiles(
   );
 
   const hasAddressJig = addressJig.rules.some((rule) => rule.type !== "splitLines");
-  const changesStreetLine = addressRulesChangeStreetLine(addressJig.rules);
-  const slots: LocalJigSlot[] = profilesToUpdate.map((profile) =>
-    applyLocalJigRulesToProfile(profile, master, namePreset, [], addressJig.rules, nameMisspellScope),
-  );
+  const changesStreetLine = addressRulesChangeStreetLine(addressJig.rules) || sourceFromMaster;
+  const applyLocalSlot = (profile: Profile) =>
+    sourceFromMaster
+      ? applyLocalJigRulesToMaster(master, namePreset, [], addressJig.rules, nameMisspellScope)
+      : applyLocalJigRulesToProfile(profile, master, namePreset, [], addressJig.rules, nameMisspellScope);
+  const finalizeSlot = (profile: Profile, slot: LocalJigSlot, misspell: OpenAiMisspellResult | undefined) => {
+    if (sourceFromMaster) {
+      const jigged = finalizeJigFromLocalAndMisspell(master, slot, misspell, namePreset);
+      return {
+        name: namePreset ? jigged.name : profile.name,
+        address: hasAddressJig ? jigged.address : { ...master.address },
+      };
+    }
+    return finalizeRejigFromLocalAndMisspell(profile, master, slot, misspell, namePreset);
+  };
+  const slots: LocalJigSlot[] = profilesToUpdate.map((profile) => applyLocalSlot(profile));
   const needsNameMisspell = slots.some((slot) => slot.needsNameMisspell);
   const needsStreetMisspell = slots.some((slot) => slot.needsStreetMisspell);
   const needsMisspell = needsNameMisspell || needsStreetMisspell;
@@ -140,16 +157,10 @@ export async function rejigProfiles(
       const indexedPending = pendingIndexes.map((originalIndex) => ({
         index: originalIndex,
         slot: slots[originalIndex],
-        nameSource: profilesToUpdate[originalIndex].name,
+        nameSource: sourceFromMaster ? master.name : profilesToUpdate[originalIndex].name,
       }));
       const jiggedSoFar = slots.map((slot, slotIndex) =>
-        finalizeRejigFromLocalAndMisspell(
-          profilesToUpdate[slotIndex],
-          master,
-          slot,
-          misspellResults[slotIndex],
-          namePreset,
-        ),
+        finalizeSlot(profilesToUpdate[slotIndex], slot, misspellResults[slotIndex]),
       );
       const pendingSet = new Set(pendingIndexes);
       const reservedStreetLines = collectCategoryReservedStreetLines(
@@ -179,13 +190,7 @@ export async function rejigProfiles(
       }
 
       const jigged = slots.map((slot, slotIndex) =>
-        finalizeRejigFromLocalAndMisspell(
-          profilesToUpdate[slotIndex],
-          master,
-          slot,
-          misspellResults[slotIndex],
-          namePreset,
-        ),
+        finalizeSlot(profilesToUpdate[slotIndex], slot, misspellResults[slotIndex]),
       );
       const runningByCategory = new Map<string, Map<string, number>>();
       for (const [categoryId, counts] of occupiedByCategory) {
@@ -226,20 +231,10 @@ export async function rejigProfiles(
     let merged: Profile | null = null;
 
     for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
-      const slot =
-        attempt === 0
-          ? slots[index]
-          : applyLocalJigRulesToProfile(
-              profile,
-              master,
-              namePreset,
-              [],
-              addressJig.rules,
-              nameMisspellScope,
-            );
+      const slot = attempt === 0 ? slots[index] : applyLocalSlot(profile);
       const misspell = needsMisspell ? misspellResults[index] : undefined;
-      const jigged = finalizeRejigFromLocalAndMisspell(profile, master, slot, misspell, namePreset);
-      const address = hasAddressJig ? jigged.address : profile.address;
+      const jigged = finalizeSlot(profile, slot, misspell);
+      const address = hasAddressJig || sourceFromMaster ? jigged.address : profile.address;
       const fingerprint = streetLineFingerprint(address.street);
 
       if (changesStreetLine && isStreetAtCapInCategory(fingerprint, categoryId, occupiedByCategory)) {
@@ -283,6 +278,7 @@ export async function rejigProfiles(
 
       merged = {
         ...profile,
+        ...(sourceFromMaster ? { masterProfileId: master.id } : {}),
         ...(namePreset
           ? {
               nameJigPresetId: namePreset.id,
@@ -301,7 +297,14 @@ export async function rejigProfiles(
               address,
               addressCheck: undefined,
             }
-          : {}),
+          : sourceFromMaster
+            ? {
+                address,
+                addressCheck: undefined,
+                addressJigPresetIds: undefined,
+                addressJigPresetName: undefined,
+              }
+            : {}),
         ...(params.phoneJigLastFour ? { phone } : {}),
         jigPresetName: [nameLabel, addressLabel].filter(Boolean).join(" + ") || undefined,
         updatedAt: now,

@@ -65,11 +65,69 @@ function uniqueLabels(values: string[]): string {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))].join(", ");
 }
 
-export function profileMatchesRetailer(profile: ProfileSummary, retailer: OrderRetailer): boolean {
+export function profileMatchesRetailer(
+  profile: Pick<ProfileSummary, "accountSite">,
+  retailer: OrderRetailer,
+): boolean {
   const site = profile.accountSite?.trim();
   if (!site) return false;
   const normalized = site.toLowerCase().replace(/\s+/g, "-");
   return normalized === retailer || site.toLowerCase() === retailerLabel(retailer).toLowerCase();
+}
+
+const ORDER_RETAILERS: OrderRetailer[] = ["target", "walmart", "pokemon-center"];
+
+export function retailerFromAccountSite(site?: string): OrderRetailer | null {
+  if (!site?.trim()) return null;
+  return ORDER_RETAILERS.find((retailer) => profileMatchesRetailer({ accountSite: site }, retailer)) ?? null;
+}
+
+function profileAccountEmails(profile: ProfileSummary, poolEmails: PoolEmail[]): string[] {
+  const emails = new Set<string>();
+  for (const value of [profile.email, profile.billingEmail]) {
+    const email = value.trim().toLowerCase();
+    if (email) emails.add(email);
+  }
+  if (profile.emailPoolId) {
+    const pooled = poolEmails.find((item) => item.id === profile.emailPoolId)?.email.trim().toLowerCase();
+    if (pooled) emails.add(pooled);
+  }
+  return [...emails];
+}
+
+/** Cancelled orders for this jig's site and account email only. */
+export function cancelledOrderCountForProfile(
+  profile: ProfileSummary,
+  orders: ParsedOrder[],
+  poolEmails: PoolEmail[],
+): number {
+  const retailer = retailerFromAccountSite(profile.accountSite);
+  if (!retailer) return 0;
+  const emails = new Set(profileAccountEmails(profile, poolEmails));
+  if (emails.size === 0) return 0;
+
+  let count = 0;
+  for (const order of orders) {
+    if (order.status !== "cancelled" || order.retailer !== retailer) continue;
+    const email = orderEmailKey(order);
+    if (email !== UNKNOWN_ORDER_EMAIL && emails.has(email)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+export function cancelledOrderCountsByProfileId(
+  profiles: ProfileSummary[],
+  orders: ParsedOrder[],
+  poolEmails: PoolEmail[],
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const profile of profiles) {
+    const count = cancelledOrderCountForProfile(profile, orders, poolEmails);
+    if (count > 0) counts.set(profile.id, count);
+  }
+  return counts;
 }
 
 export function profilesMatchingOrderEmail(

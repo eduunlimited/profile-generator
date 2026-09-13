@@ -5,12 +5,14 @@ import { ensureDataKey, releaseDataKey } from "../lib/localDataStore";
 import {
   filterOrders,
   filterOrdersBySite,
+  formatOrderAddress,
   formatOrderMoney,
   ORDER_REFRESH_MS,
   ORDER_SITES,
   orderEmailKey,
   orderInPeriod,
   orderTableItem,
+  orderCardSearchText,
   PARSED_ORDER_SITES,
   refreshTargetOrders,
   repairUtf8Mojibake,
@@ -24,7 +26,16 @@ import {
   type OrderSiteFilter,
   type SpendPeriod,
 } from "../lib/orderEmail";
-import type { OrderEventKind, OrderLineItem, OrderStatus, ParsedOrder, PoolEmail, ProfileSummary } from "../lib/types";
+import type {
+  CreditCard,
+  OrderEventKind,
+  OrderLineItem,
+  OrderStatus,
+  ParsedOrder,
+  PoolEmail,
+  ProfileSummary,
+} from "../lib/types";
+import { OrderCardLabel } from "./OrderCardLabel";
 
 const STATUS_LABEL: Record<OrderStatus, string> = {
   placed: "Placed",
@@ -108,9 +119,10 @@ function cardNameByEmailMap(profiles: ProfileSummary[], poolEmails: PoolEmail[])
 interface OrdersPanelProps {
   profiles: ProfileSummary[];
   poolEmails?: PoolEmail[];
+  cards?: CreditCard[];
 }
 
-export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
+export function OrdersPanel({ profiles, poolEmails = [], cards = [] }: OrdersPanelProps) {
   const [orders, setOrders] = useState<ParsedOrder[]>([]);
   const [siteFilter, setSiteFilter] = useState<OrderSiteFilter>("all");
   const [query, setQuery] = useState("");
@@ -189,11 +201,14 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
   const periodLabel = SPEND_PERIODS.find((period) => period.id === spendPeriod)?.label ?? "1 month";
   const cardNames = useMemo(() => cardNameByEmailMap(profiles, poolEmails), [profiles, poolEmails]);
 
-  const cardNameFor = (order: ParsedOrder): string => {
+  const cardFallbackFor = (order: ParsedOrder): string => {
     const email = order.recipientEmail?.trim().toLowerCase();
     if (!email) return "";
     return cardNames.get(email) ?? "";
   };
+
+  const cardTitleFor = (order: ParsedOrder): string =>
+    orderCardSearchText(order, cards, profiles, cardFallbackFor(order));
 
   useEffect(() => {
     if (listFilter !== "cancelled") return;
@@ -219,7 +234,8 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
           formatItemNames(order),
           itemSearchText(order),
           formatItemQty(order),
-          cardNameFor(order),
+          cardTitleFor(order),
+          formatOrderAddress(order.shippingAddress),
           order.total != null ? formatTotal(order) : "",
           retailerLabel(order.retailer),
         ]
@@ -228,7 +244,7 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
         return haystack.includes(needle);
       }),
     );
-  }, [siteOrders, query, listFilter, spendPeriod, emailFilter, cardNames]);
+  }, [siteOrders, query, listFilter, spendPeriod, emailFilter, cardNames, cards, profiles]);
 
   const active = filtered.find((order) => order.id === activeId) ?? null;
   const showTracking = listFilter !== "cancelled" && filtered.some((order) => order.status !== "cancelled");
@@ -431,8 +447,13 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
                     >
                       <td>{retailerLabel(order.retailer)}</td>
                       <td className="col-card">{order.orderId}</td>
-                      <td className="orders-card-cell" title={cardNameFor(order) || undefined}>
-                        {cardNameFor(order) || "—"}
+                      <td className="orders-card-cell" title={cardTitleFor(order) || undefined}>
+                        <OrderCardLabel
+                          order={order}
+                          cards={cards}
+                          profiles={profiles}
+                          fallback={cardFallbackFor(order)}
+                        />
                       </td>
                       <td className="orders-email-cell" title={order.recipientEmail || undefined}>
                         {order.recipientEmail || "—"}
@@ -472,7 +493,14 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
               <dl className="orders-detail-meta">
                 <div>
                   <dt>Card</dt>
-                  <dd>{cardNameFor(active) || "—"}</dd>
+                  <dd>
+                    <OrderCardLabel
+                      order={active}
+                      cards={cards}
+                      profiles={profiles}
+                      fallback={cardFallbackFor(active)}
+                    />
+                  </dd>
                 </div>
                 <div>
                   <dt>Email</dt>
@@ -481,6 +509,16 @@ export function OrdersPanel({ profiles, poolEmails = [] }: OrdersPanelProps) {
                 <div>
                   <dt>Total</dt>
                   <dd>{formatTotal(active)}</dd>
+                </div>
+                <div className="orders-detail-address">
+                  <dt>{active.shippingAddress?.source === "pickup" ? "Pickup address" : "Address"}</dt>
+                  <dd>
+                    {formatOrderAddress(active.shippingAddress) ? (
+                      <span className="orders-address-block">{formatOrderAddress(active.shippingAddress)}</span>
+                    ) : (
+                      "—"
+                    )}
+                  </dd>
                 </div>
                 {active.fulfillment === "pickup" ? (
                   <div>

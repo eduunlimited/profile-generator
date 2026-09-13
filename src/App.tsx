@@ -234,6 +234,10 @@ function AppContent() {
 
   const [isCreatingMaster, setIsCreatingMaster] = useState(false);
 
+  const [createMasterGroupId, setCreateMasterGroupId] = useState<string | null>(null);
+
+  const [focusProfileGroupId, setFocusProfileGroupId] = useState<string | null>(null);
+
   const createMasterLockRef = useRef(false);
 
   const [masterDraft, setMasterDraft] = useState<MasterProfile | null>(null);
@@ -342,6 +346,8 @@ function AppContent() {
 
       setIsCreatingMaster(false);
 
+      setCreateMasterGroupId(null);
+
       setMasterDraft(null);
 
       setEditingMasterId(null);
@@ -352,7 +358,7 @@ function AppContent() {
 
 
 
-  const handleCreateMaster = () => {
+  const handleCreateMaster = (groupId?: string) => {
 
     if (createMasterLockRef.current || (showMasterEditor && isCreatingMaster)) {
 
@@ -366,6 +372,8 @@ function AppContent() {
 
     setIsCreatingMaster(true);
 
+    setCreateMasterGroupId(groupId ?? null);
+
     setEditingMasterId(null);
 
     setMasterDraft(master);
@@ -376,7 +384,7 @@ function AppContent() {
 
 
 
-  const handleSaveMaster = async (master: MasterProfile) => {
+  const handleSaveMaster = async (master: MasterProfile, groupId?: string) => {
 
     const isNew = isCreatingMaster;
 
@@ -388,13 +396,25 @@ function AppContent() {
 
       createMasterLockRef.current = false;
 
-      setActiveMasterId(master.id);
+      setCreateMasterGroupId(null);
 
       setShowMasterEditor(false);
 
       setMasterDraft(null);
 
       setEditingMasterId(null);
+
+      if (groupId) {
+
+        setFocusProfileGroupId(groupId);
+
+        openGenerateModal([master.id], groupId);
+
+      } else {
+
+        setActiveMasterId(master.id);
+
+      }
 
       return;
 
@@ -432,7 +452,7 @@ function AppContent() {
 
     setGenerateCategoryId(categoryId ?? null);
 
-    if (ids.length === 1) setActiveMasterId(ids[0]);
+    if (ids.length === 1 && !categoryId) setActiveMasterId(ids[0]);
 
     setShowGenerateModal(true);
 
@@ -700,6 +720,10 @@ function AppContent() {
 
                 createMasterDisabled={showMasterEditor && isCreatingMaster}
 
+                focusGroupId={focusProfileGroupId}
+
+                onFocusGroupConsumed={() => setFocusProfileGroupId(null)}
+
                 onOpenMaster={openMasterEditor}
 
                 onDeleteMaster={handleDeleteMaster}
@@ -937,7 +961,7 @@ function AppContent() {
 
           {activeTab === "orders" || ordersTabOpened ? (
             <div className={`accounts-panel${activeTab === "orders" ? "" : " is-tab-hidden"}`}>
-              <OrdersPanel profiles={profiles} poolEmails={poolEmails} />
+              <OrdersPanel profiles={profiles} poolEmails={poolEmails} cards={creditCards} />
             </div>
           ) : null}
 
@@ -946,6 +970,7 @@ function AppContent() {
               <OrderPerformancePanel
                 profiles={profiles}
                 poolEmails={poolEmails}
+                cards={creditCards}
                 active={activeTab === "performance"}
               />
             </div>
@@ -1080,6 +1105,8 @@ function AppContent() {
             open={showMasterEditor && Boolean(masterDraft)}
             isNew={isCreatingMaster}
             master={masterDraft!}
+            profileGroups={profileCategories}
+            initialGroupId={createMasterGroupId}
             childCount={
               editingMasterId
                 ? profiles.filter((profile) => profile.masterProfileId === editingMasterId).length
@@ -1087,6 +1114,7 @@ function AppContent() {
             }
             onChange={setMasterDraft}
             onSave={handleSaveMaster}
+            onSaveGroup={upsertProfileCategory}
             onDelete={
               editingMasterId && !isCreatingMaster
                 ? async () => {

@@ -40,6 +40,7 @@ import type {
   Credential,
   CreditCard,
   MasterProfile,
+  ParsedOrder,
   PoolEmail,
   Profile,
   ProfileCategory,
@@ -57,6 +58,13 @@ import {
   type ProfileOpportunityId,
 } from "../lib/profileOpportunities";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
+import { listOrders } from "../lib/api";
+import { ensureDataKey } from "../lib/localDataStore";
+import {
+  cancelledOrderCountsByProfileId,
+  retailerFromAccountSite,
+} from "../lib/orderEmail/performance";
+import { retailerLabel } from "../lib/orderEmail/dashboard";
 import { BillingAddressCell } from "./BillingAddressCell";
 import { addressCheckLabel, addressMasterMatchLabel } from "../lib/addressCheck";
 import {
@@ -139,8 +147,10 @@ interface ProfilesPanelProps {
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
   onDeleteCategory: (id: string) => Promise<void>;
   onReorderCategories?: (orderedIds: string[]) => Promise<void>;
-  onCreateMaster: () => void;
+  onCreateMaster: (groupId?: string) => void;
   createMasterDisabled?: boolean;
+  focusGroupId?: string | null;
+  onFocusGroupConsumed?: () => void;
   onOpenMaster: (masterId: string) => void;
   onDeleteMaster: (masterId: string) => Promise<void>;
   onGenerate: (masterIds: string[], groupId?: string) => void;
@@ -179,6 +189,8 @@ export function ProfilesPanel({
   onReorderCategories,
   onCreateMaster,
   createMasterDisabled = false,
+  focusGroupId = null,
+  onFocusGroupConsumed,
   onOpenMaster,
   onDeleteMaster,
   onGenerate,
@@ -210,6 +222,7 @@ export function ProfilesPanel({
   const [showMoveModal, setShowMoveModal] = useState(false);
   const [showCopyModal, setShowCopyModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [orders, setOrders] = useState<ParsedOrder[]>([]);
   const [moveCategorySelection, setMoveCategorySelection] = useState<CategorySelection>(() =>
     existingCategorySelection(),
   );
@@ -359,6 +372,11 @@ export function ProfilesPanel({
     return filterProfilesByOpportunity(visibleProfiles, profileOpportunities, activeOpportunityId);
   }, [showProfileOpportunities, visibleProfiles, profileOpportunities, activeOpportunityId]);
 
+  const cancelCountsByProfileId = useMemo(
+    () => cancelledOrderCountsByProfileId(profiles, orders, poolEmails),
+    [orders, poolEmails, profiles],
+  );
+
   const searchFilteredProfiles = useMemo(() => {
     const query = tableQuery.trim().toLowerCase();
     if (!query) return opportunityFilteredProfiles;
@@ -379,13 +397,14 @@ export function ProfilesPanel({
         addressCheckLabel(profile.addressCheckStatus),
         profile.addressCheckDisplayLabel,
         addressMasterMatchLabel(profile.addressMasterMatch),
+        cancelCountsByProfileId.has(profile.id) ? "cancel cancelled cancellation" : "",
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [masterLabelById, opportunityFilteredProfiles, tableQuery]);
+  }, [cancelCountsByProfileId, masterLabelById, opportunityFilteredProfiles, tableQuery]);
 
   const profileTableColumns = useResizableTableColumns({
     columnIds: PROFILE_TABLE_COLUMNS,
@@ -438,6 +457,22 @@ export function ProfilesPanel({
   }, [orderedIds]);
 
   useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        await ensureDataKey("profile-generator:orders");
+        const stored = await listOrders();
+        if (!cancelled) setOrders(stored);
+      } catch {
+        if (!cancelled) setOrders([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     setActiveOpportunityId(null);
   }, [selectedCategoryId]);
 
@@ -462,6 +497,12 @@ export function ProfilesPanel({
     if (categoryStillExists) return;
     setSelectedCategoryId("all");
   }, [categories, selectedCategoryId, selectedMasterId, selectedProfileCategoryId]);
+
+  useEffect(() => {
+    if (!focusGroupId) return;
+    setSelectedCategoryId(groupSidebarId(focusGroupId));
+    onFocusGroupConsumed?.();
+  }, [focusGroupId, onFocusGroupConsumed]);
 
   useEffect(() => {
     if (!selectedMasterId) return;
@@ -925,7 +966,7 @@ export function ProfilesPanel({
 
   const handleCreateMasterClick = () => {
     if (createMasterDisabled) return;
-    onCreateMaster();
+    onCreateMaster(selectedProfileCategoryId ?? undefined);
   };
 
   const handleToolbarEdit = () => {
@@ -1307,6 +1348,7 @@ export function ProfilesPanel({
                     ) : (
                       searchFilteredProfiles.map((profile, index) => {
                         const selected = selectedIds.includes(profile.id);
+                        const cancelRetailer = retailerFromAccountSite(profile.accountSite);
                         return (
                           <tr
                             key={profile.id}
@@ -1339,6 +1381,8 @@ export function ProfilesPanel({
                                 checkMessage={profile.addressCheckMessage}
                                 checkDisplayLabel={profile.addressCheckDisplayLabel}
                                 masterMatch={profile.addressMasterMatch}
+                                cancelCount={cancelCountsByProfileId.get(profile.id) ?? 0}
+                                cancelSiteLabel={cancelRetailer ? retailerLabel(cancelRetailer) : undefined}
                               />
                             </td>
                             <td className="col-card-profile">

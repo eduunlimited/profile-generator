@@ -24,9 +24,9 @@ function writeManualWidths(storageKey: string, widths: Record<string, number>): 
 function measureColumnWidths(table: HTMLTableElement, columnCount: number): number[] {
   const widths = Array.from({ length: columnCount }, () => 0);
   for (const row of Array.from(table.rows)) {
+    if (Array.from(row.cells).some((cell) => cell.colSpan > 1)) continue;
     for (let index = 0; index < columnCount && index < row.cells.length; index += 1) {
       const cell = row.cells[index];
-      if (cell.colSpan > 1) continue;
       widths[index] = Math.max(widths[index], Math.ceil(cell.scrollWidth) + 1);
     }
   }
@@ -46,16 +46,17 @@ function applyBaseWidths(
   measured: number[],
   manuals: Record<string, number>,
   maxWidths: Partial<Record<string, number>> | undefined,
+  minWidths: Partial<Record<string, number>> | undefined,
 ): number[] {
   return columnIds.map((id, index) => {
+    const minWidth = Math.max(MIN_COLUMN_WIDTH, minWidths?.[id] ?? MIN_COLUMN_WIDTH);
     const manual = manuals[id];
-    if (typeof manual === "number") return Math.max(MIN_COLUMN_WIDTH, Math.round(manual));
-    const measuredWidth = measured[index] ?? MIN_COLUMN_WIDTH;
+    if (typeof manual === "number") return Math.max(minWidth, Math.round(manual));
+    const measuredWidth = measured[index] ?? minWidth;
     const maxWidth = maxWidths?.[id];
-    if (typeof maxWidth === "number") {
-      return Math.max(MIN_COLUMN_WIDTH, Math.min(Math.round(measuredWidth), maxWidth));
-    }
-    return Math.max(MIN_COLUMN_WIDTH, measuredWidth);
+    const capped =
+      typeof maxWidth === "number" ? Math.min(Math.round(measuredWidth), maxWidth) : Math.round(measuredWidth);
+    return Math.max(minWidth, capped);
   });
 }
 
@@ -95,12 +96,14 @@ export function useResizableTableColumns(options: {
   columnIds: readonly string[];
   lockedIds?: readonly string[];
   flexIds?: readonly string[];
+  minWidths?: Partial<Record<string, number>>;
   maxWidths?: Partial<Record<string, number>>;
   storageKey: string;
   fitKey: string;
 }): ResizableTableColumns {
   const { columnIds, storageKey, fitKey } = options;
   const flexIds = options.flexIds ?? EMPTY_FLEX_IDS;
+  const minWidths = options.minWidths;
   const maxWidths = options.maxWidths;
   const tableRef = useRef<HTMLTableElement>(null);
   const manualRef = useRef<Record<string, number>>({});
@@ -108,6 +111,11 @@ export function useResizableTableColumns(options: {
   const [widths, setWidths] = useState<number[] | null>(null);
   const lockedIds = useMemo(() => new Set(options.lockedIds ?? []), [options.lockedIds]);
   const flexKey = flexIds.join("\0");
+  const minKey = minWidths
+    ? Object.entries(minWidths)
+        .map(([id, width]) => `${id}:${width}`)
+        .join("\0")
+    : "";
   const maxKey = maxWidths
     ? Object.entries(maxWidths)
         .map(([id, width]) => `${id}:${width}`)
@@ -129,7 +137,7 @@ export function useResizableTableColumns(options: {
       }
       const measured = measureColumnWidths(table, columnIds.length);
       table.classList.remove("is-measuring");
-      const base = applyBaseWidths(columnIds, measured, manualRef.current, maxWidths);
+      const base = applyBaseWidths(columnIds, measured, manualRef.current, maxWidths, minWidths);
       baseRef.current = base;
       setWidths(distributeExtraWidth(base, columnIds, flexIds, manualRef.current, availableTableWidth(table)));
     };
@@ -144,7 +152,7 @@ export function useResizableTableColumns(options: {
     });
     observer.observe(parent);
     return () => observer.disconnect();
-  }, [columnIds, fitKey, flexKey, maxKey]);
+  }, [columnIds, fitKey, flexKey, minKey, maxKey]);
 
   const resizeColumn = useCallback(
     (id: string, width: number) => {

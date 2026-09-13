@@ -52,7 +52,9 @@ import type {
   ProfileGroup,
   ProfileSummary,
   StoredImapMessage,
+  OrderAddress,
   OrderAnalysisRecord,
+  OrderPayment,
   OrderRetailer,
   ParsedOrder,
 } from "./types";
@@ -1232,6 +1234,36 @@ export async function compactImapMailIfNeeded(): Promise<void> {
   await persistMap();
 }
 
+function normalizeOrderPayment(raw: Partial<OrderPayment> | undefined): OrderPayment | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const last4 = raw.last4?.replace(/\D/g, "").slice(-4);
+  const brand = raw.brand?.trim() || undefined;
+  const rawText = raw.raw?.trim() || (brand && last4 ? `${brand} *${last4}` : last4 ? `*${last4}` : "");
+  if (!rawText) return undefined;
+  return {
+    brand,
+    last4: last4 && last4.length === 4 ? last4 : undefined,
+    raw: rawText,
+  };
+}
+
+function normalizeOrderAddress(raw: Partial<OrderAddress> | undefined): OrderAddress | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const name = raw.name?.trim() || undefined;
+  const line1 = raw.line1?.trim() || undefined;
+  const line2 = raw.line2?.trim() || undefined;
+  const city = raw.city?.trim() || undefined;
+  const state = raw.state?.trim().toUpperCase() || undefined;
+  const postalCode = raw.postalCode?.trim() || undefined;
+  const source = raw.source === "pickup" || raw.source === "shipping" ? raw.source : undefined;
+  const lastLine = city && state && postalCode ? `${city}, ${state} ${postalCode}` : undefined;
+  const rawText =
+    raw.raw?.trim() ||
+    [name, line1, line2, lastLine].filter(Boolean).join("\n");
+  if (!rawText && !line1 && !city) return undefined;
+  return { name, line1, line2, city, state, postalCode, source, raw: rawText };
+}
+
 function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): ParsedOrder | null {
   const retailer: OrderRetailer =
     raw.retailer === "walmart" || raw.retailer === "pokemon-center" ? raw.retailer : "target";
@@ -1273,6 +1305,8 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
       return items.length > 0 ? items : undefined;
     })(),
     recipientEmail: raw.recipientEmail?.trim() || undefined,
+    shippingAddress: normalizeOrderAddress(raw.shippingAddress),
+    payment: normalizeOrderPayment(raw.payment),
     profileId: raw.profileId?.trim() || undefined,
     profileName: raw.profileName?.trim() || undefined,
     events,

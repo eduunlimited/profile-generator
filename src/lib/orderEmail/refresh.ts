@@ -29,7 +29,17 @@ import {
   orderRecipientEmail,
   upsertParsedOrders,
 } from "./merge";
-import { extractOrderItems, extractOrderTotal, extractTrackingNumber, itemsLookIncomplete, mergeOrderItems } from "./parse";
+import {
+  extractOrderItems,
+  extractOrderTotal,
+  extractTargetOrderAddress,
+  extractTargetOrderPayment,
+  extractTrackingNumber,
+  itemsLookIncomplete,
+  mergeOrderAddress,
+  mergeOrderItems,
+  mergeOrderPayment,
+} from "./parse";
 
 export interface OrderRefreshResult {
   orders: ParsedOrder[];
@@ -175,7 +185,14 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
       .find((event) => event.kind === "shipped" && event.accountId === account.id);
     Object.assign(order, finalizeParsedOrder(order));
     const fetches: { eventUid: number; kind: "placed" | "picked_up" | "shipped" }[] = [];
-    if (confirmation && (order.total == null || itemsLookIncomplete(order.items) || !order.fulfillment)) {
+    if (
+      confirmation &&
+      (order.total == null ||
+        itemsLookIncomplete(order.items) ||
+        !order.fulfillment ||
+        (order.retailer === "target" &&
+          ((!order.shippingAddress?.line1 && !order.shippingAddress?.raw) || !order.payment?.raw)))
+    ) {
       fetches.push({ eventUid: confirmation.uid, kind: "placed" });
     }
     if (pickedUp && itemsLookIncomplete(order.items)) {
@@ -203,6 +220,12 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
               order.fulfillment = "pickup";
             } else if (html || full.body?.trim()) {
               order.fulfillment = order.fulfillment ?? "delivery";
+            }
+            if (order.retailer === "target") {
+              const address = extractTargetOrderAddress(html || text);
+              if (address) order.shippingAddress = mergeOrderAddress(address, order.shippingAddress);
+              const payment = extractTargetOrderPayment(html || text);
+              if (payment) order.payment = mergeOrderPayment(payment, order.payment);
             }
           }
           const items = extractOrderItems(html || text);

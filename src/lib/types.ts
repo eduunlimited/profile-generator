@@ -206,6 +206,8 @@ export type OrderAnalysisCause =
   | "geocodio_fail"
   | "master_mismatch"
   | "payment_or_card"
+  | "virtual_card"
+  | "high_aov_cancel"
   | "email_flagged"
   | "no_warmup"
   | "sku_pattern"
@@ -416,6 +418,8 @@ export interface GenerateFromMasterOptions {
 
 export interface RejigProfilesOptions {
   profileIds: string[];
+  /** When set, jig from this master's address and retie the profiles. Email, phone, and cards stay. */
+  masterProfileId?: string;
   nameJigPresetId?: string;
   nameMisspellScope?: NameMisspellScope;
   addressJigPresetId?: string;
@@ -555,6 +559,25 @@ export interface OrderLineItem {
   price?: number;
 }
 
+/** Card brand + last 4 parsed from a Target confirmation email. */
+export interface OrderPayment {
+  brand?: string;
+  last4?: string;
+  raw: string;
+}
+
+/** Ship-to or pickup address parsed from a confirmation email. */
+export interface OrderAddress {
+  name?: string;
+  line1?: string;
+  line2?: string;
+  city?: string;
+  state?: string;
+  postalCode?: string;
+  source?: "shipping" | "pickup";
+  raw: string;
+}
+
 export interface ParsedOrder {
   id: string;
   retailer: OrderRetailer;
@@ -566,6 +589,8 @@ export interface ParsedOrder {
   trackingNumber?: string;
   items?: OrderLineItem[];
   recipientEmail?: string;
+  shippingAddress?: OrderAddress;
+  payment?: OrderPayment;
   profileId?: string;
   profileName?: string;
   events: OrderEvent[];

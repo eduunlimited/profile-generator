@@ -9,6 +9,7 @@ import {
   RECOMMENDED_NAME_JIG_IDS,
 } from "../lib/jigRuleLabels";
 import { isStreetRandomLetterPresetId, sortJigPresets } from "../lib/jigPresetUtils";
+import { masterProfileLabel, sortMasterProfiles } from "../lib/masterProfileUtils";
 import type {
   JigPreset,
   MasterProfile,
@@ -40,6 +41,7 @@ export function RejigPanel({
   onRejig,
   onSuccess,
 }: RejigPanelProps) {
+  const [sourceMasterId, setSourceMasterId] = useState("");
   const [nameJigPresetId, setNameJigPresetId] = useState("");
   const [nameMisspellScope, setNameMisspellScope] = useState<NameMisspellScope>("both");
   const [streetRandomLettersEnabled, setStreetRandomLettersEnabled] = useState(false);
@@ -58,20 +60,44 @@ export function RejigPanel({
 
   const sortedNamePresets = sortJigPresets(namePresets, RECOMMENDED_NAME_JIG_IDS);
   const sortedAddressPresets = sortJigPresets(addressPresets, RECOMMENDED_ADDRESS_JIG_IDS);
+  const sortedMasters = useMemo(() => sortMasterProfiles(masterProfiles), [masterProfiles]);
 
   const selectedCount = selectedProfiles.length;
+  const sourceMaster = sourceMasterId
+    ? masterProfiles.find((master) => master.id === sourceMasterId) ?? null
+    : null;
 
   const previewMaster = useMemo(() => {
+    if (sourceMaster) return sourceMaster;
     const masterId = selectedProfiles.find((profile) => profile.masterProfileId)?.masterProfileId;
     if (masterId) {
       return masterProfiles.find((master) => master.id === masterId) ?? null;
     }
     return masterProfiles[0] ?? null;
-  }, [masterProfiles, selectedProfiles]);
+  }, [masterProfiles, selectedProfiles, sourceMaster]);
 
   const previewBase = useMemo((): JigPreviewBase | null => {
+    if (!previewMaster) return null;
+    if (sourceMaster) {
+      return {
+        name: {
+          first: sourceMaster.name.first,
+          last: sourceMaster.name.last,
+          full: sourceMaster.name.full || `${sourceMaster.name.first} ${sourceMaster.name.last}`.trim(),
+        },
+        address: {
+          street: sourceMaster.address.street,
+          unit: sourceMaster.address.unit,
+          city: sourceMaster.address.city,
+          state: sourceMaster.address.state,
+          postalCode: sourceMaster.address.postalCode,
+          country: sourceMaster.address.country,
+        },
+        phone: sourceMaster.phone,
+      };
+    }
     const summary = selectedProfiles[0];
-    if (!summary || !previewMaster) return null;
+    if (!summary) return null;
     const tokens = summary.billingFullName.trim().split(/\s+/).filter(Boolean);
     const first = tokens[0] || previewMaster.name.first;
     const last = tokens.slice(1).join(" ") || previewMaster.name.last;
@@ -91,19 +117,20 @@ export function RejigPanel({
       },
       phone: summary.billingPhone || previewMaster.phone,
     };
-  }, [previewMaster, selectedProfiles]);
+  }, [previewMaster, selectedProfiles, sourceMaster]);
 
   const hasAddressJigSelected = streetRandomLettersEnabled || addressJigPresetIds.length > 0;
   const hasSelectedJig = Boolean(nameJigPresetId) || phoneJigLastFour || hasAddressJigSelected;
-  const canRejig = selectedCount > 0 && selectedProfiles.every((profile) => profile.masterProfileId);
-  const canSubmit = canRejig && hasSelectedJig;
+  const linkedToMaster = selectedProfiles.every((profile) => profile.masterProfileId);
+  const canRejig = selectedCount > 0 && (Boolean(sourceMaster) || linkedToMaster);
+  const canSubmit = canRejig && (hasSelectedJig || Boolean(sourceMaster));
 
   const run = async () => {
     if (!canRejig) {
       setStatus("Selected profiles must be linked to a master profile.");
       return;
     }
-    if (!hasSelectedJig) {
+    if (!hasSelectedJig && !sourceMaster) {
       setStatus("Select at least one jig to re-jig.");
       return;
     }
@@ -117,6 +144,7 @@ export function RejigPanel({
     try {
       const result = await onRejig({
         profileIds: selectedProfiles.map((profile) => profile.id),
+        masterProfileId: sourceMaster?.id,
         nameJigPresetId: nameJigPresetId || undefined,
         nameMisspellScope: nameJigPresetId ? nameMisspellScope : undefined,
         streetRandomLetters: streetRandomLettersEnabled
@@ -152,9 +180,16 @@ export function RejigPanel({
     <section className="generate-panel">
       <p className="muted generate-panel-intro">
         {canRejig ? (
-          <>
-            Re-jig <strong>{selectedCount}</strong> profile{selectedCount === 1 ? "" : "s"}
-          </>
+          sourceMaster ? (
+            <>
+              Re-jig <strong>{selectedCount}</strong> profile{selectedCount === 1 ? "" : "s"} from{" "}
+              <strong>{masterProfileLabel(sourceMaster)}</strong>. Email, phone, and cards stay the same.
+            </>
+          ) : (
+            <>
+              Re-jig <strong>{selectedCount}</strong> profile{selectedCount === 1 ? "" : "s"}
+            </>
+          )
         ) : (
           "Selected profiles must be linked to a master profile to re-jig."
         )}
@@ -162,6 +197,24 @@ export function RejigPanel({
 
       <div className="generate-modal-main">
         <div className="generate-modal-settings">
+          <Field
+            className="generate-modal-source-master"
+            label="Source master"
+            hint="Use another master to change the address. Email, phone, and cards stay on the profile."
+          >
+            <select
+              value={sourceMasterId}
+              onChange={(event) => setSourceMasterId(event.target.value)}
+              disabled={busy || sortedMasters.length === 0}
+            >
+              <option value="">Current master</option>
+              {sortedMasters.map((master) => (
+                <option key={master.id} value={master.id}>
+                  {masterProfileLabel(master)}
+                </option>
+              ))}
+            </select>
+          </Field>
           <div className="generate-modal-jig-row">
             <div className="generate-modal-name-jigs">
               <Field label="Name jig" hint="One fat-finger typo per selected name part">

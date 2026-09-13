@@ -629,7 +629,7 @@ export function useAppData() {
         : null;
       const addressJig = resolveAddressJigFromGenerateOptions(options, jigPresets);
       const hasAddressJig = addressJig.rules.some((rule) => rule.type !== "splitLines");
-      if (!namePreset && !hasAddressJig && !options.phoneJigLastFour) {
+      if (!namePreset && !hasAddressJig && !options.phoneJigLastFour && !options.masterProfileId?.trim()) {
         throw new Error("Select at least one jig to re-jig.");
       }
       if (options.untilPass) {
@@ -651,19 +651,29 @@ export function useAppData() {
       assertProfilesUnlocked(profileCategories, profilesToUpdate, "re-jig profiles in it");
 
       const masterMap = new Map(masterProfiles.map((master) => [master.id, master]));
+      const sourceMasterId = options.masterProfileId?.trim();
+      const sourceMaster = sourceMasterId ? masterMap.get(sourceMasterId) : undefined;
+      if (sourceMasterId && !sourceMaster) {
+        throw new Error("Selected master profile could not be found.");
+      }
+
       const profilesMissingMaster = profilesToUpdate.filter(
         (profile) => !profile.masterProfileId || !masterMap.has(profile.masterProfileId),
       );
-      if (profilesMissingMaster.length > 0) {
+      if (!sourceMaster && profilesMissingMaster.length > 0) {
         throw new Error("Selected profiles must be linked to a master profile to re-jig.");
       }
 
       const profilesByMaster = new Map<string, Profile[]>();
-      for (const profile of profilesToUpdate) {
-        const masterId = profile.masterProfileId!;
-        const bucket = profilesByMaster.get(masterId) ?? [];
-        bucket.push(profile);
-        profilesByMaster.set(masterId, bucket);
+      if (sourceMaster) {
+        profilesByMaster.set(sourceMaster.id, profilesToUpdate);
+      } else {
+        for (const profile of profilesToUpdate) {
+          const masterId = profile.masterProfileId!;
+          const bucket = profilesByMaster.get(masterId) ?? [];
+          bucket.push(profile);
+          profilesByMaster.set(masterId, bucket);
+        }
       }
 
       const updated: Profile[] = [];
@@ -674,6 +684,7 @@ export function useAppData() {
         const result = await rejigProfiles(master, bucket, allProfiles, namePreset, addressJig, {
           nameMisspellScope: options.nameMisspellScope,
           phoneJigLastFour: options.phoneJigLastFour,
+          sourceFromMaster: Boolean(sourceMaster),
         });
         updated.push(...result.updated);
         failedIds.push(...result.failedIds);

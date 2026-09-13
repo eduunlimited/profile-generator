@@ -9,7 +9,16 @@ import {
   type ClassifiedOrderMessage,
 } from "./classify";
 import { sortOrdersByPlaced } from "./dashboard";
-import { extractOrderItems, extractOrderTotal, extractTrackingNumber, mergeOrderItems } from "./parse";
+import {
+  extractOrderItems,
+  extractOrderTotal,
+  extractTargetOrderAddress,
+  extractTargetOrderPayment,
+  extractTrackingNumber,
+  mergeOrderAddress,
+  mergeOrderItems,
+  mergeOrderPayment,
+} from "./parse";
 
 const STATUS_RANK: Record<OrderStatus, number> = {
   placed: 1,
@@ -183,6 +192,13 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
   const withEmail = [...placed, ...group]
     .map((item) => orderRecipientEmail(item.message))
     .find(Boolean);
+  const confirmationParts = [
+    confirmation.message.htmlBody ?? "",
+    confirmation.message.body ?? "",
+    confirmation.message.snippet ?? "",
+  ];
+  const shippingAddress = retailer === "target" ? extractTargetOrderAddress(...confirmationParts) : undefined;
+  const payment = retailer === "target" ? extractTargetOrderPayment(...confirmationParts) : undefined;
   const placedAt = new Date(placed[0].dateMs || Date.parse(placed[0].message.date) || Date.now()).toISOString();
   const updatedMs = Math.max(...orderedEvents.map((event) => event.dateMs), placed[0].dateMs);
   return finalizeParsedOrder({
@@ -196,6 +212,8 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
     trackingNumber,
     items,
     recipientEmail: withEmail,
+    shippingAddress,
+    payment,
     events: orderedEvents,
     placedAt,
     updatedAt: new Date(updatedMs || Date.now()).toISOString(),
@@ -249,6 +267,8 @@ export function upsertParsedOrders(existing: ParsedOrder[], incoming: ParsedOrde
         trackingNumber: next.trackingNumber ?? previous.trackingNumber,
         items: mergeOrderItems(previous.items, next.items ?? []) ?? next.items ?? previous.items,
         recipientEmail: next.recipientEmail ?? previous.recipientEmail,
+        shippingAddress: mergeOrderAddress(next.shippingAddress, previous.shippingAddress),
+        payment: mergeOrderPayment(next.payment, previous.payment),
         events: mergedEvents,
         placedAt: previous.placedAt || next.placedAt,
         updatedAt: new Date(updatedMs || Date.now()).toISOString(),

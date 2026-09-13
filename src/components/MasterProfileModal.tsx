@@ -1,4 +1,4 @@
-import type { MasterProfile } from "../lib/types";
+import type { MasterProfile, ProfileCategory } from "../lib/types";
 import { MasterProfileEditor } from "./MasterProfileEditor";
 
 interface MasterProfileModalProps {
@@ -6,8 +6,11 @@ interface MasterProfileModalProps {
   isNew?: boolean;
   master: MasterProfile;
   childCount?: number;
+  profileGroups?: ProfileCategory[];
+  initialGroupId?: string | null;
   onChange: (master: MasterProfile) => void;
-  onSave: (master: MasterProfile) => Promise<void>;
+  onSave: (master: MasterProfile, groupId?: string) => Promise<void>;
+  onSaveGroup?: (group: ProfileCategory) => Promise<void>;
   onDelete?: () => Promise<void>;
   onClose: () => void;
 }
@@ -17,8 +20,11 @@ export function MasterProfileModal({
   isNew = false,
   master,
   childCount = 0,
+  profileGroups,
+  initialGroupId,
   onChange,
   onSave,
+  onSaveGroup,
   onDelete,
   onClose,
 }: MasterProfileModalProps) {
@@ -63,8 +69,11 @@ export function MasterProfileModal({
             key={master.id}
             isNew={isNew}
             master={master}
+            profileGroups={profileGroups}
+            initialGroupId={initialGroupId}
             onChange={onChange}
             onSave={onSave}
+            onSaveGroup={onSaveGroup}
           />
         </div>
       </div>

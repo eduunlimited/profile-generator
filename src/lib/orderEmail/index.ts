@@ -23,8 +23,13 @@ export {
   extractTrackingNumber,
   extractOrderItems,
   extractPokemonCenterItems,
+  extractTargetOrderAddress,
+  extractTargetOrderPayment,
+  formatOrderAddress,
   itemsLookIncomplete,
+  mergeOrderAddress,
   mergeOrderItems,
+  mergeOrderPayment,
   orderTableItem,
   repairUtf8Mojibake,
 } from "./parse";
@@ -45,6 +50,7 @@ export {
   filterOrders,
   filterOrdersBySite,
   sortOrdersByPlaced,
+  isSuccessfulOrder,
   retailerLabel,
   siteFilterLabel,
   SPEND_PERIODS,
@@ -70,5 +76,7 @@ export {
   toAccountPerformanceSnapshot,
 } from "./performance";
 export type { AccountPerformance, AccountPerformanceSnapshot } from "./performance";
+export { formatOrderCardDisplay, matchOrderCardName, orderCardSearchText } from "./payment";
+export type { OrderCardDisplay } from "./payment";
 export { refreshTargetOrders } from "./refresh";
 export type { OrderRefreshResult } from "./refresh";

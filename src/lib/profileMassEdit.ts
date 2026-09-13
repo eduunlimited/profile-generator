@@ -3,6 +3,7 @@ import { formatUsPhone, normalizeUsPhone } from "./phoneUtils";
 import {
   billingSameAsShipping,
   cardHolderSameAsShipping,
+  shippingAddressForProfile,
   ensureProfileEditorFields,
   oneCheckoutPerProfile,
   resolveShippingNameParts,
@@ -105,10 +106,7 @@ function boolsMatch<T>(items: T[], pick: (item: T) => boolean): boolean {
 }
 
 function effectiveShippingAddress(profile: Profile): ProfileAddress {
-  if (billingSameAsShipping(profile)) {
-    return profile.address;
-  }
-  return profile.shippingAddress ?? profile.address;
+  return shippingAddressForProfile(profile);
 }
 
 function pickString(profiles: Profile[], pick: (profile: Profile) => string): { mixed: boolean; value: string } {

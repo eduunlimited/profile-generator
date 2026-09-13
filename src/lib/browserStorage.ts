@@ -1,4 +1,5 @@
 import { billingAddressLines, billingFullName, resolveProfileDisplayName } from "./profileNameUtils";
+import { shippingAddressForProfile } from "./profileUtils";
 import { normalizeProfile } from "./profileEmailUtils";
 import { formatUsPhone } from "./phoneUtils";
 import { parseCardNumberDigits, profileHasPaymentCard, resolveCreditCardProfileLabel } from "./creditCardUtils";
@@ -135,6 +136,7 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
       .join(", ");
   const displayName = resolveProfileDisplayName(profile);
   const billingName = billingFullName(profile);
+  const shippingAddress = shippingAddressForProfile(profile);
   const addressLines = billingAddressLines(profile);
   const profileEmail = profile.email?.trim() || profile.logins[0]?.email?.trim() || "";
   const hasPaymentCard = profileHasPaymentCard(profile);
@@ -143,9 +145,9 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     id: profile.id,
     name: displayName,
     email: profileEmail,
-    city: profile.address.city,
-    state: profile.address.state,
-    postalCode: profile.address.postalCode,
+    city: shippingAddress.city,
+    state: shippingAddress.state,
+    postalCode: shippingAddress.postalCode,
     billingFullName: billingName,
     billingEmail: profileEmail,
     billingPhone: formatUsPhone(profile.phone ?? ""),

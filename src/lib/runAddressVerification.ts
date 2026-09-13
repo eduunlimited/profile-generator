@@ -8,6 +8,7 @@ import {
   stampFromLookup,
   withMasterMatch,
 } from "./addressCheck";
+import { shippingAddressForProfile } from "./profileUtils";
 import type { GeocodioLookupResult, MasterProfile, Profile } from "./types";
 
 export const REJIG_UNTIL_PASS_ATTEMPTS = 5;
@@ -33,7 +34,7 @@ function emptySummary(): AddressVerifySummary {
 
 export function formatAddressVerifySummary(summary: AddressVerifySummary): string {
   if (summary.checked === 0) {
-    return summary.skipped > 0 ? "Addresses already checked." : "No billing addresses to verify.";
+    return summary.skipped > 0 ? "Addresses already checked." : "No shipping addresses to verify.";
   }
   const parts = [`Checked ${summary.checked}`];
   if (summary.pass) parts.push(`${summary.pass} Pass`);
@@ -122,13 +123,14 @@ export async function verifyProfileAddresses(
     const sample = group[0];
     let result: GeocodioLookupResult;
     try {
+      const address = shippingAddressForProfile(sample);
       result = await geocodioLookup({
         apiKey,
-        street: sample.address.street,
-        unit: sample.address.unit,
-        city: sample.address.city,
-        state: sample.address.state,
-        postalCode: sample.address.postalCode,
+        street: address.street,
+        unit: address.unit,
+        city: address.city,
+        state: address.state,
+        postalCode: address.postalCode,
       });
     } catch (error) {
       result = {

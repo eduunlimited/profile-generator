@@ -1,3 +1,4 @@
+import { shippingAddressForProfile } from "./profileUtils";
 import type { AddressCheck, AddressCheckStatus, GeocodioLookupResult, Profile, ProfileAddress } from "./types";
 
 export function billingAddressFingerprint(address: Pick<ProfileAddress, "street" | "unit" | "city" | "state" | "postalCode">): string {
@@ -7,7 +8,7 @@ export function billingAddressFingerprint(address: Pick<ProfileAddress, "street"
 }
 
 export function profileAddressFingerprint(profile: Profile): string {
-  return billingAddressFingerprint(profile.address);
+  return billingAddressFingerprint(shippingAddressForProfile(profile));
 }
 
 export function addressCheckIsStale(profile: Profile): boolean {
@@ -15,8 +16,10 @@ export function addressCheckIsStale(profile: Profile): boolean {
   return profile.addressCheck.fingerprint !== profileAddressFingerprint(profile);
 }
 
-export function profileHasVerifiableAddress(profile: Pick<Profile, "address">): boolean {
-  const address = profile.address;
+export function profileHasVerifiableAddress(
+  profile: Pick<Profile, "address"> & Partial<Pick<Profile, "shippingAddress" | "billingSameAsShipping">>,
+): boolean {
+  const address = shippingAddressForProfile(profile);
   return Boolean(
     address.street.trim() && address.city.trim() && address.state.trim() && address.postalCode.trim(),
   );

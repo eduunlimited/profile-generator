@@ -1,3 +1,4 @@
+import { shippingAddressForProfile } from "./profileUtils";
 import type { MasterProfile, Profile, ProfileName } from "./types";
 
 export function resolveProfileNameBase(name: ProfileName): string {
@@ -102,10 +103,6 @@ export function resolveGeneratedProfileName(master: MasterProfile, usedNames: Se
   return nextUniqueProfileName(masterProfileNameBase(master), usedNames);
 }
 
-function billingUsesShippingFields(profile: Profile): boolean {
-  return profile.billingSameAsShipping !== false;
-}
-
 export function billingFullName(profile: Profile): string {
   return (profile.name.jig || resolveProfileNameBase(profile.name)).trim();
 }
@@ -115,8 +112,9 @@ export function billingAddressLines(profile: Profile): {
   line2: string;
   line3: string;
 } {
-  if (!billingUsesShippingFields(profile) && profile.address.jig?.trim()) {
-    const lines = profile.address.jig
+  const address = shippingAddressForProfile(profile);
+  if (address.jig?.trim()) {
+    const lines = address.jig
       .split("\n")
       .map((line) => line.trim())
       .filter(Boolean);
@@ -127,7 +125,6 @@ export function billingAddressLines(profile: Profile): {
     };
   }
 
-  const address = profile.address;
   return {
     line1: address.street,
     line2: address.unit ?? "",

@@ -164,7 +164,7 @@ export interface Profile {
   logins: ProfileLogin[];
   createdAt: string;
   updatedAt: string;
-  /** Geocodio ZIP+4 exact-match stamp for the billing address. */
+  /** Geocodio ZIP+4 exact-match stamp for the shipping address. */
   addressCheck?: AddressCheck;
 }
 

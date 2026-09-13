@@ -33,8 +33,17 @@ export function syncShippingName(profile: Profile): Profile {
   };
 }
 
-export function billingSameAsShipping(profile: Profile): boolean {
+export function billingSameAsShipping(profile: { billingSameAsShipping?: boolean }): boolean {
   return profile.billingSameAsShipping !== false;
+}
+
+export function shippingAddressForProfile(
+  profile: Pick<Profile, "address"> & Partial<Pick<Profile, "shippingAddress" | "billingSameAsShipping">>,
+): Profile["address"] {
+  if (billingSameAsShipping(profile) || !profile.shippingAddress) {
+    return profile.address;
+  }
+  return profile.shippingAddress;
 }
 
 export function oneCheckoutPerProfile(profile: Profile): boolean {

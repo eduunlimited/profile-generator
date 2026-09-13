@@ -11,6 +11,7 @@ import type {
 } from "./types";
 import { isAllUppercaseLetterToken } from "./keyboardFatFinger";
 import { cloneProfileName, namePartsForMisspell, resolveProfileNameBase } from "./profileNameUtils";
+import { resolveShippingNameParts, shippingAddressForProfile, withShippingAddress } from "./profileUtils";
 import { buildMisspellRequest, buildStreetVariationHint, misspellBatchWithOpenAi, misspellWithOpenAi } from "./openaiMisspell";
 import type { OpenAiMisspellResult } from "./openaiMisspell";
 const STREET_ABBREVIATIONS: Record<string, string> = {
@@ -618,8 +619,8 @@ export function applyLocalJigRulesToProfile(
   nameMisspellScope: NameMisspellScope = "both",
 ): LocalJigSlot {
   return buildLocalJigSlot(
-    profile.name,
-    profile.address,
+    resolveShippingNameParts(profile),
+    shippingAddressForProfile(profile),
     namePreset,
     addressPresets,
     addressRulesOverride,
@@ -816,7 +817,10 @@ export async function applyJigPresetToProfile(
   preset: JigPreset,
 ): Promise<import("./types").Profile> {
   const jigName = applyNameRules(profile.name.full, stripMisspellFromNameRules(preset.nameRules));
-  let jigAddress = applyAddressRules(profile.address, stripMisspellFromAddressRules(preset.addressRules));
+  let jigAddress = applyAddressRules(
+    shippingAddressForProfile(profile),
+    stripMisspellFromAddressRules(preset.addressRules),
+  );
 
   const needsNameMisspell = preset.nameRules.some(isNameMisspellRule);
   const needsStreetMisspell = preset.addressRules.some(isStreetMisspellRule);
@@ -839,28 +843,32 @@ export async function applyJigPresetToProfile(
           formatted: formatAddress({ ...jigAddress, street: misspelled.street }),
         };
       }
-      return {
-        ...profile,
-        jigPresetId: preset.id,
-        jigPresetName: preset.name,
-        name: { ...profile.name, ...applyNameMisspell(profile.name, jigName, misspelled) },
-        address: { ...jigAddress, jig: jigAddress.formatted },
-        updatedAt: new Date().toISOString(),
-      };
+      return withShippingAddress(
+        {
+          ...profile,
+          jigPresetId: preset.id,
+          jigPresetName: preset.name,
+          name: { ...profile.name, ...applyNameMisspell(profile.name, jigName, misspelled) },
+          updatedAt: new Date().toISOString(),
+        },
+        { ...jigAddress, jig: jigAddress.formatted },
+      );
     }
   }
 
-  return {
-    ...profile,
-    jigPresetId: preset.id,
-    jigPresetName: preset.name,
-    name: {
-      ...profile.name,
-      ...(needsNameMisspell ? applyNameMisspell(profile.name, jigName, undefined) : { jig: jigName }),
+  return withShippingAddress(
+    {
+      ...profile,
+      jigPresetId: preset.id,
+      jigPresetName: preset.name,
+      name: {
+        ...profile.name,
+        ...(needsNameMisspell ? applyNameMisspell(profile.name, jigName, undefined) : { jig: jigName }),
+      },
+      updatedAt: new Date().toISOString(),
     },
-    address: { ...jigAddress, jig: jigAddress.formatted },
-    updatedAt: new Date().toISOString(),
-  };
+    { ...jigAddress, jig: jigAddress.formatted },
+  );
 }
 
 export async function reapplyJigPreset(

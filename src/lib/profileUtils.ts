@@ -40,10 +40,18 @@ export function billingSameAsShipping(profile: { billingSameAsShipping?: boolean
 export function shippingAddressForProfile(
   profile: Pick<Profile, "address"> & Partial<Pick<Profile, "shippingAddress" | "billingSameAsShipping">>,
 ): Profile["address"] {
-  if (billingSameAsShipping(profile) || !profile.shippingAddress) {
-    return profile.address;
+  const shipping = profile.shippingAddress;
+  if (shipping?.street.trim()) {
+    return shipping;
   }
-  return profile.shippingAddress;
+  return profile.address;
+}
+
+export function withShippingAddress(profile: Profile, address: Profile["address"]): Profile {
+  if (billingSameAsShipping(profile)) {
+    return { ...profile, address };
+  }
+  return { ...profile, shippingAddress: address };
 }
 
 export function oneCheckoutPerProfile(profile: Profile): boolean {

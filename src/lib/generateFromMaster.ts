@@ -6,6 +6,7 @@ import {
 } from "./assignEmails";
 
 import { collectUsedProfileNames, resolveGeneratedProfileName } from "./profileNameUtils";
+import { shippingAddressForProfile } from "./profileUtils";
 
 import {
   applyJigRulesBatchToMasterAsync,
@@ -238,7 +239,9 @@ export async function generateProfilesFromMaster(
   const groupId = options.groupId?.trim() || options.categoryId?.trim() || "";
   const now = new Date().toISOString();
   const usedProfileNames = collectUsedProfileNames(existingProfilesInCategory);
-  const streetUseCounts = buildStreetUseCounts(existingProfilesInCategory.map((profile) => profile.address));
+  const streetUseCounts = buildStreetUseCounts(
+    existingProfilesInCategory.map((profile) => shippingAddressForProfile(profile)),
+  );
 
   const occupiedPhoneLastFours = new Set(
     existingProfilesInCategory
@@ -276,7 +279,7 @@ export async function generateProfilesFromMaster(
       const jiggedSoFar = mergeBatchMisspellResults(master, namePreset, slots, misspellResults);
       const pendingSet = new Set(pendingIndexes);
       const reservedStreetLines = buildReservedStreetLinesForMisspell(
-        existingProfilesInCategory.map((profile) => profile.address.street),
+        existingProfilesInCategory.map((profile) => shippingAddressForProfile(profile).street),
         jiggedSoFar.map((item, index) => ({ index, street: item.address.street })),
         pendingSet,
       );

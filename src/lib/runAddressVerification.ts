@@ -5,6 +5,7 @@ import {
   profileHasVerifiableAddress,
   profileNeedsAddressVerify,
   queuedAddressCheck,
+  shippingMatchesMasterHouse,
   stampFromLookup,
   withMasterMatch,
 } from "./addressCheck";
@@ -94,7 +95,7 @@ export async function verifyProfileAddresses(
     if (!profileHasVerifiableAddress(master)) return null;
     const fingerprint = billingAddressFingerprint({
       street: master.address.street,
-      unit: "",
+      unit: master.address.unit ?? "",
       city: master.address.city,
       state: master.address.state,
       postalCode: master.address.postalCode,
@@ -106,6 +107,7 @@ export async function verifyProfileAddresses(
       const result = await geocodioLookup({
         apiKey,
         street: master.address.street,
+        unit: master.address.unit,
         city: master.address.city,
         state: master.address.state,
         postalCode: master.address.postalCode,
@@ -141,10 +143,17 @@ export async function verifyProfileAddresses(
     for (const profile of group) {
       let check = stampFromLookup(profile, result);
       const master = profile.masterProfileId ? masterById.get(profile.masterProfileId) : undefined;
-      if (master && result.status !== "error" && result.propertyKey) {
-        const masterResult = await lookupMaster(master);
-        if (masterResult?.propertyKey) {
-          check = withMasterMatch(check, result.propertyKey === masterResult.propertyKey);
+      if (master && result.status !== "error") {
+        const masterResult = result.propertyKey ? await lookupMaster(master) : null;
+        const geoMatch =
+          Boolean(result.propertyKey) &&
+          Boolean(masterResult?.propertyKey) &&
+          result.propertyKey === masterResult?.propertyKey;
+        const houseMatch = shippingMatchesMasterHouse(profile, master);
+        if (result.propertyKey && masterResult?.propertyKey) {
+          check = withMasterMatch(check, geoMatch);
+        } else if (houseMatch) {
+          check = withMasterMatch(check, true);
         }
       }
       const next = { ...profile, addressCheck: check };

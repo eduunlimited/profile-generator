@@ -21,6 +21,7 @@ import {
   randomUniquePhoneLastFour,
 } from "./phoneUtils";
 import { billingFullName } from "./profileNameUtils";
+import { shippingAddressForProfile, withShippingAddress } from "./profileUtils";
 import type { JigPreset, MasterProfile, NameMisspellScope, Profile } from "./types";
 import type { OpenAiMisspellResult } from "./openaiMisspell";
 
@@ -55,7 +56,7 @@ function buildStreetUseCountsByCategory(
   for (const [categoryId, profiles] of byCategory) {
     countsByCategory.set(
       categoryId,
-      buildStreetUseCounts(profiles.map((profile) => profile.address)),
+      buildStreetUseCounts(profiles.map((profile) => shippingAddressForProfile(profile))),
     );
   }
   return countsByCategory;
@@ -73,7 +74,7 @@ function collectCategoryReservedStreetLines(
       (profile) =>
         !reJigIds.has(profile.id) && categoryIds.has(profileCategoryId(profile)),
     )
-    .map((profile) => profile.address.street);
+    .map((profile) => shippingAddressForProfile(profile).street);
 
   for (const { index, street, categoryId } of batchStreetsByIndex) {
     if (excludeBatchIndexes.has(index)) continue;
@@ -294,12 +295,10 @@ export async function rejigProfiles(
           ? {
               addressJigPresetIds: addressJig.presetIds.length > 0 ? addressJig.presetIds : undefined,
               addressJigPresetName: addressJig.label,
-              address,
               addressCheck: undefined,
             }
           : sourceFromMaster
             ? {
-                address,
                 addressCheck: undefined,
                 addressJigPresetIds: undefined,
                 addressJigPresetName: undefined,
@@ -309,6 +308,9 @@ export async function rejigProfiles(
         jigPresetName: [nameLabel, addressLabel].filter(Boolean).join(" + ") || undefined,
         updatedAt: now,
       };
+      if (hasAddressJig || sourceFromMaster) {
+        merged = withShippingAddress(merged, address);
+      }
       break;
     }
 

@@ -1,5 +1,5 @@
 import { shippingAddressForProfile } from "./profileUtils";
-import type { AddressCheck, AddressCheckStatus, GeocodioLookupResult, Profile, ProfileAddress } from "./types";
+import type { AddressCheck, AddressCheckStatus, GeocodioLookupResult, MasterProfile, Profile, ProfileAddress } from "./types";
 
 export function billingAddressFingerprint(address: Pick<ProfileAddress, "street" | "unit" | "city" | "state" | "postalCode">): string {
   return [address.street, address.unit ?? "", address.city, address.state, address.postalCode]
@@ -98,6 +98,25 @@ export function stampFromLookup(profile: Profile, result: GeocodioLookupResult):
     matchedAddress: result.matchedAddress,
     propertyKey: result.propertyKey,
   };
+}
+
+export function addressHouseKey(
+  address: Pick<ProfileAddress, "street" | "city" | "state" | "postalCode">,
+): string {
+  const street = address.street.trim().toLowerCase();
+  const number = street.match(/^\d+[a-z]?/i)?.[0] ?? "";
+  const zip = address.postalCode.replace(/\D/g, "").slice(0, 5);
+  return [number, address.city.trim().toLowerCase(), address.state.trim().toLowerCase(), zip].join("|");
+}
+
+export function shippingMatchesMasterHouse(
+  profile: Profile,
+  master: Pick<MasterProfile, "address">,
+): boolean {
+  const shipping = addressHouseKey(shippingAddressForProfile(profile));
+  const source = addressHouseKey(master.address);
+  const meaningful = (key: string) => key.replace(/\|/g, "").trim().length > 0;
+  return meaningful(shipping) && meaningful(source) && shipping === source;
 }
 
 export function withMasterMatch(check: AddressCheck, masterMatch: boolean | undefined): AddressCheck {

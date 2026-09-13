@@ -45,8 +45,8 @@ interface GeneratePanelProps {
   creditCards: CreditCard[];
   poolEmails?: PoolEmail[];
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
-  onGenerate: (masterId: string, options: GenerateFromMasterOptions) => Promise<number>;
-  onSuccess?: (count: number, masterId: string) => void;
+  onGenerate: (masterIds: string[], options: GenerateFromMasterOptions) => Promise<number>;
+  onSuccess?: (count: number, masterIds: string[]) => void;
 }
 
 function existingCategorySelection(categoryId?: string): CategorySelection {
@@ -73,9 +73,10 @@ export function GeneratePanel({
     [profileCategories],
   );
 
-  const [masterId, setMasterId] = useState(
-    initialMasterId ?? masterProfiles[0]?.id ?? "",
-  );
+  const [masterIds, setMasterIds] = useState<string[]>(() => {
+    const initial = initialMasterId ?? masterProfiles[0]?.id ?? "";
+    return initial ? [initial] : [];
+  });
   const [categorySelection, setCategorySelection] = useState<CategorySelection>(() =>
     existingCategorySelection(
       initialCategoryId ?? sortedCategories[0]?.id ?? PROFILE_UNCATEGORIZED_CATEGORY_ID,
@@ -106,18 +107,28 @@ export function GeneratePanel({
   const assignableCreditCards = useMemo(() => filterAssignablePoolCards(creditCards), [creditCards]);
   const assignablePoolEmails = useMemo(() => filterAssignablePoolEmails(poolEmails), [poolEmails]);
 
-  const selectedMaster =
-    masterProfiles.find((master) => master.id === masterId) ?? masterProfiles[0] ?? null;
+  const selectedMasters = useMemo(
+    () => masterProfiles.filter((master) => masterIds.includes(master.id)),
+    [masterIds, masterProfiles],
+  );
+  const previewMaster = selectedMasters[0] ?? null;
+  const totalCount = Math.max(0, count) * selectedMasters.length;
+
+  const toggleMaster = (id: string) => {
+    setMasterIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id],
+    );
+  };
 
   useEffect(() => {
-    if (initialMasterId && masterProfiles.some((master) => master.id === initialMasterId)) {
-      setMasterId(initialMasterId);
-      return;
-    }
-    if (!masterProfiles.some((master) => master.id === masterId) && masterProfiles[0]) {
-      setMasterId(masterProfiles[0].id);
-    }
-  }, [initialMasterId, masterId, masterProfiles]);
+    const known = new Set(masterProfiles.map((master) => master.id));
+    setMasterIds((current) => {
+      const kept = current.filter((id) => known.has(id));
+      if (kept.length > 0) return kept;
+      if (initialMasterId && known.has(initialMasterId)) return [initialMasterId];
+      return masterProfiles[0] ? [masterProfiles[0].id] : [];
+    });
+  }, [initialMasterId, masterProfiles]);
 
   useEffect(() => {
     if (initialCategoryId && sortedCategories.some((category) => category.id === initialCategoryId)) {
@@ -140,7 +151,9 @@ export function GeneratePanel({
   const selectedCategoryLocked =
     categorySelection.kind === "existing" &&
     isProfileCategoryLocked(profileCategories, categorySelection.categoryId);
-  const canGenerate = Boolean(selectedMaster && categoryReady && masterProfiles.length > 0 && !selectedCategoryLocked);
+  const canGenerate = Boolean(
+    selectedMasters.length > 0 && categoryReady && masterProfiles.length > 0 && !selectedCategoryLocked,
+  );
 
   const createCategory = async (name: string): Promise<ProfileCategory> => {
     const category: ProfileCategory = {
@@ -154,8 +167,8 @@ export function GeneratePanel({
   };
 
   const run = async () => {
-    if (!selectedMaster) {
-      setStatus("Create a master profile first.");
+    if (selectedMasters.length === 0) {
+      setStatus("Select at least one master profile.");
       return;
     }
     let categoryId: string;
@@ -168,27 +181,33 @@ export function GeneratePanel({
     }
     setBusy(true);
     try {
-      const created = await onGenerate(selectedMaster.id, {
-        count,
-        categoryId,
-        nameJigPresetId: nameJigPresetId || undefined,
-        nameMisspellScope: nameJigPresetId ? nameMisspellScope : undefined,
-        streetRandomLetters: streetRandomLettersEnabled
-          ? {
-              enabled: true,
-              affixMode: streetRandomAffixMode,
-              charCount: streetRandomCharCount,
-            }
-          : undefined,
-        addressJigPresetIds: addressJigPresetIds.length > 0 ? addressJigPresetIds : undefined,
-        phoneJigLastFour: phoneJigLastFour || undefined,
-        creditCardMode,
-        creditCardId: creditCardMode === "selected" ? creditCardId : undefined,
-        emailMode: emailMode ?? "none",
-        emailId: emailMode === "selected" ? emailId : undefined,
-      });
+      const created = await onGenerate(
+        selectedMasters.map((master) => master.id),
+        {
+          count,
+          categoryId,
+          nameJigPresetId: nameJigPresetId || undefined,
+          nameMisspellScope: nameJigPresetId ? nameMisspellScope : undefined,
+          streetRandomLetters: streetRandomLettersEnabled
+            ? {
+                enabled: true,
+                affixMode: streetRandomAffixMode,
+                charCount: streetRandomCharCount,
+              }
+            : undefined,
+          addressJigPresetIds: addressJigPresetIds.length > 0 ? addressJigPresetIds : undefined,
+          phoneJigLastFour: phoneJigLastFour || undefined,
+          creditCardMode,
+          creditCardId: creditCardMode === "selected" ? creditCardId : undefined,
+          emailMode: emailMode ?? "none",
+          emailId: emailMode === "selected" ? emailId : undefined,
+        },
+      );
       setStatus(`Created ${created} jig profile(s) in the selected category.`);
-      onSuccess?.(created, selectedMaster.id);
+      onSuccess?.(
+        created,
+        selectedMasters.map((master) => master.id),
+      );
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Generation failed.");
     } finally {
@@ -199,15 +218,42 @@ export function GeneratePanel({
   return (
     <section className="generate-panel">
       <p className="muted generate-panel-intro">
-        {selectedMaster ? (
+        {selectedMasters.length === 0 ? (
+          masterProfiles.length === 0
+            ? "Create a master profile before generating jig children."
+            : "Select at least one master profile."
+        ) : selectedMasters.length === 1 ? (
           <>
-            Parent <strong>{masterProfileLabel(selectedMaster)}</strong> · street line 1 must be unique within the
-            selected category
+            Parent <strong>{masterProfileLabel(selectedMasters[0])}</strong> · {count}{" "}
+            {count === 1 ? "profile" : "profiles"} · street line 1 unique in the selected category
           </>
         ) : (
-          "Create a master profile before generating jig children."
+          <>
+            <strong>{selectedMasters.length}</strong> masters · {count} each · {totalCount} profiles · street line 1
+            unique in the selected category
+          </>
         )}
       </p>
+
+      <div className="field generate-modal-masters">
+        <span className="field-heading">Master profiles</span>
+        {masterProfiles.length === 0 ? (
+          <p className="muted">No master profiles</p>
+        ) : (
+          <div className="checkbox-grid generate-master-checkboxes">
+            {masterProfiles.map((master) => (
+              <label key={master.id} className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={masterIds.includes(master.id)}
+                  onChange={() => toggleMaster(master.id)}
+                />
+                <span>{masterProfileLabel(master)}</span>
+              </label>
+            ))}
+          </div>
+        )}
+      </div>
 
       <div
         className={[
@@ -217,21 +263,6 @@ export function GeneratePanel({
           .filter(Boolean)
           .join(" ")}
       >
-        <Field label="Master profile">
-          <select
-            value={masterId}
-            disabled={masterProfiles.length === 0}
-            onChange={(event) => setMasterId(event.target.value)}
-          >
-            {masterProfiles.length === 0 ? <option value="">No master profiles</option> : null}
-            {masterProfiles.map((master) => (
-              <option key={master.id} value={master.id}>
-                {masterProfileLabel(master)}
-              </option>
-            ))}
-          </select>
-        </Field>
-
         <Field label="Category">
           <AccountCategorySelect
             categories={sortedCategories}
@@ -244,7 +275,7 @@ export function GeneratePanel({
           ) : null}
         </Field>
 
-        <Field label="Count">
+        <Field label="Count" hint="Per selected master">
           <input type="number" min={1} max={100} value={count} onChange={(e) => setCount(Number(e.target.value))} />
         </Field>
 
@@ -344,7 +375,7 @@ export function GeneratePanel({
 
         <div className="generate-modal-preview">
           <JigAddressPreview
-            master={selectedMaster}
+            master={previewMaster}
             nameJigPresetId={nameJigPresetId}
             nameMisspellScope={nameMisspellScope}
             phoneJigLastFour={phoneJigLastFour}
@@ -354,6 +385,11 @@ export function GeneratePanel({
             addressJigPresetIds={addressJigPresetIds}
             jigPresets={jigPresets}
           />
+          {selectedMasters.length > 1 ? (
+            <p className="muted generate-multi-master-preview-note">
+              Preview uses {masterProfileLabel(previewMaster!)}. Same jigs apply to every selected master.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -371,7 +407,10 @@ export function GeneratePanel({
               <span className="generate-loading-dots" aria-hidden="true" />
             </span>
           ) : (
-            <>Generate {count} profiles</>
+            <>
+              Generate {totalCount} profile{totalCount === 1 ? "" : "s"}
+              {selectedMasters.length > 1 ? ` (${count} each)` : ""}
+            </>
           )}
         </button>
         {status ? <p className="status-inline generate-modal-status">{status}</p> : null}

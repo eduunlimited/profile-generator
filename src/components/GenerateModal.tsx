@@ -40,9 +40,9 @@ interface GenerateModalProps {
 
   onClose: () => void;
 
-  onGenerate: (masterId: string, options: GenerateFromMasterOptions) => Promise<number>;
+  onGenerate: (masterIds: string[], options: GenerateFromMasterOptions) => Promise<number>;
 
-  onSuccess?: (count: number, masterId: string) => void;
+  onSuccess?: (count: number, masterIds: string[]) => void;
 
 }
 

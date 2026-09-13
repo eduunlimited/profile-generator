@@ -385,6 +385,28 @@ export async function refreshTargetOrders(): Promise<OrderRefreshResult> {
   }
 
   const scanned = mergeClassifiedOrders(classified);
+  const accountsById = new Map(accounts.map((account) => [account.id, account]));
+  const withRecipientFallback = (rows: ParsedOrder[]): ParsedOrder[] => {
+    for (const order of rows) {
+      if (order.recipientEmail) continue;
+      const accountId = order.events.find((event) => event.kind === "placed")?.accountId;
+      const account = accountId ? accountsById.get(accountId) : undefined;
+      const fallback = orderRecipientEmail({}, account?.username);
+      if (fallback) order.recipientEmail = fallback;
+    }
+    return rows;
+  };
+  const persistOrders = async (incoming: ParsedOrder[]): Promise<ParsedOrder[]> => {
+    const rows = withRecipientFallback(
+      attachClassifiedEvents(upsertParsedOrders(existing, incoming), classified),
+    );
+    await saveOrders(rows);
+    return rows;
+  };
+
+  // Write confirmation rows before the slow per-message body fetches so a
+  // closed tab or failed IMAP body load does not drop newly found orders.
+  let orders = await persistOrders(scanned);
   for (const account of accounts) {
     if (!loadedAccountIds.has(account.id)) continue;
     try {
@@ -393,17 +415,7 @@ export async function refreshTargetOrders(): Promise<OrderRefreshResult> {
       errors.push(formatError(error, "Could not load order email bodies."));
     }
   }
-
-  const orders = attachClassifiedEvents(upsertParsedOrders(existing, scanned), classified);
-  const accountsById = new Map(accounts.map((account) => [account.id, account]));
-  for (const order of orders) {
-    if (order.recipientEmail) continue;
-    const accountId = order.events.find((event) => event.kind === "placed")?.accountId;
-    const account = accountId ? accountsById.get(accountId) : undefined;
-    const fallback = orderRecipientEmail({}, account?.username);
-    if (fallback) order.recipientEmail = fallback;
-  }
-  await saveOrders(orders);
+  orders = await persistOrders(scanned);
   const status = errors.length
     ? `Saved ${orders.length} order(s) with a confirmation. ${errors.join(" ")}`
     : scanned.length === 0

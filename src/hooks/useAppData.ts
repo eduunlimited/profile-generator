@@ -551,39 +551,60 @@ export function useAppData() {
   );
 
   const createProfilesFromMaster = useCallback(
-    async (masterId: string, options: GenerateFromMasterOptions) => {
-      await captureAppUndo("Generate jig profiles");
-      const master = masterProfiles.find((item) => item.id === masterId);
-      if (!master) {
-        throw new Error("Master profile not found.");
+    async (masterIds: string[], options: GenerateFromMasterOptions) => {
+      const uniqueIds = [...new Set(masterIds.map((id) => id.trim()).filter(Boolean))];
+      const selectedMasters = uniqueIds.map((id) => masterProfiles.find((item) => item.id === id));
+      if (uniqueIds.length === 0 || selectedMasters.some((master) => !master)) {
+        throw new Error(uniqueIds.length === 0 ? "Select at least one master profile." : "Master profile not found.");
       }
+      const masters = selectedMasters.filter((master): master is NonNullable<typeof master> => Boolean(master));
       if (!options.categoryId?.trim()) {
         throw new Error("Select a category.");
       }
       assertProfileCategoryUnlocked(profileCategories, options.categoryId, "generate profiles into it");
+
+      await captureAppUndo("Generate jig profiles");
 
       const namePreset = options.nameJigPresetId
         ? jigPresets.find((p) => p.id === options.nameJigPresetId) ?? getJigPresetById(options.nameJigPresetId) ?? null
         : null;
       const addressJig = resolveAddressJigFromGenerateOptions(options, jigPresets);
       const categoryId = options.categoryId.trim();
-      const existingInCategory = await Promise.all(
+      let existingInCategory = await Promise.all(
         profiles
           .filter(
             (profile) => (profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID) === categoryId,
           )
           .map((profile) => getProfile(profile.id)),
       );
-      const generated = await generateProfilesFromMaster(
-        master,
-        options,
-        namePreset,
-        addressJig,
-        creditCards,
-        existingInCategory,
-        profiles,
-        poolEmails,
-      );
+      let occupancy: Array<Profile | ProfileSummary> = [...profiles];
+      const generated: Profile[] = [];
+
+      for (const master of masters) {
+        try {
+          const batch = await generateProfilesFromMaster(
+            master,
+            options,
+            namePreset,
+            addressJig,
+            creditCards,
+            existingInCategory,
+            occupancy,
+            poolEmails,
+          );
+          generated.push(...batch);
+          existingInCategory = [...existingInCategory, ...batch];
+          occupancy = [...occupancy, ...batch];
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : "Generation failed.";
+          if (generated.length === 0) {
+            throw error instanceof Error ? error : new Error(detail);
+          }
+          throw new Error(
+            `${detail} No profiles were saved (${generated.length} from earlier master(s) were not written).`,
+          );
+        }
+      }
       const linked = syncAllProfileCredentialLinks(generated, credentials);
       await saveProfiles(linked);
       await refresh();

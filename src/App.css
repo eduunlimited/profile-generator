@@ -3254,16 +3254,30 @@ textarea {
   flex-shrink: 0;
 }
 
+.generate-modal-masters {
+  flex-shrink: 0;
+}
+
+.generate-master-checkboxes {
+  max-height: 7.5rem;
+  overflow: auto;
+}
+
+.generate-multi-master-preview-note {
+  margin: 6px 0 0;
+  font-size: 11px;
+}
+
 .generate-modal-topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1.5fr) minmax(0, 1.1fr) 72px minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1.1fr) 72px minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   align-items: end;
   flex-shrink: 0;
 }
 
 .generate-modal-topbar-with-card {
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 72px minmax(0, 0.9fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 72px minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr);
 }
 
 .generate-modal-main {

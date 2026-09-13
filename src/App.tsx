@@ -748,13 +748,16 @@ function AppContent() {
 
                 onGenerate={createProfilesFromMaster}
 
-                onSuccess={(count, masterId) => {
+                onSuccess={(count, masterIds) => {
 
-                  const master = masterProfiles.find((item) => item.id === masterId);
+                  const names = masterIds
+                    .map((id) => masterProfiles.find((item) => item.id === id))
+                    .filter((master): master is NonNullable<typeof master> => Boolean(master))
+                    .map((master) => masterProfileLabel(master));
 
                   updateLastActionLabel(
 
-                    `Created ${count} jig profile(s) under ${master ? masterProfileLabel(master) : "master"}.`,
+                    `Created ${count} jig profile(s) under ${names.join(" + ") || "master"}.`,
 
                   );
 

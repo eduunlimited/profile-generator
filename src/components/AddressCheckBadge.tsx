@@ -6,6 +6,7 @@ interface AddressCheckBadgeProps {
   message?: string;
   displayLabel?: string;
   masterMatch?: boolean;
+  successCount?: number;
   cancelCount?: number;
   cancelSiteLabel?: string;
 }
@@ -15,15 +16,21 @@ export function AddressCheckBadge({
   message,
   displayLabel,
   masterMatch,
+  successCount = 0,
   cancelCount = 0,
   cancelSiteLabel,
 }: AddressCheckBadgeProps) {
   const label = displayLabel?.trim() || addressCheckLabel(status);
   const title = message?.trim() || label;
   const inFlight = status === "queued" || Boolean(displayLabel?.trim());
+  const sitePrefix = cancelSiteLabel ? `${cancelSiteLabel} ` : "";
+  const successTitle =
+    successCount > 0
+      ? `${successCount} ${sitePrefix}succeeded order${successCount === 1 ? "" : "s"}`
+      : undefined;
   const cancelTitle =
     cancelCount > 0
-      ? `${cancelCount} ${cancelSiteLabel ? `${cancelSiteLabel} ` : ""}cancellation${cancelCount === 1 ? "" : "s"}`
+      ? `${cancelCount} ${sitePrefix}cancellation${cancelCount === 1 ? "" : "s"}`
       : undefined;
   return (
     <span className="address-check-stack" title={title}>
@@ -32,6 +39,11 @@ export function AddressCheckBadge({
       </span>
       {!inFlight && masterMatch === true ? <span className="address-master-match">Master</span> : null}
       {!inFlight && masterMatch === false ? <span className="address-master-mismatch">Not master</span> : null}
+      {successCount > 0 ? (
+        <span className="address-success-count" title={successTitle}>
+          {successCount}
+        </span>
+      ) : null}
       {cancelCount > 0 ? (
         <span className="address-cancel-count" title={cancelTitle}>
           {cancelCount}

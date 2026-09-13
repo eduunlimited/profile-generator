@@ -857,6 +857,7 @@ body.is-col-resizing * {
   background: rgba(251, 146, 60, 0.12);
 }
 
+.address-success-count,
 .address-cancel-count {
   display: inline-flex;
   align-items: center;
@@ -865,13 +866,20 @@ body.is-col-resizing * {
   height: 16px;
   padding: 0 4px;
   border-radius: 999px;
-  background: #ef4444;
   color: #fff;
   font-size: 10px;
   font-weight: 700;
   line-height: 1;
   letter-spacing: 0;
   text-transform: none;
+}
+
+.address-success-count {
+  background: #22c55e;
+}
+
+.address-cancel-count {
+  background: #ef4444;
 }
 
 .address-check-pass {

@@ -95,26 +95,56 @@ function profileAccountEmails(profile: ProfileSummary, poolEmails: PoolEmail[]):
   return [...emails];
 }
 
-/** Cancelled orders for this jig's site and account email only. */
+export interface ProfileOrderCounts {
+  successful: number;
+  cancelled: number;
+}
+
+function emptyProfileOrderCounts(): ProfileOrderCounts {
+  return { successful: 0, cancelled: 0 };
+}
+
+/** Succeeded and cancelled orders for this jig's site and account email only. */
+export function orderCountsForProfile(
+  profile: ProfileSummary,
+  orders: ParsedOrder[],
+  poolEmails: PoolEmail[],
+): ProfileOrderCounts {
+  const retailer = retailerFromAccountSite(profile.accountSite);
+  if (!retailer) return emptyProfileOrderCounts();
+  const emails = new Set(profileAccountEmails(profile, poolEmails));
+  if (emails.size === 0) return emptyProfileOrderCounts();
+
+  const counts = emptyProfileOrderCounts();
+  for (const order of orders) {
+    if (order.retailer !== retailer) continue;
+    const email = orderEmailKey(order);
+    if (email === UNKNOWN_ORDER_EMAIL || !emails.has(email)) continue;
+    if (isSuccessfulOrder(order)) counts.successful += 1;
+    else counts.cancelled += 1;
+  }
+  return counts;
+}
+
 export function cancelledOrderCountForProfile(
   profile: ProfileSummary,
   orders: ParsedOrder[],
   poolEmails: PoolEmail[],
 ): number {
-  const retailer = retailerFromAccountSite(profile.accountSite);
-  if (!retailer) return 0;
-  const emails = new Set(profileAccountEmails(profile, poolEmails));
-  if (emails.size === 0) return 0;
+  return orderCountsForProfile(profile, orders, poolEmails).cancelled;
+}
 
-  let count = 0;
-  for (const order of orders) {
-    if (order.status !== "cancelled" || order.retailer !== retailer) continue;
-    const email = orderEmailKey(order);
-    if (email !== UNKNOWN_ORDER_EMAIL && emails.has(email)) {
-      count += 1;
-    }
+export function orderCountsByProfileId(
+  profiles: ProfileSummary[],
+  orders: ParsedOrder[],
+  poolEmails: PoolEmail[],
+): Map<string, ProfileOrderCounts> {
+  const counts = new Map<string, ProfileOrderCounts>();
+  for (const profile of profiles) {
+    const next = orderCountsForProfile(profile, orders, poolEmails);
+    if (next.successful > 0 || next.cancelled > 0) counts.set(profile.id, next);
   }
-  return count;
+  return counts;
 }
 
 export function cancelledOrderCountsByProfileId(
@@ -123,9 +153,8 @@ export function cancelledOrderCountsByProfileId(
   poolEmails: PoolEmail[],
 ): Map<string, number> {
   const counts = new Map<string, number>();
-  for (const profile of profiles) {
-    const count = cancelledOrderCountForProfile(profile, orders, poolEmails);
-    if (count > 0) counts.set(profile.id, count);
+  for (const [profileId, next] of orderCountsByProfileId(profiles, orders, poolEmails)) {
+    if (next.cancelled > 0) counts.set(profileId, next.cancelled);
   }
   return counts;
 }

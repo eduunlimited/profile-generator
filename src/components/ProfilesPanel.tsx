@@ -62,7 +62,7 @@ import { useConfirmDelete } from "../hooks/useConfirmDelete";
 import { listOrders } from "../lib/api";
 import { ensureDataKey } from "../lib/localDataStore";
 import {
-  cancelledOrderCountsByProfileId,
+  orderCountsByProfileId,
   retailerFromAccountSite,
 } from "../lib/orderEmail/performance";
 import { retailerLabel } from "../lib/orderEmail/dashboard";
@@ -382,8 +382,8 @@ export function ProfilesPanel({
     return filterProfilesByOpportunity(visibleProfiles, profileOpportunities, activeOpportunityId);
   }, [showProfileOpportunities, visibleProfiles, profileOpportunities, activeOpportunityId]);
 
-  const cancelCountsByProfileId = useMemo(
-    () => cancelledOrderCountsByProfileId(profiles, orders, poolEmails),
+  const orderCountsById = useMemo(
+    () => orderCountsByProfileId(profiles, orders, poolEmails),
     [orders, poolEmails, profiles],
   );
 
@@ -407,14 +407,15 @@ export function ProfilesPanel({
         addressCheckLabel(profile.addressCheckStatus),
         profile.addressCheckDisplayLabel,
         addressMasterMatchLabel(profile.addressMasterMatch),
-        cancelCountsByProfileId.has(profile.id) ? "cancel cancelled cancellation" : "",
+        (orderCountsById.get(profile.id)?.successful ?? 0) > 0 ? "success succeeded" : "",
+        (orderCountsById.get(profile.id)?.cancelled ?? 0) > 0 ? "cancel cancelled cancellation" : "",
       ]
         .filter(Boolean)
         .join(" ")
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [cancelCountsByProfileId, masterLabelById, opportunityFilteredProfiles, tableQuery]);
+  }, [masterLabelById, opportunityFilteredProfiles, orderCountsById, tableQuery]);
 
   const profileTableColumns = useResizableTableColumns({
     columnIds: PROFILE_TABLE_COLUMNS,
@@ -1398,7 +1399,8 @@ export function ProfilesPanel({
                                 checkMessage={profile.addressCheckMessage}
                                 checkDisplayLabel={profile.addressCheckDisplayLabel}
                                 masterMatch={profile.addressMasterMatch}
-                                cancelCount={cancelCountsByProfileId.get(profile.id) ?? 0}
+                                successCount={orderCountsById.get(profile.id)?.successful ?? 0}
+                                cancelCount={orderCountsById.get(profile.id)?.cancelled ?? 0}
                                 cancelSiteLabel={cancelRetailer ? retailerLabel(cancelRetailer) : undefined}
                               />
                             </td>

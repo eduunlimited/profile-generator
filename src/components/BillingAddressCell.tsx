@@ -9,6 +9,7 @@ interface BillingAddressCellProps {
   checkMessage?: string;
   checkDisplayLabel?: string;
   masterMatch?: boolean;
+  successCount?: number;
   cancelCount?: number;
   cancelSiteLabel?: string;
 }
@@ -21,6 +22,7 @@ export function BillingAddressCell({
   checkMessage,
   checkDisplayLabel,
   masterMatch,
+  successCount,
   cancelCount,
   cancelSiteLabel,
 }: BillingAddressCellProps) {
@@ -32,6 +34,7 @@ export function BillingAddressCell({
         message={checkMessage}
         displayLabel={checkDisplayLabel}
         masterMatch={masterMatch}
+        successCount={successCount}
         cancelCount={cancelCount}
         cancelSiteLabel={cancelSiteLabel}
       />

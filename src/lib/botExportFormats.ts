@@ -158,9 +158,7 @@ function profileLabel(profile: Profile, index: number): string {
   return `Profile-${index + 1}`;
 }
 
-function aycdAddress(profile: Profile) {
-  const name = exportProfileName(profile);
-  const address = exportProfileAddress(profile);
+function aycdAddress(name: ProfileName, address: ProfileAddress, profile: Profile) {
   return {
     name: name.full,
     email: profileEmail(profile),
@@ -173,6 +171,17 @@ function aycdAddress(profile: Profile) {
     country: toAycdCountry(address.country, profile.locale),
     state: toStateFull(address.state),
   };
+}
+
+function aycdBillingAddress(profile: Profile) {
+  return aycdAddress(exportProfileName(profile), exportProfileAddress(profile), profile);
+}
+
+function aycdShippingAddress(profile: Profile) {
+  if (profile.billingSameAsShipping !== false) {
+    return aycdBillingAddress(profile);
+  }
+  return aycdAddress(exportShippingName(profile), exportShippingAddress(profile), profile);
 }
 
 function stellarAddressParts(name: ProfileName, address: ProfileAddress, locale: Profile["locale"]) {
@@ -204,27 +213,28 @@ function stellarShippingAddress(profile: Profile) {
 }
 
 export function toAycdProfile(profile: Profile, index: number) {
-  const name = exportProfileName(profile);
   const payment = profile.payment;
   const expiry = parseExpiry(payment.expiry);
-  const address = aycdAddress(profile);
+  const sameAsShipping = profile.billingSameAsShipping !== false;
+  const billing = aycdBillingAddress(profile);
+  const shipping = aycdShippingAddress(profile);
 
   return {
     name: profileLabel(profile, index),
     notes: "",
-    billingAddress: address,
-    shippingAddress: address,
+    billingAddress: billing,
+    shippingAddress: shipping,
     paymentDetails: {
-      nameOnCard: name.full,
+      nameOnCard: resolveCardHolderName(profile),
       cardType: mapCardBrand(payment.brand),
       cardNumber: payment.number,
       cardExpMonth: expiry.month,
       cardExpYear: expiry.year4,
       cardCvv: payment.cvv,
     },
-    sameBillingAndShippingAddress: true,
-    onlyCheckoutOnce: true,
-    matchNameOnCardAndAddress: true,
+    sameBillingAndShippingAddress: sameAsShipping,
+    onlyCheckoutOnce: profile.oneCheckoutPerProfile !== false,
+    matchNameOnCardAndAddress: profile.cardHolderSameAsShipping !== false,
   };
 }
 

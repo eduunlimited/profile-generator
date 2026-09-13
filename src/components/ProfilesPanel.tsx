@@ -46,9 +46,9 @@ import type {
   ProfileSummary,
 } from "../lib/types";
 import {
-  masterCategorySidebarId,
+  groupMasterSidebarId,
+  groupSidebarId,
   masterProfileLabel,
-  masterSidebarCategoryId,
   parseProfilesSidebarSelection,
 } from "../lib/masterProfileUtils";
 import {
@@ -83,6 +83,7 @@ const PROFILE_TABLE_COLUMNS = [
   "check",
   "index",
   "name",
+  "master",
   "billingName",
   "email",
   "phone",
@@ -97,6 +98,7 @@ const PROFILE_TABLE_FLEX_COLUMNS = ["address"] as const;
 const PROFILE_TABLE_MAX_WIDTHS: Partial<Record<(typeof PROFILE_TABLE_COLUMNS)[number], number>> = {
   check: 28,
   index: 36,
+  master: 120,
   phone: 108,
   accounts: 88,
   status: 86,
@@ -141,7 +143,7 @@ interface ProfilesPanelProps {
   createMasterDisabled?: boolean;
   onOpenMaster: (masterId: string) => void;
   onDeleteMaster: (masterId: string) => Promise<void>;
-  onGenerate: (masterId: string, categoryId?: string) => void;
+  onGenerate: (masterIds: string[], groupId?: string) => void;
   onRejig: () => void;
   onAssignCards: () => void;
   onUnassignCards: (profileIds: string[]) => Promise<number>;
@@ -269,6 +271,14 @@ export function ProfilesPanel({
     return sortProfileCategories(options);
   }, [categories]);
 
+  const masterLabelById = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const master of masterProfiles) {
+      labels.set(master.id, masterProfileLabel(master));
+    }
+    return labels;
+  }, [masterProfiles]);
+
   const masterChildCounts = useMemo(() => {
     const counts = new Map<string, number>();
     for (const master of masterProfiles) {
@@ -282,61 +292,56 @@ export function ProfilesPanel({
 
   const sidebarSelection = parseProfilesSidebarSelection(selectedCategoryId);
   const selectedMasterId = sidebarSelection.masterId;
-  const selectedProfileCategoryId = sidebarSelection.profileCategoryId;
-  const showProfileOpportunities = Boolean(selectedMasterId && selectedProfileCategoryId);
+  const selectedProfileCategoryId = sidebarSelection.profileGroupId;
+  const showProfileOpportunities = Boolean(selectedProfileCategoryId);
 
-  const masterCategoryCounts = useMemo(() => {
-    const countsByMaster = new Map<string, Map<string, number>>();
-    for (const master of masterProfiles) {
-      countsByMaster.set(master.id, new Map<string, number>());
+  const groupMasterCounts = useMemo(() => {
+    const countsByGroup = new Map<string, Map<string, number>>();
+    for (const group of activeCategories) {
+      countsByGroup.set(group.id, new Map<string, number>());
     }
     for (const profile of profiles) {
       if (!profile.masterProfileId) continue;
-      const masterCounts = countsByMaster.get(profile.masterProfileId);
-      if (!masterCounts) continue;
-      const categoryId = profileCategoryId(profile);
-      masterCounts.set(categoryId, (masterCounts.get(categoryId) ?? 0) + 1);
+      const groupId = profileCategoryId(profile);
+      const masterCounts = countsByGroup.get(groupId) ?? new Map<string, number>();
+      masterCounts.set(profile.masterProfileId, (masterCounts.get(profile.masterProfileId) ?? 0) + 1);
+      countsByGroup.set(groupId, masterCounts);
     }
-    return countsByMaster;
-  }, [masterProfiles, profiles]);
+    return countsByGroup;
+  }, [activeCategories, profiles]);
 
-  const categoriesForMaster = useCallback(
-    (masterId: string) => {
-      const counts = masterCategoryCounts.get(masterId);
+  const mastersForGroup = useCallback(
+    (groupId: string) => {
+      const counts = groupMasterCounts.get(groupId);
       const query = categorySearch.trim().toLowerCase();
-      return activeCategories.filter((category) => {
-        const masterCount = counts?.get(category.id) ?? 0;
-        const globalCount = categoryCounts.get(category.id) ?? 0;
-        if (masterCount === 0 && globalCount > 0) return false;
+      return masterProfiles.filter((master) => {
+        const count = counts?.get(master.id) ?? 0;
+        if (count === 0) return false;
         if (!query) return true;
-        return category.name.toLowerCase().includes(query);
+        return masterProfileLabel(master).toLowerCase().includes(query);
       });
     },
-    [activeCategories, categoryCounts, categorySearch, masterCategoryCounts],
+    [categorySearch, groupMasterCounts, masterProfiles],
   );
 
-  const filteredMasters = useMemo(() => {
+  const filteredGroups = useMemo(() => {
     const query = categorySearch.trim().toLowerCase();
-    if (!query) return masterProfiles;
-    return masterProfiles.filter((master) => {
-      if (masterProfileLabel(master).toLowerCase().includes(query)) return true;
-      return categoriesForMaster(master.id).length > 0;
+    if (!query) return activeCategories;
+    return activeCategories.filter((group) => {
+      if (group.name.toLowerCase().includes(query)) return true;
+      return mastersForGroup(group.id).length > 0;
     });
-  }, [categoriesForMaster, categorySearch, masterProfiles]);
+  }, [activeCategories, categorySearch, mastersForGroup]);
 
   const visibleProfiles = useMemo(() => {
     if (selectedCategoryId === "all") return profiles;
-    if (selectedMasterId) {
-      const masterProfilesOnly = profiles.filter((profile) => profile.masterProfileId === selectedMasterId);
-      if (!selectedProfileCategoryId) return masterProfilesOnly;
-      return masterProfilesOnly.filter(
-        (profile) => profileCategoryId(profile) === selectedProfileCategoryId,
-      );
-    }
     if (selectedProfileCategoryId) {
-      return profiles.filter(
-        (profile) => profileCategoryId(profile) === selectedProfileCategoryId,
-      );
+      const inGroup = profiles.filter((profile) => profileCategoryId(profile) === selectedProfileCategoryId);
+      if (!selectedMasterId) return inGroup;
+      return inGroup.filter((profile) => profile.masterProfileId === selectedMasterId);
+    }
+    if (selectedMasterId) {
+      return profiles.filter((profile) => profile.masterProfileId === selectedMasterId);
     }
     return profiles;
   }, [profiles, selectedCategoryId, selectedMasterId, selectedProfileCategoryId]);
@@ -370,6 +375,7 @@ export function ProfilesPanel({
         profile.cardNumberMasked,
         profile.accounts,
         profile.notes,
+        profile.masterProfileId ? masterLabelById.get(profile.masterProfileId) : "",
         addressCheckLabel(profile.addressCheckStatus),
         profile.addressCheckDisplayLabel,
         addressMasterMatchLabel(profile.addressMasterMatch),
@@ -379,7 +385,7 @@ export function ProfilesPanel({
         .toLowerCase();
       return haystack.includes(query);
     });
-  }, [opportunityFilteredProfiles, tableQuery]);
+  }, [masterLabelById, opportunityFilteredProfiles, tableQuery]);
 
   const profileTableColumns = useResizableTableColumns({
     columnIds: PROFILE_TABLE_COLUMNS,
@@ -392,6 +398,7 @@ export function ProfilesPanel({
         [
           profile.id,
           profile.name,
+          profile.masterProfileId ? masterLabelById.get(profile.masterProfileId) : "",
           profile.billingFullName,
           profile.billingEmail,
           profile.billingPhone,
@@ -453,27 +460,25 @@ export function ProfilesPanel({
       selectedProfileCategoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID ||
       categories.some((category) => category.id === selectedProfileCategoryId);
     if (categoryStillExists) return;
-    if (selectedMasterId) {
-      setSelectedCategoryId(masterSidebarCategoryId(selectedMasterId));
-      return;
-    }
     setSelectedCategoryId("all");
   }, [categories, selectedCategoryId, selectedMasterId, selectedProfileCategoryId]);
 
   useEffect(() => {
     if (!selectedMasterId) return;
     if (!masterProfiles.some((master) => master.id === selectedMasterId)) {
-      setSelectedCategoryId("all");
+      setSelectedCategoryId(selectedProfileCategoryId ? groupSidebarId(selectedProfileCategoryId) : "all");
       onActiveMasterChange(null);
     }
-  }, [masterProfiles, onActiveMasterChange, selectedMasterId]);
+  }, [masterProfiles, onActiveMasterChange, selectedMasterId, selectedProfileCategoryId]);
 
   useEffect(() => {
     if (!activeMasterId) return;
     if (!masterProfiles.some((master) => master.id === activeMasterId)) return;
-    const currentMasterId = parseProfilesSidebarSelection(selectedCategoryId).masterId;
-    if (currentMasterId === activeMasterId) return;
-    setSelectedCategoryId(masterSidebarCategoryId(activeMasterId));
+    const current = parseProfilesSidebarSelection(selectedCategoryId);
+    if (current.masterId === activeMasterId) return;
+    if (current.profileGroupId) {
+      setSelectedCategoryId(groupMasterSidebarId(current.profileGroupId, activeMasterId));
+    }
   }, [activeMasterId, masterProfiles, selectedCategoryId]);
 
   useEffect(() => {
@@ -569,7 +574,7 @@ export function ProfilesPanel({
     const selected = profiles.filter((profile) => selectedIds.includes(profile.id));
     const locked = selected.find((profile) => isProfileCategoryLocked(categories, profile.categoryId));
     if (locked) {
-      setStatus("Unlock the category before editing these profiles.");
+      setStatus("Unlock the group before editing these profiles.");
       return;
     }
     setStatus(null);
@@ -620,7 +625,7 @@ export function ProfilesPanel({
         try {
           categoryId = await resolveCategorySelection(draftCategorySelection, createCategory);
         } catch (error) {
-          setStatus(error instanceof Error ? error.message : "Category is required.");
+          setStatus(error instanceof Error ? error.message : "Group is required.");
           return false;
         }
       }
@@ -664,12 +669,12 @@ export function ProfilesPanel({
     try {
       categoryId = await resolveCategorySelection(draftCategorySelection, createCategory);
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Category is required.");
+      setStatus(error instanceof Error ? error.message : "Group is required.");
       return false;
     }
 
     const updated = ensureProfileEditorFields(
-      syncProfileEmailLink(syncProfileCreditCardLink({ ...profileDraft, categoryId }, creditCards), poolEmails),
+      syncProfileEmailLink(syncProfileCreditCardLink({ ...profileDraft, groupId: categoryId, categoryId }, creditCards), poolEmails),
     );
     await onSaveProfiles(
       [updated],
@@ -716,13 +721,13 @@ export function ProfilesPanel({
       return;
     }
     askConfirm({
-      title: "Delete category",
+      title: "Delete group",
       message: `Delete "${category.name}"? This cannot be undone.`,
       onConfirm: async () => {
         await onDeleteCategory(categoryId);
-        const { masterId, profileCategoryId } = parseProfilesSidebarSelection(selectedCategoryId);
+        const { profileCategoryId } = parseProfilesSidebarSelection(selectedCategoryId);
         if (profileCategoryId === categoryId) {
-          setSelectedCategoryId(masterId ? masterSidebarCategoryId(masterId) : "all");
+          setSelectedCategoryId("all");
         }
         if (draftCategorySelection.kind === "existing" && draftCategorySelection.categoryId === categoryId) {
           setDraftCategorySelection(existingCategorySelection());
@@ -736,13 +741,7 @@ export function ProfilesPanel({
 
   const handleCreateCategory = async (name: string) => {
     const category = await createCategory(name);
-    const masterId = selectedMasterId ?? activeMasterId ?? masterProfiles[0]?.id ?? null;
-    if (masterId) {
-      setSelectedCategoryId(masterCategorySidebarId(masterId, category.id));
-      onActiveMasterChange(masterId);
-    } else {
-      setSelectedCategoryId(category.id);
-    }
+    setSelectedCategoryId(groupSidebarId(category.id));
     setDraftCategorySelection(existingCategorySelection(category.id));
     setMoveCategorySelection(existingCategorySelection(category.id));
   };
@@ -790,7 +789,7 @@ export function ProfilesPanel({
       categoryId = await resolveCategorySelection(moveCategorySelection, createCategory);
       assertProfileCategoryUnlocked(categories, categoryId, "move profiles into it");
     } catch (error) {
-      throw error instanceof Error ? error : new Error("Category is required.");
+      throw error instanceof Error ? error : new Error("Group is required.");
     }
 
     const loaded = await Promise.all(selectedIds.map((id) => onLoadProfile(id)));
@@ -799,7 +798,7 @@ export function ProfilesPanel({
     }
     const updated = loaded
       .filter((profile) => profileCategoryId(profile) !== categoryId)
-      .map((profile) => ({ ...profile, categoryId }));
+      .map((profile) => ({ ...profile, groupId: categoryId, categoryId }));
 
     if (updated.length > 0) {
       await onSaveProfiles(updated, "Move profiles");
@@ -817,7 +816,7 @@ export function ProfilesPanel({
       categoryId = await resolveCategorySelection(copyCategorySelection, createCategory);
       assertProfileCategoryUnlocked(categories, categoryId, "copy profiles into it");
     } catch (error) {
-      throw error instanceof Error ? error : new Error("Category is required.");
+      throw error instanceof Error ? error : new Error("Group is required.");
     }
 
     const loaded = await Promise.all(selectedIds.map((id) => onLoadProfile(id)));
@@ -833,6 +832,7 @@ export function ProfilesPanel({
       return {
         ...profile,
         id: crypto.randomUUID(),
+        groupId: categoryId,
         categoryId,
         profileName: uniqueCopiedProfileName(sourceName, usedNames),
         createdAt: now,
@@ -844,7 +844,7 @@ export function ProfilesPanel({
       await onSaveProfiles(copies, "Copy profiles");
     }
 
-    const message = `Copied ${copies.length} profile${copies.length === 1 ? "" : "s"} to the selected category.`;
+    const message = `Copied ${copies.length} profile${copies.length === 1 ? "" : "s"} to the selected group.`;
     onLastAction?.(message);
     setStatus(message);
   };
@@ -941,7 +941,7 @@ export function ProfilesPanel({
   const handleToolbarMove = () => {
     if (selectedIds.length > 0) {
       if (selectedProfilesLocked) {
-        setStatus("Unlock the category before moving these profiles.");
+        setStatus("Unlock the group before moving these profiles.");
         return;
       }
       openMoveModal();
@@ -950,7 +950,7 @@ export function ProfilesPanel({
     if (!selectedMasterId) return;
     const masterJigs = profiles.filter((profile) => profile.masterProfileId === selectedMasterId);
     if (masterJigs.some((profile) => isProfileCategoryLocked(categories, profile.categoryId))) {
-      setStatus("Unlock locked categories before moving these profiles.");
+      setStatus("Unlock locked groups before moving these profiles.");
       return;
     }
     const masterJigIds = masterJigs.map((profile) => profile.id);
@@ -974,7 +974,7 @@ export function ProfilesPanel({
       message: `Delete "${masterProfileLabel(master)}"? This cannot be undone.`,
       onConfirm: async () => {
         await onDeleteMaster(selectedMasterId);
-        setSelectedCategoryId("all");
+        setSelectedCategoryId(selectedProfileCategoryId ? groupSidebarId(selectedProfileCategoryId) : "all");
       },
     });
   };
@@ -985,21 +985,25 @@ export function ProfilesPanel({
   const poolTitle =
     selectedCategoryId === "all"
       ? "All jig profiles"
-      : selectedMasterId
+      : selectedCategory
         ? (() => {
-            const master = masterProfiles.find((item) => item.id === selectedMasterId);
-            const count = masterChildCounts.get(selectedMasterId) ?? 0;
-            if (selectedCategory) {
-              const categoryCount = masterCategoryCounts.get(selectedMasterId)?.get(selectedCategory.id) ?? 0;
+            const groupCount = categoryCounts.get(selectedCategory.id) ?? 0;
+            if (selectedMasterId) {
+              const master = masterProfiles.find((item) => item.id === selectedMasterId);
+              const nestedCount = groupMasterCounts.get(selectedCategory.id)?.get(selectedMasterId) ?? 0;
               return master
-                ? `${masterProfileLabel(master)} · ${selectedCategory.name}${selectedCategory.locked ? " · Locked" : ""} · ${categoryCount} jig(s)`
+                ? `${selectedCategory.name}${selectedCategory.locked ? " · Locked" : ""} · ${masterProfileLabel(master)} · ${nestedCount} jig(s)`
                 : selectedCategory.name;
             }
-            return master
-              ? `${masterProfileLabel(master)} · Master · ${count} jig(s)`
-              : "Master profiles";
+            return `${selectedCategory.name}${selectedCategory.locked ? " · Locked" : ""} · ${groupCount} jig(s)`;
           })()
-        : (selectedCategory?.name ?? "Category");
+        : selectedMasterId
+          ? (() => {
+              const master = masterProfiles.find((item) => item.id === selectedMasterId);
+              const count = masterChildCounts.get(selectedMasterId) ?? 0;
+              return master ? `${masterProfileLabel(master)} · Master · ${count} jig(s)` : "Master profiles";
+            })()
+          : "Group";
 
   const tableColumnCount = PROFILE_TABLE_COLUMNS.length;
 
@@ -1009,7 +1013,7 @@ export function ProfilesPanel({
         <aside className="accounts-sidebar card" style={{ width: sidebarWidth }}>
           <input
             className="accounts-category-search"
-            placeholder="Find Categories"
+            placeholder="Find Groups"
             value={categorySearch}
             onChange={(event) => setCategorySearch(event.target.value)}
           />
@@ -1023,118 +1027,115 @@ export function ProfilesPanel({
               <span className="accounts-category-count">{profiles.length}</span>
             </button>
           </div>
-          {masterProfiles.length > 0 ? (
+          {filteredGroups.length > 0 ? (
             <ul className="accounts-category-list accounts-master-list">
-              {filteredMasters.map((master) => {
-                const masterSelectionId = masterSidebarCategoryId(master.id);
-                const childCount = masterChildCounts.get(master.id) ?? 0;
-                const masterCategories = categoriesForMaster(master.id);
-                const masterActive =
-                  selectedCategoryId === masterSelectionId ||
-                  (selectedMasterId === master.id && Boolean(selectedProfileCategoryId));
+              {filteredGroups.map((group) => {
+                const groupSelectionId = groupSidebarId(group.id);
+                const groupCount = categoryCounts.get(group.id) ?? 0;
+                const nestedMasters = mastersForGroup(group.id);
+                const groupActive =
+                  selectedCategoryId === groupSelectionId ||
+                  (selectedProfileCategoryId === group.id && Boolean(selectedMasterId));
                 return (
-                  <li key={master.id} className="accounts-master-group">
-                    <button
-                      type="button"
-                      className={`accounts-category-item${selectedCategoryId === masterSelectionId ? " active" : ""}${masterActive && selectedCategoryId !== masterSelectionId ? " active-parent" : ""}`}
-                      onClick={() => {
-                        setSelectedCategoryId(masterSelectionId);
-                        onActiveMasterChange(master.id);
-                      }}
-                    >
-                      <span className="accounts-category-name">{masterProfileLabel(master)}</span>
-                      <span className="accounts-category-count">Master · {childCount} jig(s)</span>
-                    </button>
-                    {masterCategories.length > 0 ? (
+                  <li
+                    key={group.id}
+                    className={`accounts-master-group accounts-category-row${draggingCategoryId === group.id ? " dragging" : ""}${dragOverCategoryId === group.id ? " drag-over" : ""}`}
+                    onDragOver={(event) => {
+                      if (!canReorderCategories || !draggingCategoryId || draggingCategoryId === group.id) {
+                        return;
+                      }
+                      event.preventDefault();
+                      event.dataTransfer.dropEffect = "move";
+                      setDragOverCategoryId(group.id);
+                    }}
+                    onDragLeave={() => {
+                      if (dragOverCategoryId === group.id) {
+                        setDragOverCategoryId(null);
+                      }
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      const draggedId = event.dataTransfer.getData("text/category-id") || draggingCategoryId;
+                      setDragOverCategoryId(null);
+                      setDraggingCategoryId(null);
+                      if (!draggedId) return;
+                      void handleCategoryReorder(draggedId, group.id);
+                    }}
+                  >
+                    <div className="accounts-category-row accounts-master-category-row">
+                      <button
+                        type="button"
+                        className={`accounts-category-lock${group.locked ? " is-locked" : ""}`}
+                        aria-label={group.locked ? `Unlock ${group.name}` : `Lock ${group.name}`}
+                        title={group.locked ? "Unlock group" : "Lock group"}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void toggleCategoryLock(group);
+                        }}
+                      >
+                        {group.locked ? "🔒" : "🔓"}
+                      </button>
+                      {canReorderCategories ? (
+                        <button
+                          type="button"
+                          className="accounts-category-drag"
+                          draggable
+                          aria-label={`Reorder ${group.name}`}
+                          title="Drag to reorder"
+                          onDragStart={(event) => {
+                            event.dataTransfer.setData("text/category-id", group.id);
+                            event.dataTransfer.effectAllowed = "move";
+                            setDraggingCategoryId(group.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggingCategoryId(null);
+                            setDragOverCategoryId(null);
+                          }}
+                          onClick={(event) => event.stopPropagation()}
+                        >
+                          ⋮⋮
+                        </button>
+                      ) : null}
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        className={`accounts-category-item${selectedCategoryId === groupSelectionId ? " active" : ""}${groupActive && selectedCategoryId !== groupSelectionId ? " active-parent" : ""}${group.locked ? " is-locked" : ""}`}
+                        onClick={() => {
+                          setSelectedCategoryId(groupSelectionId);
+                          onActiveMasterChange(null);
+                        }}
+                        onKeyDown={(event) => {
+                          if (event.key !== "Enter" && event.key !== " ") return;
+                          event.preventDefault();
+                          setSelectedCategoryId(groupSelectionId);
+                          onActiveMasterChange(null);
+                        }}
+                      >
+                        <RenameableCategoryName
+                          name={group.name}
+                          onRename={(nextName) => renameCategory(group.id, nextName)}
+                        />
+                        <span className="accounts-category-count">{groupCount}</span>
+                      </div>
+                    </div>
+                    {nestedMasters.length > 0 ? (
                       <ul className="accounts-master-nested">
-                        {masterCategories.map((category) => {
-                          const categorySelectionId = masterCategorySidebarId(master.id, category.id);
-                          const nestedCount = masterCategoryCounts.get(master.id)?.get(category.id) ?? 0;
+                        {nestedMasters.map((master) => {
+                          const masterSelectionId = groupMasterSidebarId(group.id, master.id);
+                          const nestedCount = groupMasterCounts.get(group.id)?.get(master.id) ?? 0;
                           return (
-                            <li
-                              key={`${master.id}-${category.id}`}
-                              className={`accounts-category-row accounts-master-category-row${draggingCategoryId === category.id ? " dragging" : ""}${dragOverCategoryId === category.id ? " drag-over" : ""}`}
-                              onDragOver={(event) => {
-                                if (
-                                  !canReorderCategories ||
-                                  !draggingCategoryId ||
-                                  draggingCategoryId === category.id
-                                ) {
-                                  return;
-                                }
-                                event.preventDefault();
-                                event.dataTransfer.dropEffect = "move";
-                                setDragOverCategoryId(category.id);
-                              }}
-                              onDragLeave={() => {
-                                if (dragOverCategoryId === category.id) {
-                                  setDragOverCategoryId(null);
-                                }
-                              }}
-                              onDrop={(event) => {
-                                event.preventDefault();
-                                const draggedId =
-                                  event.dataTransfer.getData("text/category-id") || draggingCategoryId;
-                                setDragOverCategoryId(null);
-                                setDraggingCategoryId(null);
-                                if (!draggedId) return;
-                                void handleCategoryReorder(draggedId, category.id);
-                              }}
-                            >
+                            <li key={`${group.id}-${master.id}`}>
                               <button
                                 type="button"
-                                className={`accounts-category-lock${category.locked ? " is-locked" : ""}`}
-                                aria-label={category.locked ? `Unlock ${category.name}` : `Lock ${category.name}`}
-                                title={category.locked ? "Unlock category" : "Lock category"}
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  void toggleCategoryLock(category);
-                                }}
-                              >
-                                {category.locked ? "🔒" : "🔓"}
-                              </button>
-                              {canReorderCategories ? (
-                                <button
-                                  type="button"
-                                  className="accounts-category-drag"
-                                  draggable
-                                  aria-label={`Reorder ${category.name}`}
-                                  title="Drag to reorder"
-                                  onDragStart={(event) => {
-                                    event.dataTransfer.setData("text/category-id", category.id);
-                                    event.dataTransfer.effectAllowed = "move";
-                                    setDraggingCategoryId(category.id);
-                                  }}
-                                  onDragEnd={() => {
-                                    setDraggingCategoryId(null);
-                                    setDragOverCategoryId(null);
-                                  }}
-                                  onClick={(event) => event.stopPropagation()}
-                                >
-                                  ⋮⋮
-                                </button>
-                              ) : null}
-                              <div
-                                role="button"
-                                tabIndex={0}
-                                className={`accounts-category-item accounts-category-item-nested${selectedCategoryId === categorySelectionId ? " active" : ""}${category.locked ? " is-locked" : ""}`}
+                                className={`accounts-category-item accounts-category-item-nested${selectedCategoryId === masterSelectionId ? " active" : ""}`}
                                 onClick={() => {
-                                  setSelectedCategoryId(categorySelectionId);
-                                  onActiveMasterChange(master.id);
-                                }}
-                                onKeyDown={(event) => {
-                                  if (event.key !== "Enter" && event.key !== " ") return;
-                                  event.preventDefault();
-                                  setSelectedCategoryId(categorySelectionId);
+                                  setSelectedCategoryId(masterSelectionId);
                                   onActiveMasterChange(master.id);
                                 }}
                               >
-                                <RenameableCategoryName
-                                  name={category.name}
-                                  onRename={(nextName) => renameCategory(category.id, nextName)}
-                                />
+                                <span className="accounts-category-name">{masterProfileLabel(master)}</span>
                                 <span className="accounts-category-count">{nestedCount}</span>
-                              </div>
+                              </button>
                             </li>
                           );
                         })}
@@ -1157,10 +1158,8 @@ export function ProfilesPanel({
             type="button"
             className="btn-secondary accounts-create-category-btn"
             onClick={() => setShowCreateCategory(true)}
-            disabled={masterProfiles.length === 0}
-            title={masterProfiles.length === 0 ? "Create a master profile first" : undefined}
           >
-            Create Category
+            Create Group
           </button>
         </aside>
 
@@ -1168,7 +1167,7 @@ export function ProfilesPanel({
           className="accounts-sidebar-resizer"
           role="separator"
           aria-orientation="vertical"
-          aria-label="Resize categories panel"
+          aria-label="Resize groups panel"
           onMouseDown={startSidebarResize}
         />
 
@@ -1205,7 +1204,17 @@ export function ProfilesPanel({
               createMasterDisabled={createMasterDisabled}
               onCreateMaster={handleCreateMasterClick}
               onGenerate={() => {
-                if (toolbarMasterId) onGenerate(toolbarMasterId, selectedProfileCategoryId ?? undefined);
+                const groupId = selectedProfileCategoryId ?? undefined;
+                if (selectedMasterId) {
+                  onGenerate([selectedMasterId], groupId);
+                  return;
+                }
+                if (groupId) {
+                  const inGroup = mastersForGroup(groupId).map((master) => master.id);
+                  onGenerate(inGroup.length > 0 ? inGroup : toolbarMasterId ? [toolbarMasterId] : [], groupId);
+                  return;
+                }
+                if (toolbarMasterId) onGenerate([toolbarMasterId], groupId);
               }}
               onEdit={handleToolbarEdit}
               onMove={handleToolbarMove}
@@ -1253,6 +1262,9 @@ export function ProfilesPanel({
                       <ResizableTh columns={profileTableColumns} id="name">
                         Name
                       </ResizableTh>
+                      <ResizableTh columns={profileTableColumns} id="master">
+                        Master
+                      </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="billingName">
                         Billing
                       </ResizableTh>
@@ -1286,9 +1298,9 @@ export function ProfilesPanel({
                           {activeOpportunityId
                             ? "No jig profiles match this opportunity in the current view."
                             : selectedCategory && canDeleteSelectedCategory
-                              ? "No jig profiles in this category. You can delete it using the toolbar."
+                              ? "No jig profiles in this group. You can delete it using the toolbar."
                               : selectedMasterId
-                                ? "No jig profiles for this master yet. Use Generate on the toolbar."
+                                ? "No jig profiles for this master in the current group. Use Generate on the toolbar."
                                 : "No jig profiles yet. Create a master, then use Generate on the toolbar."}
                         </td>
                       </tr>
@@ -1310,6 +1322,11 @@ export function ProfilesPanel({
                             </td>
                             <td className="col-index">{index + 1}</td>
                             <td className="col-name">{profile.name || "—"}</td>
+                            <td className="col-master">
+                              {profile.masterProfileId
+                                ? masterLabelById.get(profile.masterProfileId) || "—"
+                                : "—"}
+                            </td>
                             <td className="col-billing-name">{profile.billingFullName || "—"}</td>
                             <td className="col-email">{profile.billingEmail || "—"}</td>
                             <td className="col-phone">{profile.billingPhone || "—"}</td>

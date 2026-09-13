@@ -25,7 +25,7 @@ export function CreateCategoryModal({ open, onClose, onSave }: CreateCategoryMod
   const handleSave = async () => {
     const trimmed = name.trim();
     if (!trimmed) {
-      setError("Category name is required.");
+      setError("Group name is required.");
       return;
     }
     setBusy(true);
@@ -34,7 +34,7 @@ export function CreateCategoryModal({ open, onClose, onSave }: CreateCategoryMod
       await onSave(trimmed);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not save category.");
+      setError(err instanceof Error ? err.message : "Could not save group.");
     } finally {
       setBusy(false);
     }
@@ -44,13 +44,13 @@ export function CreateCategoryModal({ open, onClose, onSave }: CreateCategoryMod
     <div className="modal-overlay">
       <div className="modal-dialog modal-dialog-sm" onClick={(event) => event.stopPropagation()}>
         <div className="modal-header">
-          <strong>Create category</strong>
+          <strong>Create group</strong>
           <button type="button" className="tool-btn tool-btn-cyan" onClick={onClose}>
             Close
           </button>
         </div>
         <div className="modal-body">
-          <Field label="Category name">
+          <Field label="Group name">
             <input
               value={name}
               autoFocus

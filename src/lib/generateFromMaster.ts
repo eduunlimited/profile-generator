@@ -235,6 +235,7 @@ export async function generateProfilesFromMaster(
   occupancyProfiles?: (Profile | ProfileSummary)[],
   poolEmails: PoolEmail[] = [],
 ): Promise<Profile[]> {
+  const groupId = options.groupId?.trim() || options.categoryId?.trim() || "";
   const now = new Date().toISOString();
   const usedProfileNames = collectUsedProfileNames(existingProfilesInCategory);
   const streetUseCounts = buildStreetUseCounts(existingProfilesInCategory.map((profile) => profile.address));
@@ -348,11 +349,13 @@ export async function generateProfilesFromMaster(
 
     const profileId = crypto.randomUUID();
     const profileName = resolveGeneratedProfileName(master, usedProfileNames);
+    const accountSite = options.accountSite?.trim() ?? "";
     const targetAssignable = {
       id: profileId,
       name: profileName,
-      accountSite: "",
-      categoryId: options.categoryId,
+      accountSite,
+      groupId,
+      categoryId: groupId,
     };
 
     const { payment, creditCardId } = resolveCardForProfile(
@@ -380,7 +383,8 @@ export async function generateProfilesFromMaster(
     const emailTargetAssignable = {
       id: profileId,
       name: profileName,
-      categoryId: options.categoryId,
+      groupId,
+      categoryId: groupId,
     };
     const { email, emailPoolId } = resolveEmailForProfile(
       options.emailMode,
@@ -412,7 +416,9 @@ export async function generateProfilesFromMaster(
       generatedFromMaster: true,
       profileName,
       phone,
-      categoryId: options.categoryId,
+      groupId,
+      categoryId: groupId,
+      accountSite,
       accountStatus: "good",
       notes: "",
       nameJigPresetId: namePreset?.id,

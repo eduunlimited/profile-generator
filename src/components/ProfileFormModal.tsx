@@ -249,7 +249,7 @@ export function ProfileFormModal({
                   }}
                 />
                 <div className="profile-edit-row profile-edit-row-inline">
-                  <Field label="Category" className="field-w-grow">
+                  <Field label="Group" className="field-w-grow">
                     {showMixed("categoryId") ? (
                       <input
                         className="mass-edit-mixed"
@@ -267,6 +267,8 @@ export function ProfileFormModal({
                           onDraftCategorySelectionChange(selection);
                         }}
                         uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
+                        addOptionLabel="+ Add group"
+                        newPlaceholder="Enter group name"
                       />
                     )}
                   </Field>
@@ -635,7 +637,7 @@ export function ProfileFormModal({
           {canDeleteDraftCategory ? (
             <div className="button-row compact">
               <button type="button" className="ghost-button danger" onClick={onDeleteDraftCategory}>
-                Delete category
+                Delete group
               </button>
             </div>
           ) : null}

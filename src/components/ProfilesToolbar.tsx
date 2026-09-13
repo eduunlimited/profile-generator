@@ -74,7 +74,7 @@ export function ProfilesToolbar({
   const canEdit = (hasMasterSelection || hasJigSelection) && !profileActionsLocked;
   const canMove = (hasJigSelection || (hasMasterSelection && selectedMasterJigCount > 0)) && !profileActionsLocked;
   const canDelete = (hasJigSelection || (hasMasterSelection && canDeleteMaster)) && !profileActionsLocked;
-  const lockHint = "Unlock the category to change these profiles";
+  const lockHint = "Unlock the group to change these profiles";
 
   return (
     <div className="profiles-table-toolbar">
@@ -93,7 +93,7 @@ export function ProfilesToolbar({
             type="button"
             className="btn-secondary btn-compact"
             disabled={generateLocked}
-            title={generateLocked ? "Unlock the category to generate profiles" : undefined}
+            title={generateLocked ? "Unlock the group to generate profiles" : undefined}
             onClick={onGenerate}
           >
             Generate Jigs
@@ -228,7 +228,7 @@ export function ProfilesToolbar({
               className="btn-secondary btn-compact ghost-button danger"
               onClick={onDeleteCategory}
             >
-              Delete category
+              Delete group
             </button>
           ) : null}
         </div>

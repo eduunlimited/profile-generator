@@ -230,6 +230,8 @@ function AppContent() {
 
   const [generateMasterId, setGenerateMasterId] = useState<string | null>(null);
 
+  const [generateMasterIds, setGenerateMasterIds] = useState<string[]>([]);
+
   const [isCreatingMaster, setIsCreatingMaster] = useState(false);
 
   const createMasterLockRef = useRef(false);
@@ -420,13 +422,17 @@ function AppContent() {
 
   const [generateCategoryId, setGenerateCategoryId] = useState<string | null>(null);
 
-  const openGenerateModal = (masterId: string, categoryId?: string) => {
+  const openGenerateModal = (masterIds: string | string[], categoryId?: string) => {
 
-    setGenerateMasterId(masterId);
+    const ids = (Array.isArray(masterIds) ? masterIds : [masterIds]).filter(Boolean);
+
+    setGenerateMasterIds(ids);
+
+    setGenerateMasterId(ids[0] ?? null);
 
     setGenerateCategoryId(categoryId ?? null);
 
-    setActiveMasterId(masterId);
+    if (ids.length === 1) setActiveMasterId(ids[0]);
 
     setShowGenerateModal(true);
 
@@ -732,6 +738,8 @@ function AppContent() {
 
                 initialMasterId={generateMasterId ?? activeMasterId}
 
+                initialMasterIds={generateMasterIds.length > 0 ? generateMasterIds : undefined}
+
                 initialCategoryId={generateCategoryId}
 
                 profileCategories={profileCategories}
@@ -741,6 +749,8 @@ function AppContent() {
                 creditCards={creditCards}
 
                 poolEmails={poolEmails}
+
+                credentials={credentials}
 
                 onSaveCategory={upsertProfileCategory}
 

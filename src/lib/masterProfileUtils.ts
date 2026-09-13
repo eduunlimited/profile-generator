@@ -100,38 +100,60 @@ export function masterProfileLabel(master: MasterProfile): string {
   return "Master profile";
 }
 
+export function groupSidebarId(groupId: string): string {
+  return `group:${groupId}`;
+}
+
+export function groupMasterSidebarId(groupId: string, masterId: string): string {
+  return `group:${groupId}:master:${masterId}`;
+}
+
+/** @deprecated Use groupSidebarId for master-only legacy rows */
 export function masterSidebarCategoryId(masterId: string): string {
   return `master:${masterId}`;
 }
 
+/** @deprecated Use groupMasterSidebarId */
 export function masterCategorySidebarId(masterId: string, categoryId: string): string {
   return `master:${masterId}:cat:${categoryId}`;
 }
 
 export type ProfilesSidebarSelection = {
   masterId: string | null;
+  profileGroupId: string | null;
+  /** @deprecated Use profileGroupId */
   profileCategoryId: string | null;
 };
 
+function selection(masterId: string | null, profileGroupId: string | null): ProfilesSidebarSelection {
+  return { masterId, profileGroupId, profileCategoryId: profileGroupId };
+}
+
 export function parseProfilesSidebarSelection(selectionId: string): ProfilesSidebarSelection {
   if (selectionId === "all") {
-    return { masterId: null, profileCategoryId: null };
+    return selection(null, null);
+  }
+  if (selectionId.startsWith("group:")) {
+    const rest = selectionId.slice("group:".length);
+    const masterMarker = ":master:";
+    const markerIndex = rest.indexOf(masterMarker);
+    if (markerIndex === -1) {
+      return selection(null, rest);
+    }
+    return selection(rest.slice(markerIndex + masterMarker.length), rest.slice(0, markerIndex));
   }
   if (!selectionId.startsWith("master:")) {
-    return { masterId: null, profileCategoryId: selectionId };
+    return selection(null, selectionId);
   }
 
   const rest = selectionId.slice("master:".length);
   const categoryMarker = ":cat:";
   const markerIndex = rest.indexOf(categoryMarker);
   if (markerIndex === -1) {
-    return { masterId: rest, profileCategoryId: null };
+    return selection(rest, null);
   }
 
-  return {
-    masterId: rest.slice(0, markerIndex),
-    profileCategoryId: rest.slice(markerIndex + categoryMarker.length),
-  };
+  return selection(rest.slice(0, markerIndex), rest.slice(markerIndex + categoryMarker.length));
 }
 
 /** @deprecated Use parseProfilesSidebarSelection */

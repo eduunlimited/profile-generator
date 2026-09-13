@@ -24,6 +24,7 @@ import {
 import { filterAssignablePoolCards } from "../lib/creditCardUtils";
 import { filterAssignablePoolEmails } from "../lib/emailPoolUtils";
 import type {
+  Credential,
   CreditCard,
   GenerateFromMasterOptions,
   JigPreset,
@@ -34,16 +35,19 @@ import type {
   StreetAffixMode,
 } from "../lib/types";
 import { masterProfileLabel } from "../lib/masterProfileUtils";
+import { AccountSiteSelect } from "./AccountSiteSelect";
 import { Field } from "./ui";
 
 interface GeneratePanelProps {
   masterProfiles: MasterProfile[];
-  initialMasterId: string | null;
+  initialMasterId?: string | null;
+  initialMasterIds?: string[];
   initialCategoryId?: string | null;
   profileCategories: ProfileCategory[];
   jigPresets: JigPreset[];
   creditCards: CreditCard[];
   poolEmails?: PoolEmail[];
+  credentials?: Credential[];
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
   onGenerate: (masterIds: string[], options: GenerateFromMasterOptions) => Promise<number>;
   onSuccess?: (count: number, masterIds: string[]) => void;
@@ -59,11 +63,13 @@ function existingCategorySelection(categoryId?: string): CategorySelection {
 export function GeneratePanel({
   masterProfiles,
   initialMasterId,
+  initialMasterIds,
   initialCategoryId,
   profileCategories,
   jigPresets,
   creditCards,
   poolEmails = [],
+  credentials = [],
   onSaveCategory,
   onGenerate,
   onSuccess,
@@ -74,6 +80,8 @@ export function GeneratePanel({
   );
 
   const [masterIds, setMasterIds] = useState<string[]>(() => {
+    const fromList = (initialMasterIds ?? []).filter(Boolean);
+    if (fromList.length > 0) return fromList;
     const initial = initialMasterId ?? masterProfiles[0]?.id ?? "";
     return initial ? [initial] : [];
   });
@@ -94,6 +102,7 @@ export function GeneratePanel({
   const [creditCardId, setCreditCardId] = useState("");
   const [emailMode, setEmailMode] = useState<GenerateFromMasterOptions["emailMode"]>("none");
   const [emailId, setEmailId] = useState("");
+  const [accountSite, setAccountSite] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
@@ -106,6 +115,10 @@ export function GeneratePanel({
   const sortedAddressPresets = sortJigPresets(addressPresets, RECOMMENDED_ADDRESS_JIG_IDS);
   const assignableCreditCards = useMemo(() => filterAssignablePoolCards(creditCards), [creditCards]);
   const assignablePoolEmails = useMemo(() => filterAssignablePoolEmails(poolEmails), [poolEmails]);
+  const extraAccountSites = useMemo(
+    () => [...new Set(credentials.map((credential) => credential.site.trim()).filter(Boolean))],
+    [credentials],
+  );
 
   const selectedMasters = useMemo(
     () => masterProfiles.filter((master) => masterIds.includes(master.id)),
@@ -125,10 +138,12 @@ export function GeneratePanel({
     setMasterIds((current) => {
       const kept = current.filter((id) => known.has(id));
       if (kept.length > 0) return kept;
+      const fromList = (initialMasterIds ?? []).filter((id) => known.has(id));
+      if (fromList.length > 0) return fromList;
       if (initialMasterId && known.has(initialMasterId)) return [initialMasterId];
       return masterProfiles[0] ? [masterProfiles[0].id] : [];
     });
-  }, [initialMasterId, masterProfiles]);
+  }, [initialMasterId, initialMasterIds, masterProfiles]);
 
   useEffect(() => {
     if (initialCategoryId && sortedCategories.some((category) => category.id === initialCategoryId)) {
@@ -176,7 +191,7 @@ export function GeneratePanel({
       categoryId = await resolveCategorySelection(categorySelection, createCategory);
       assertProfileCategoryUnlocked(profileCategories, categoryId, "generate profiles into it");
     } catch (error) {
-      setStatus(error instanceof Error ? error.message : "Category is required.");
+      setStatus(error instanceof Error ? error.message : "Group is required.");
       return;
     }
     setBusy(true);
@@ -185,7 +200,7 @@ export function GeneratePanel({
         selectedMasters.map((master) => master.id),
         {
           count,
-          categoryId,
+          groupId: categoryId,
           nameJigPresetId: nameJigPresetId || undefined,
           nameMisspellScope: nameJigPresetId ? nameMisspellScope : undefined,
           streetRandomLetters: streetRandomLettersEnabled
@@ -201,9 +216,10 @@ export function GeneratePanel({
           creditCardId: creditCardMode === "selected" ? creditCardId : undefined,
           emailMode: emailMode ?? "none",
           emailId: emailMode === "selected" ? emailId : undefined,
+          accountSite: accountSite.trim() || undefined,
         },
       );
-      setStatus(`Created ${created} jig profile(s) in the selected category.`);
+      setStatus(`Created ${created} jig profile(s) in the selected group.`);
       onSuccess?.(
         created,
         selectedMasters.map((master) => master.id),
@@ -225,12 +241,12 @@ export function GeneratePanel({
         ) : selectedMasters.length === 1 ? (
           <>
             Parent <strong>{masterProfileLabel(selectedMasters[0])}</strong> · {count}{" "}
-            {count === 1 ? "profile" : "profiles"} · street line 1 unique in the selected category
+            {count === 1 ? "profile" : "profiles"} · street line 1 unique in the selected group
           </>
         ) : (
           <>
             <strong>{selectedMasters.length}</strong> masters · {count} each · {totalCount} profiles · street line 1
-            unique in the selected category
+            unique in the selected group
           </>
         )}
       </p>
@@ -263,16 +279,27 @@ export function GeneratePanel({
           .filter(Boolean)
           .join(" ")}
       >
-        <Field label="Category">
+        <Field label="Group">
           <AccountCategorySelect
             categories={sortedCategories}
             selection={categorySelection}
             onSelectionChange={setCategorySelection}
             uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
+            addOptionLabel="+ Add group"
+            newPlaceholder="Enter group name"
           />
           {selectedCategoryLocked ? (
-            <p className="muted">This category is locked. Unlock it or choose another.</p>
+            <p className="muted">This group is locked. Unlock it or choose another.</p>
           ) : null}
+        </Field>
+
+        <Field label="Account site" hint="Optional pool account link">
+          <AccountSiteSelect
+            site={accountSite}
+            onSiteChange={setAccountSite}
+            extraSites={extraAccountSites}
+            allowNone
+          />
         </Field>
 
         <Field label="Count" hint="Per selected master">

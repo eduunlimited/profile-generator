@@ -2,6 +2,8 @@ import { GeneratePanel } from "./GeneratePanel";
 
 import type {
 
+  Credential,
+
   CreditCard,
 
   GenerateFromMasterOptions,
@@ -24,7 +26,9 @@ interface GenerateModalProps {
 
   masterProfiles: MasterProfile[];
 
-  initialMasterId: string | null;
+  initialMasterId?: string | null;
+
+  initialMasterIds?: string[];
 
   initialCategoryId?: string | null;
 
@@ -35,6 +39,8 @@ interface GenerateModalProps {
   creditCards: CreditCard[];
 
   poolEmails?: PoolEmail[];
+
+  credentials?: Credential[];
 
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
 
@@ -56,6 +62,8 @@ export function GenerateModal({
 
   initialMasterId,
 
+  initialMasterIds,
+
   initialCategoryId,
 
   profileCategories,
@@ -65,6 +73,8 @@ export function GenerateModal({
   creditCards,
 
   poolEmails,
+
+  credentials,
 
   onSaveCategory,
 
@@ -104,6 +114,8 @@ export function GenerateModal({
 
           initialMasterId={initialMasterId}
 
+          initialMasterIds={initialMasterIds}
+
           initialCategoryId={initialCategoryId}
 
           profileCategories={profileCategories}
@@ -113,6 +125,8 @@ export function GenerateModal({
           creditCards={creditCards}
 
           poolEmails={poolEmails}
+
+          credentials={credentials}
 
           onSaveCategory={onSaveCategory}
 

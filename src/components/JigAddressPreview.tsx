@@ -83,6 +83,7 @@ function previewProfileFromBase(base: JigPreviewBase): Profile {
     id: "preview",
     locale: "en_US",
     email: "",
+    groupId: "",
     categoryId: "",
     accountStatus: "good",
     notes: "",

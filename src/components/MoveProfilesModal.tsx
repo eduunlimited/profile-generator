@@ -64,15 +64,17 @@ export function MoveProfilesModal({
         <div className="modal-body">
           <p className="muted move-accounts-hint">
             {mode === "copy"
-              ? "Choose a category to copy the selected profiles into. You can add a new category from the list."
-              : "Choose a category to move the selected profiles into."}
+              ? "Choose a group to copy the selected profiles into. You can add a new group from the list."
+              : "Choose a group to move the selected profiles into."}
           </p>
-          <Field label="Category">
+          <Field label="Group">
             <AccountCategorySelect
               categories={categories}
               selection={selection}
               onSelectionChange={onSelectionChange}
               uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
+              addOptionLabel="+ Add group"
+              newPlaceholder="Enter group name"
             />
           </Field>
           {error ? <p className="status-inline">{error}</p> : null}

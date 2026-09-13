@@ -1,4 +1,4 @@
-import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
+import { profileGroupId } from "./profileGroupUtils";
 import { parseCardNumberDigits } from "./creditCardUtils";
 import { normalizeUsPhone } from "./phoneUtils";
 import type { Profile, ProfileName } from "./types";
@@ -67,7 +67,8 @@ export function normalizeProfile(profile: Profile): Profile {
     ...profile,
     email,
     phone,
-    categoryId: profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID,
+    groupId: profileGroupId(profile),
+    categoryId: profileGroupId(profile),
     accountStatus: profile.accountStatus === "not_good" ? "not_good" : "good",
     notes: profile.notes ?? "",
     cardHolderName: profile.cardHolderName ?? "",

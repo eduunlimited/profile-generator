@@ -15,6 +15,9 @@ interface AccountCategorySelectProps {
   selection: CategorySelection;
   onSelectionChange: (selection: CategorySelection) => void;
   uncategorizedCategoryId?: string;
+  addOptionLabel?: string;
+  newPlaceholder?: string;
+  requiredMessage?: string;
 }
 
 export function AccountCategorySelect({
@@ -22,6 +25,8 @@ export function AccountCategorySelect({
   selection,
   onSelectionChange,
   uncategorizedCategoryId = UNCATEGORIZED_CATEGORY_ID,
+  addOptionLabel = "+ Add category",
+  newPlaceholder = "Enter category name",
 }: AccountCategorySelectProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -37,7 +42,7 @@ export function AccountCategorySelect({
         ref={inputRef}
         className="inline-combobox-control"
         value={selection.name}
-        placeholder="Enter category name"
+        placeholder={newPlaceholder}
         autoComplete="off"
         onChange={(event) => onSelectionChange({ kind: "new", name: event.target.value })}
         onKeyDown={(event) => {
@@ -67,7 +72,7 @@ export function AccountCategorySelect({
           {category.locked ? `🔒 ${category.name}` : category.name}
         </option>
       ))}
-      <option value={ADD_CATEGORY_OPTION}>+ Add category</option>
+      <option value={ADD_CATEGORY_OPTION}>{addOptionLabel}</option>
     </select>
   );
 }

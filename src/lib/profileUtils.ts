@@ -387,6 +387,7 @@ export function createBlankProfile(): Profile {
       country: "United States",
     },
     payment: regeneratePayment({} as Profile),
+    groupId: PROFILE_UNCATEGORIZED_CATEGORY_ID,
     categoryId: PROFILE_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: "good",
     notes: "",

@@ -65,14 +65,14 @@ export function buildExportFilenameContext(
   );
   const categoryNames = uniqueSortedNames(
     profiles.map((profile) => {
-      const categoryId = profile.categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
-      return categoryById.get(categoryId)?.name.trim() || (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID ? "Uncategorized" : "");
+      const categoryId = profile.groupId?.trim() || profile.categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
+      return categoryById.get(categoryId)?.name.trim() || (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID ? "Ungrouped" : "");
     }),
   );
 
   return {
     masterName: masterNames.join(" + ") || "No Master",
-    categoryName: categoryNames.join(" + ") || "Uncategorized",
+    categoryName: categoryNames.join(" + ") || "Ungrouped",
   };
 }
 

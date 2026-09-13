@@ -59,20 +59,23 @@ export interface PoolEmail {
   email: string;
   categoryId: string;
   accountStatus: AccountReviewStatus;
-  /** When `single_profile`, unavailable after any assignment. Default allows one assignment per profile category. */
+  /** When `single_profile`, unavailable after any assignment. Default allows one assignment per profile group. */
   assignmentScope?: CardAssignmentScope;
   notes: string;
   createdAt: string;
 }
 
-export interface ProfileCategory {
+export interface ProfileGroup {
   id: string;
   name: string;
   createdAt: string;
   sortOrder?: number;
-  /** When true, profiles in this category cannot be edited until unlocked. */
+  /** When true, profiles in this group cannot be edited until unlocked. */
   locked?: boolean;
 }
+
+/** @deprecated Use ProfileGroup */
+export type ProfileCategory = ProfileGroup;
 
 export interface MasterProfile {
   id: string;
@@ -98,7 +101,7 @@ export interface CreditCard {
   brand: string;
   categoryId: string;
   accountStatus: AccountReviewStatus;
-  /** When `single_profile`, unavailable after any assignment. Default allows one assignment per profile category. */
+  /** When `single_profile`, unavailable after any assignment. Default allows one assignment per profile group. */
   assignmentScope?: CardAssignmentScope;
   notes: string;
   createdAt: string;
@@ -131,7 +134,9 @@ export interface Profile {
   /** Variable label shown in the profiles table (not billing first/last). */
   profileName?: string;
   phone?: string;
-  categoryId: string;
+  groupId: string;
+  /** @deprecated Use groupId. Accepted on load and kept in sync. */
+  categoryId?: string;
   accountStatus: AccountReviewStatus;
   notes: string;
   name: ProfileName;
@@ -272,6 +277,8 @@ export interface ProfileSummary {
   paymentNumber?: string;
   credentialSites?: string;
   credentialIds?: string[];
+  groupId?: string;
+  /** @deprecated Use groupId. Accepted on load and kept in sync. */
   categoryId?: string;
   accountStatus?: AccountReviewStatus;
   notes?: string;
@@ -390,7 +397,9 @@ export interface StreetRandomLettersJigOptions {
 
 export interface GenerateFromMasterOptions {
   count: number;
-  categoryId: string;
+  groupId: string;
+  /** @deprecated Use groupId. */
+  categoryId?: string;
   nameJigPresetId?: string;
   nameMisspellScope?: NameMisspellScope;
   addressJigPresetId?: string;
@@ -401,6 +410,8 @@ export interface GenerateFromMasterOptions {
   creditCardId?: string;
   emailMode?: CreditCardAssignMode;
   emailId?: string;
+  /** Account pool site to stamp on each generated jig. Empty = no account link. */
+  accountSite?: string;
 }
 
 export interface RejigProfilesOptions {

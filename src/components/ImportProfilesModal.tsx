@@ -277,10 +277,10 @@ export function ImportProfilesModal({
 
             <Field
               className="import-field-category"
-              label="Category"
+              label="Group"
               hint={
                 selectedMaster
-                  ? `Categories used under ${masterProfileLabel(selectedMaster)} appear first`
+                  ? `Groups used under ${masterProfileLabel(selectedMaster)} appear first`
                   : "Applied to all imported profiles"
               }
             >
@@ -289,6 +289,8 @@ export function ImportProfilesModal({
                 selection={categorySelection}
                 onSelectionChange={setCategorySelection}
                 uncategorizedCategoryId={PROFILE_UNCATEGORIZED_CATEGORY_ID}
+                addOptionLabel="+ Add group"
+                newPlaceholder="Enter group name"
               />
             </Field>
 

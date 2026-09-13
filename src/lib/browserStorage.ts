@@ -19,11 +19,12 @@ import {
   CARD_UNCATEGORIZED_CATEGORY_ID,
 } from "./cardCategoryUtils";
 import {
-  createMissingProfileCategory,
-  createUncategorizedProfileCategory,
-  sortProfileCategories,
-  PROFILE_UNCATEGORIZED_CATEGORY_ID,
-} from "./profileCategoryUtils";
+  createMissingProfileGroup,
+  createUngroupedProfileGroup,
+  profileGroupId,
+  sortProfileGroups,
+  PROFILE_UNGROUPED_GROUP_ID,
+} from "./profileGroupUtils";
 import { toStoredImapHeaders } from "./imapInbox";
 import { canonicalizeOrderId, orderRecordId } from "./orderEmail/classify";
 import { finalizeParsedOrder, upsertParsedOrders } from "./orderEmail/merge";
@@ -48,7 +49,7 @@ import type {
   MasterProfile,
   PoolEmail,
   Profile,
-  ProfileCategory,
+  ProfileGroup,
   ProfileSummary,
   StoredImapMessage,
   OrderAnalysisRecord,
@@ -74,6 +75,7 @@ const KEYS = {
   cardCategories: "profile-generator:card-categories",
   poolEmails: "profile-generator:pool-emails",
   emailCategories: "profile-generator:email-categories",
+  profileGroups: "profile-generator:profile-groups",
   profileCategories: "profile-generator:profile-categories",
   proxyPool: "profile-generator:proxy-pool",
   proxyGroups: "profile-generator:proxy-groups",
@@ -162,7 +164,8 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     paymentNumber: parseCardNumberDigits(payment.number),
     credentialSites: sites || undefined,
     credentialIds: profile.credentialIds ?? [],
-    categoryId: profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID,
+    groupId: profileGroupId(profile),
+    categoryId: profileGroupId(profile),
     accountStatus: profile.accountStatus === "not_good" ? "not_good" : "good",
     notes: profile.notes ?? "",
     createdAt: profile.createdAt,
@@ -189,7 +192,7 @@ export async function summarizeProfiles(profiles: Profile[]): Promise<ProfileSum
 }
 
 export async function listProfiles(): Promise<ProfileSummary[]> {
-  repairOrphanProfileCategoryIds();
+  repairOrphanProfileGroupIds();
   await persistMap();
   return summarizeProfiles(Object.values(readMap<Profile>(KEYS.profiles)));
 }
@@ -207,9 +210,9 @@ export async function saveProfile(profile: Profile): Promise<void> {
   const profiles = readMap<Profile>(KEYS.profiles);
   const normalized = normalizeProfile({
     ...profile,
-    categoryId: resolveStoredProfileCategoryId(profile.categoryId),
+    groupId: profileGroupId(profile),
   });
-  ensureProfileCategoryRecord(normalized.categoryId);
+  ensureProfileGroupRecord(normalized.groupId);
   profiles[normalized.id] = normalized;
   writeMap(KEYS.profiles, profiles);
   await persistMap();
@@ -220,9 +223,9 @@ export async function saveProfiles(profilesToSave: Profile[]): Promise<void> {
   for (const profile of profilesToSave) {
     const normalized = normalizeProfile({
       ...profile,
-      categoryId: resolveStoredProfileCategoryId(profile.categoryId),
+      groupId: profileGroupId(profile),
     });
-    ensureProfileCategoryRecord(normalized.categoryId);
+    ensureProfileGroupRecord(normalized.groupId);
     profiles[normalized.id] = normalized;
   }
   writeMap(KEYS.profiles, profiles);
@@ -252,9 +255,9 @@ export async function replaceAllProfiles(profilesToRestore: Profile[]): Promise<
     const normalized = normalizeProfile({
       ...profile,
       credentialIds: profile.credentialIds ?? [],
-      categoryId: resolveStoredProfileCategoryId(profile.categoryId),
+      groupId: profileGroupId(profile),
     });
-    ensureProfileCategoryRecord(normalized.categoryId);
+    ensureProfileGroupRecord(normalized.groupId);
     profiles[normalized.id] = normalized;
   }
   writeMap(KEYS.profiles, profiles);
@@ -364,7 +367,7 @@ export async function seedDefaults(
   ensureAccountCategoriesStored();
   ensureCardCategoriesStored();
   ensureEmailCategoriesStored();
-  ensureProfileCategoriesStored();
+  readProfileGroupsMap();
   await persistMap();
 }
 
@@ -671,113 +674,134 @@ export async function deleteEmailCategory(id: string): Promise<void> {
   await persistMap();
 }
 
-function readProfileCategoriesMap(): Record<string, ProfileCategory> {
-  return readMap<ProfileCategory>(KEYS.profileCategories);
+function readProfileGroupsMap(): Record<string, ProfileGroup> {
+  const current = readMap<ProfileGroup>(KEYS.profileGroups);
+  if (Object.keys(current).length > 0) {
+    return current;
+  }
+  const legacy = readMap<ProfileGroup>(KEYS.profileCategories);
+  if (Object.keys(legacy).length > 0) {
+    writeMap(KEYS.profileGroups, legacy);
+    return legacy;
+  }
+  return current;
 }
 
-function ensureProfileCategoriesStored(): void {
-  readProfileCategoriesMap();
-}
-
-function ensureProfileCategoryRecord(categoryId: string): void {
-  const categories = readProfileCategoriesMap();
-  if (categories[categoryId]) {
+function ensureProfileGroupRecord(groupId: string): void {
+  const groups = readProfileGroupsMap();
+  if (groups[groupId]) {
     return;
   }
-  if (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID) {
-    categories[categoryId] = createUncategorizedProfileCategory();
-    writeMap(KEYS.profileCategories, categories);
+  if (groupId === PROFILE_UNGROUPED_GROUP_ID) {
+    groups[groupId] = createUngroupedProfileGroup();
+    writeMap(KEYS.profileGroups, groups);
     return;
   }
-  categories[categoryId] = createMissingProfileCategory(categoryId);
-  writeMap(KEYS.profileCategories, categories);
+  groups[groupId] = createMissingProfileGroup(groupId);
+  writeMap(KEYS.profileGroups, groups);
 }
 
-function resolveStoredProfileCategoryId(categoryId: string): string {
-  return categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
-}
-
-function repairOrphanProfileCategoryIds(): void {
-  const categories = readProfileCategoriesMap();
+function repairOrphanProfileGroupIds(): void {
+  const groups = readProfileGroupsMap();
   const profiles = readMap<Profile>(KEYS.profiles);
   let profilesChanged = false;
-  let categoriesChanged = false;
-  let needsUncategorized = false;
+  let groupsChanged = false;
+  let needsUngrouped = false;
 
   for (const [id, profile] of Object.entries(profiles)) {
-    const categoryId = profile.categoryId?.trim() || PROFILE_UNCATEGORIZED_CATEGORY_ID;
-    if (categoryId === PROFILE_UNCATEGORIZED_CATEGORY_ID) {
-      if (profile.categoryId !== PROFILE_UNCATEGORIZED_CATEGORY_ID) {
-        profiles[id] = { ...profile, categoryId: PROFILE_UNCATEGORIZED_CATEGORY_ID };
+    const groupId = profileGroupId(profile);
+    if (groupId === PROFILE_UNGROUPED_GROUP_ID) {
+      if (profile.groupId !== PROFILE_UNGROUPED_GROUP_ID || profile.categoryId !== PROFILE_UNGROUPED_GROUP_ID) {
+        profiles[id] = { ...profile, groupId: PROFILE_UNGROUPED_GROUP_ID, categoryId: PROFILE_UNGROUPED_GROUP_ID };
         profilesChanged = true;
       }
-      needsUncategorized = true;
+      needsUngrouped = true;
       continue;
     }
-    if (!categories[categoryId]) {
-      categories[categoryId] = createMissingProfileCategory(categoryId);
-      categoriesChanged = true;
+    if (profile.groupId !== groupId || profile.categoryId !== groupId) {
+      profiles[id] = { ...profile, groupId, categoryId: groupId };
+      profilesChanged = true;
+    }
+    if (!groups[groupId]) {
+      groups[groupId] = createMissingProfileGroup(groupId);
+      groupsChanged = true;
     }
   }
 
   if (profilesChanged) {
     writeMap(KEYS.profiles, profiles);
   }
-  if (categoriesChanged) {
-    writeMap(KEYS.profileCategories, categories);
+  if (groupsChanged) {
+    writeMap(KEYS.profileGroups, groups);
   }
-  if (needsUncategorized) {
-    ensureProfileCategoryRecord(PROFILE_UNCATEGORIZED_CATEGORY_ID);
+  if (needsUngrouped) {
+    ensureProfileGroupRecord(PROFILE_UNGROUPED_GROUP_ID);
   }
 }
 
-export async function listProfileCategories(): Promise<ProfileCategory[]> {
-  repairOrphanProfileCategoryIds();
+export async function listProfileCategories(): Promise<ProfileGroup[]> {
+  return listProfileGroups();
+}
+
+export async function listProfileGroups(): Promise<ProfileGroup[]> {
+  repairOrphanProfileGroupIds();
   await persistMap();
-  return sortProfileCategories(Object.values(readProfileCategoriesMap()));
+  return sortProfileGroups(Object.values(readProfileGroupsMap()));
 }
 
-export async function saveProfileCategory(category: ProfileCategory): Promise<void> {
-  const categories = readProfileCategoriesMap();
-  categories[category.id] = category;
-  writeMap(KEYS.profileCategories, categories);
+export async function saveProfileCategory(category: ProfileGroup): Promise<void> {
+  return saveProfileGroup(category);
+}
+
+export async function saveProfileGroup(group: ProfileGroup): Promise<void> {
+  const groups = readProfileGroupsMap();
+  groups[group.id] = group;
+  writeMap(KEYS.profileGroups, groups);
   await persistMap();
 }
 
 export async function reorderProfileCategories(orderedIds: string[]): Promise<void> {
-  const categories = readProfileCategoriesMap();
+  return reorderProfileGroups(orderedIds);
+}
+
+export async function reorderProfileGroups(orderedIds: string[]): Promise<void> {
+  const groups = readProfileGroupsMap();
   let changed = false;
 
   orderedIds.forEach((id, index) => {
-    const category = categories[id];
-    if (!category || category.sortOrder === index) {
+    const group = groups[id];
+    if (!group || group.sortOrder === index) {
       return;
     }
-    categories[id] = { ...category, sortOrder: index };
+    groups[id] = { ...group, sortOrder: index };
     changed = true;
   });
 
   if (changed) {
-    writeMap(KEYS.profileCategories, categories);
+    writeMap(KEYS.profileGroups, groups);
     await persistMap();
   }
 }
 
 export async function deleteProfileCategory(id: string): Promise<void> {
-  const categories = readProfileCategoriesMap();
-  if (!categories[id]) {
+  return deleteProfileGroup(id);
+}
+
+export async function deleteProfileGroup(id: string): Promise<void> {
+  const groups = readProfileGroupsMap();
+  if (!groups[id]) {
     return;
   }
 
   const profileCount = Object.values(readMap<Profile>(KEYS.profiles)).filter(
-    (profile) => (profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID) === id,
+    (profile) => profileGroupId(profile) === id,
   ).length;
   if (profileCount > 0) {
-    throw new Error("Cannot delete a category that still has profiles.");
+    throw new Error("Cannot delete a group that still has profiles.");
   }
 
-  delete categories[id];
-  writeMap(KEYS.profileCategories, categories);
+  delete groups[id];
+  writeMap(KEYS.profileGroups, groups);
   await persistMap();
 }
 

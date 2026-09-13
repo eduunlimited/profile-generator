@@ -454,6 +454,7 @@ export function buildImportedProfiles(
       generatedFromMaster: true,
       profileName: item.profileName.trim() || `Imported profile ${index + 1}`,
       phone: normalizeUsPhone(item.phone),
+      groupId: categoryId,
       categoryId,
       accountSite,
       accountStatus: "good",

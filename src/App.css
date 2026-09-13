@@ -699,6 +699,11 @@ body.is-col-resizing * {
   padding: 4px 0;
 }
 
+.profiles-table th.col-master,
+.profiles-table td.col-master {
+  white-space: nowrap;
+}
+
 .profiles-table tbody td.col-address,
 .profiles-table tbody td.col-email {
   white-space: nowrap;
@@ -3270,14 +3275,14 @@ textarea {
 
 .generate-modal-topbar {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) 72px minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.95fr) 72px minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
   align-items: end;
   flex-shrink: 0;
 }
 
 .generate-modal-topbar-with-card {
-  grid-template-columns: minmax(0, 1fr) 72px minmax(0, 0.9fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 0.9fr) 72px minmax(0, 0.85fr) minmax(0, 0.9fr) minmax(0, 0.85fr);
 }
 
 .generate-modal-main {

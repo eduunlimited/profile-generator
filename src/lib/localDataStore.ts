@@ -11,6 +11,7 @@ export const STORAGE_KEY_TO_FILE: Record<string, string> = {
   "profile-generator:card-categories": "card-categories.json",
   "profile-generator:pool-emails": "pool-emails.json",
   "profile-generator:email-categories": "email-categories.json",
+  "profile-generator:profile-groups": "profile-groups.json",
   "profile-generator:profile-categories": "profile-categories.json",
   "profile-generator:proxy-pool": "proxy-pool.json",
   "profile-generator:proxy-groups": "proxy-groups.json",
@@ -101,6 +102,13 @@ async function hydrateKey(key: string): Promise<void> {
   if (!fileName) return;
 
   let data = await fetchDataFile(fileName);
+  if (key === "profile-generator:profile-groups" && Object.keys(data).length === 0) {
+    try {
+      data = await fetchDataFile("profile-categories.json");
+    } catch {
+      data = {};
+    }
+  }
   const fromBrowser = readLocalStorageMap(key);
 
   // Project data files are the source of truth. Browser storage is only used

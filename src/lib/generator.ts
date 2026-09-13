@@ -166,6 +166,7 @@ export function generateProfile(options: Partial<GenerateOptions> = {}): Profile
       country,
     },
     payment: generateTestCard(),
+    groupId: PROFILE_UNCATEGORIZED_CATEGORY_ID,
     categoryId: PROFILE_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: "good",
     notes: "",

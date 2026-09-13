@@ -288,6 +288,7 @@ export function applyProfileMassEditPatch(
     next.oneCheckoutPerProfile = draft.oneCheckoutPerProfile !== false;
   }
   if (touchedFields.categoryId && categoryId) {
+    next.groupId = categoryId;
     next.categoryId = categoryId;
   }
   if (touchedFields.accountStatus) {
@@ -384,6 +385,7 @@ function emptyMassEditProfile(): Profile {
     email: "",
     profileName: "",
     phone: "",
+    groupId: PROFILE_UNCATEGORIZED_CATEGORY_ID,
     categoryId: PROFILE_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: "good",
     notes: "",

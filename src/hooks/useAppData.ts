@@ -558,10 +558,11 @@ export function useAppData() {
         throw new Error(uniqueIds.length === 0 ? "Select at least one master profile." : "Master profile not found.");
       }
       const masters = selectedMasters.filter((master): master is NonNullable<typeof master> => Boolean(master));
-      if (!options.categoryId?.trim()) {
-        throw new Error("Select a category.");
+      const groupId = options.groupId?.trim() || options.categoryId?.trim();
+      if (!groupId) {
+        throw new Error("Select a group.");
       }
-      assertProfileCategoryUnlocked(profileCategories, options.categoryId, "generate profiles into it");
+      assertProfileCategoryUnlocked(profileCategories, groupId, "generate profiles into it");
 
       await captureAppUndo("Generate jig profiles");
 
@@ -569,11 +570,11 @@ export function useAppData() {
         ? jigPresets.find((p) => p.id === options.nameJigPresetId) ?? getJigPresetById(options.nameJigPresetId) ?? null
         : null;
       const addressJig = resolveAddressJigFromGenerateOptions(options, jigPresets);
-      const categoryId = options.categoryId.trim();
+      const categoryId = groupId;
       let existingInCategory = await Promise.all(
         profiles
           .filter(
-            (profile) => (profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID) === categoryId,
+            (profile) => (profile.groupId || profile.categoryId || PROFILE_UNCATEGORIZED_CATEGORY_ID) === categoryId,
           )
           .map((profile) => getProfile(profile.id)),
       );
@@ -584,7 +585,7 @@ export function useAppData() {
         try {
           const batch = await generateProfilesFromMaster(
             master,
-            options,
+            { ...options, groupId: categoryId, categoryId },
             namePreset,
             addressJig,
             creditCards,

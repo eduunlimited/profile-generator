@@ -1,6 +1,6 @@
 import { loginFromCredential } from "./credentialUtils";
 import { emailsMatch, findPoolEmailByAddress, isAssignablePoolEmail } from "./emailPoolUtils";
-import { resolveProfileEmail, setProfileEmail } from "./profileEmailUtils";
+import { billingSameAsShippingFlag, resolveProfileEmail, setProfileEmail } from "./profileEmailUtils";
 import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
 import type { Credential, CreditCard, PoolEmail, Profile, ProfileLogin, ProfileName, ProfilePayment } from "./types";
 import { cardNumbersMatch, findPoolCardByPayment, isAssignablePoolCard, parseCardNumberDigits } from "./creditCardUtils";
@@ -34,11 +34,7 @@ export function syncShippingName(profile: Profile): Profile {
 }
 
 export function billingSameAsShipping(profile: { billingSameAsShipping?: unknown }): boolean {
-  const value = profile.billingSameAsShipping;
-  if (value === false || value === 0 || value === "false" || value === "FALSE" || value === "0") {
-    return false;
-  }
-  return true;
+  return billingSameAsShippingFlag(profile.billingSameAsShipping);
 }
 
 export function shippingAddressForProfile(

@@ -60,17 +60,17 @@ function stripOrphanProfilePayment(profile: Profile): Profile {
   };
 }
 
+export function billingSameAsShippingFlag(value: unknown): boolean {
+  if (value === false || value === 0 || value === "false" || value === "FALSE" || value === "0") {
+    return false;
+  }
+  return true;
+}
+
 export function normalizeProfile(profile: Profile): Profile {
   const email = resolveProfileEmail(profile);
   const phone = normalizeUsPhone(profile.phone ?? "");
-  const flag = profile.billingSameAsShipping;
-  const billingSame = !(
-    flag === false ||
-    flag === 0 ||
-    flag === "false" ||
-    flag === "FALSE" ||
-    flag === "0"
-  );
+  const billingSame = billingSameAsShippingFlag(profile.billingSameAsShipping);
   return stripOrphanProfilePayment({
     ...profile,
     email,

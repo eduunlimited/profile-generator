@@ -40,11 +40,10 @@ export function billingSameAsShipping(profile: { billingSameAsShipping?: boolean
 export function shippingAddressForProfile(
   profile: Pick<Profile, "address"> & Partial<Pick<Profile, "shippingAddress" | "billingSameAsShipping">>,
 ): Profile["address"] {
-  const shipping = profile.shippingAddress;
-  if (shipping?.street.trim()) {
-    return shipping;
+  if (billingSameAsShipping(profile)) {
+    return profile.address;
   }
-  return profile.address;
+  return profile.shippingAddress ?? profile.address;
 }
 
 export function withShippingAddress(profile: Profile, address: Profile["address"]): Profile {
@@ -125,8 +124,8 @@ export function ensureProfileEditorFields(profile: Profile): Profile {
       cardHolderSameAsShipping: profile.cardHolderSameAsShipping ?? true,
       billingSameAsShipping: sameAsBilling,
       oneCheckoutPerProfile: oneCheckoutPerProfile(profile),
-      shippingName: sameAsBilling ? profile.shippingName : (profile.shippingName ?? emptyProfileName()),
-      shippingAddress: sameAsBilling ? profile.shippingAddress : (profile.shippingAddress ?? emptyProfileAddress()),
+      shippingName: sameAsBilling ? undefined : (profile.shippingName ?? emptyProfileName()),
+      shippingAddress: sameAsBilling ? undefined : (profile.shippingAddress ?? emptyProfileAddress()),
     }),
   );
 }
@@ -135,12 +134,14 @@ export function setBillingSameAsShipping(profile: Profile, value: boolean): Prof
   const next = structuredClone(profile);
   next.billingSameAsShipping = value;
   if (value) {
-    if (next.shippingName && next.shippingAddress) {
-      next.name = structuredClone(next.shippingName);
+    if (next.shippingAddress) {
       next.address = structuredClone(next.shippingAddress);
-      next.shippingName = undefined;
-      next.shippingAddress = undefined;
     }
+    if (next.shippingName) {
+      next.name = structuredClone(next.shippingName);
+    }
+    next.shippingName = undefined;
+    next.shippingAddress = undefined;
     return syncProfileName(syncCardHolderFromShipping(next));
   }
   next.shippingName = next.shippingName ?? structuredClone(next.name);

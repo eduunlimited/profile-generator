@@ -113,18 +113,6 @@ export function billingAddressLines(profile: Profile): {
   line3: string;
 } {
   const address = shippingAddressForProfile(profile);
-  if (address.jig?.trim()) {
-    const lines = address.jig
-      .split("\n")
-      .map((line) => line.trim())
-      .filter(Boolean);
-    return {
-      line1: lines[0] ?? "",
-      line2: lines[1] ?? "",
-      line3: lines.slice(2).join(", "),
-    };
-  }
-
   return {
     line1: address.street,
     line2: address.unit ?? "",

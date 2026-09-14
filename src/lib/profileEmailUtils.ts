@@ -63,6 +63,7 @@ function stripOrphanProfilePayment(profile: Profile): Profile {
 export function normalizeProfile(profile: Profile): Profile {
   const email = resolveProfileEmail(profile);
   const phone = normalizeUsPhone(profile.phone ?? "");
+  const billingSame = profile.billingSameAsShipping !== false;
   return stripOrphanProfilePayment({
     ...profile,
     email,
@@ -73,7 +74,9 @@ export function normalizeProfile(profile: Profile): Profile {
     notes: profile.notes ?? "",
     cardHolderName: profile.cardHolderName ?? "",
     cardHolderSameAsShipping: profile.cardHolderSameAsShipping ?? true,
-    billingSameAsShipping: profile.billingSameAsShipping !== false,
+    billingSameAsShipping: billingSame,
+    shippingName: billingSame ? undefined : profile.shippingName,
+    shippingAddress: billingSame ? undefined : profile.shippingAddress,
     oneCheckoutPerProfile: profile.oneCheckoutPerProfile !== false,
     credentialIds: profile.credentialIds ?? [],
     logins: (profile.logins ?? []).map((login) => ({

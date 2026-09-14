@@ -185,6 +185,7 @@ export function ExportPanel({
     }
     try {
       if (exportIncludesCardNumbers(options, exportTemplates)) {
+        setStatus("Confirm with Windows Hello to export card numbers…");
         await requireWindowsUser("Export card numbers");
       }
       const files = exportProfiles(profiles, options, exportTemplates, filenameContext);
@@ -212,6 +213,7 @@ export function ExportPanel({
   const copyPreview = async () => {
     if (exportIncludesCardNumbers(previewOptions, exportTemplates)) {
       try {
+        setStatus("Confirm with Windows Hello to copy card numbers…");
         await requireWindowsUser("Export card numbers");
       } catch (error) {
         setStatus(formatError(error, "Copy cancelled."));

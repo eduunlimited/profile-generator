@@ -116,7 +116,7 @@ pub fn unprotect_secrets(values: Vec<Value>) -> Result<Vec<String>, String> {
 }
 
 #[tauri::command]
-pub fn confirm_windows_user(app: AppHandle, message: String) -> Result<bool, String> {
+pub async fn confirm_windows_user(app: AppHandle, message: String) -> Result<bool, String> {
     #[cfg(not(windows))]
     {
         let _ = (app, message);
@@ -124,42 +124,15 @@ pub fn confirm_windows_user(app: AppHandle, message: String) -> Result<bool, Str
     }
     #[cfg(windows)]
     {
-        confirm_windows_user_windows(&app, &message)
+        confirm_windows_user_windows(app, message).await
     }
 }
 
 #[cfg(windows)]
-fn confirm_windows_user_windows(app: &AppHandle, message: &str) -> Result<bool, String> {
-    use windows::core::{factory, HSTRING};
-    use windows::Security::Credentials::UI::{
-        UserConsentVerificationResult, UserConsentVerifier, UserConsentVerifierAvailability,
-    };
-    use windows::Win32::Foundation::HWND;
-    use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
-
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "Main window not found.".to_string())?;
-    let hwnd = window.hwnd().map_err(|error| error.to_string())?;
-    let hwnd = HWND(hwnd.0);
-
-    let availability = UserConsentVerifier::CheckAvailabilityAsync()
-        .map_err(|error| error.to_string())?
-        .get()
-        .map_err(|error| error.to_string())?;
-    match availability {
-        UserConsentVerifierAvailability::Available => {}
-        UserConsentVerifierAvailability::DeviceBusy => {
-            return Err("Windows Hello is busy. Try again.".into());
-        }
-        _ => return Err(PIN_SETUP_MESSAGE.into()),
-    }
-
-    let interop = factory::<UserConsentVerifier, IUserConsentVerifierInterop>().map_err(|error| error.to_string())?;
-    let operation: windows_future::IAsyncOperation<UserConsentVerificationResult> =
-        unsafe { interop.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(message)) }
-            .map_err(|error| error.to_string())?;
-    let result = operation.get().map_err(|error| error.to_string())?;
+fn map_hello_result(
+    result: windows::Security::Credentials::UI::UserConsentVerificationResult,
+) -> Result<bool, String> {
+    use windows::Security::Credentials::UI::UserConsentVerificationResult;
     match result {
         UserConsentVerificationResult::Verified => Ok(true),
         UserConsentVerificationResult::Canceled => Ok(false),
@@ -168,4 +141,57 @@ fn confirm_windows_user_windows(app: &AppHandle, message: &str) -> Result<bool, 
         | UserConsentVerificationResult::DisabledByPolicy => Err(PIN_SETUP_MESSAGE.into()),
         other => Err(format!("Windows Hello could not verify ({other:?}).")),
     }
+}
+
+#[cfg(windows)]
+async fn confirm_windows_user_windows(app: AppHandle, message: String) -> Result<bool, String> {
+    use std::future::IntoFuture;
+    use windows::core::{factory, HSTRING};
+    use windows::Security::Credentials::UI::{
+        UserConsentVerifier, UserConsentVerifierAvailability, UserConsentVerificationResult,
+    };
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::WinRT::IUserConsentVerifierInterop;
+
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "Main window not found.".to_string())?;
+    let hwnd = window.hwnd().map_err(|error| error.to_string())?.0 as isize;
+
+    let availability = UserConsentVerifier::CheckAvailabilityAsync()
+        .map_err(|error| error.to_string())?
+        .into_future()
+        .await
+        .map_err(|error| error.to_string())?;
+
+    match availability {
+        UserConsentVerifierAvailability::Available => {}
+        UserConsentVerifierAvailability::DeviceBusy => {
+            return Err("Windows Hello is busy. Try again.".into());
+        }
+        _ => return Err(PIN_SETUP_MESSAGE.into()),
+    }
+
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    window
+        .run_on_main_thread(move || {
+            let started = (|| {
+                let hwnd = HWND(hwnd as *mut core::ffi::c_void);
+                let interop = factory::<UserConsentVerifier, IUserConsentVerifierInterop>()
+                    .map_err(|error| error.to_string())?;
+                unsafe { interop.RequestVerificationForWindowAsync(hwnd, &HSTRING::from(message.as_str())) }
+                    .map_err(|error| error.to_string())
+            })();
+            let _ = tx.send(started);
+        })
+        .map_err(|error| error.to_string())?;
+
+    let operation: windows_future::IAsyncOperation<UserConsentVerificationResult> = rx
+        .await
+        .map_err(|_| "Windows Hello was interrupted.".to_string())??;
+    let verified = operation
+        .into_future()
+        .await
+        .map_err(|error| error.to_string())?;
+    map_hello_result(verified)
 }

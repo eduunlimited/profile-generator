@@ -2,9 +2,12 @@ import { useEffect, useMemo, useState } from "react";
 import {
   buildExportFilename,
   buildExportFilenameContext,
+  exportIncludesCardNumbers,
   exportProfiles,
+  maskProfilesForCardPreview,
   previewExport,
 } from "../lib/exportEngine";
+import { requireWindowsUser } from "../lib/cardSecrets";
 import type {
   ExportFormat,
   ExportOptions,
@@ -150,7 +153,10 @@ export function ExportPanel({
   const preview = useMemo(() => {
     if (profiles.length === 0) return "";
     try {
-      return previewExport(profiles, previewOptions, exportTemplates, filenameContext);
+      const previewProfiles = exportIncludesCardNumbers(previewOptions, exportTemplates)
+        ? maskProfilesForCardPreview(profiles)
+        : profiles;
+      return previewExport(previewProfiles, previewOptions, exportTemplates, filenameContext);
     } catch (error) {
       return error instanceof Error ? error.message : "Preview failed.";
     }
@@ -178,6 +184,9 @@ export function ExportPanel({
       return;
     }
     try {
+      if (exportIncludesCardNumbers(options, exportTemplates)) {
+        await requireWindowsUser("Export card numbers");
+      }
       const files = exportProfiles(profiles, options, exportTemplates, filenameContext);
       const saved: string[] = [];
       const cancelled: string[] = [];
@@ -201,6 +210,23 @@ export function ExportPanel({
   };
 
   const copyPreview = async () => {
+    if (exportIncludesCardNumbers(previewOptions, exportTemplates)) {
+      try {
+        await requireWindowsUser("Export card numbers");
+      } catch (error) {
+        setStatus(formatError(error, "Copy cancelled."));
+        return;
+      }
+      try {
+        const files = exportProfiles(profiles, previewOptions, exportTemplates, filenameContext);
+        const fullPreview = files.map((file) => `# ${file.filename}\n${file.content}`).join("\n\n");
+        await copyToClipboard(fullPreview);
+        setStatus("Preview copied to clipboard.");
+      } catch (error) {
+        setStatus(formatError(error, "Copy failed."));
+      }
+      return;
+    }
     await copyToClipboard(preview);
     setStatus("Preview copied to clipboard.");
   };

@@ -10,6 +10,11 @@ import {
 } from "./api";
 import type { ExportTemplate, JigPreset, MasterProfile, Profile } from "./types";
 import {
+  decryptStore,
+  encryptStore,
+  SECRET_STORAGE_KEYS,
+} from "./cardSecrets";
+import {
   STORAGE_KEY_TO_FILE,
   ensureDataKey,
   flushLocalDataWrites,
@@ -171,6 +176,10 @@ export async function collectAppBackup(): Promise<AppBackup> {
   stores[EXPORT_TEMPLATES_KEY] = recordsById(exportTemplates);
   stores[MASTER_PROFILES_KEY] = recordsById(masterProfiles);
 
+  for (const key of SECRET_STORAGE_KEYS) {
+    stores[key] = await encryptStore(key, stores[key] ?? {});
+  }
+
   const ui = collectUiPrefs();
   return {
     kind: APP_BACKUP_KIND,
@@ -189,13 +198,16 @@ export async function restoreAppBackup(backup: AppBackup): Promise<AppBackupSumm
   await initLocalDataStore();
   await Promise.all(Object.keys(STORAGE_KEY_TO_FILE).map((key) => ensureDataKey(key)));
 
+  const restoredStores: Record<string, Record<string, unknown>> = {};
   for (const key of Object.keys(STORAGE_KEY_TO_FILE)) {
-    const store = isPlainObject(backup.stores[key]) ? backup.stores[key] : {};
+    const rawStore = isPlainObject(backup.stores[key]) ? backup.stores[key] : {};
+    const store = SECRET_STORAGE_KEYS.has(key) ? await decryptStore(key, rawStore) : rawStore;
+    restoredStores[key] = store;
     await writeCachedMap(key, store);
   }
   await flushLocalDataWrites();
 
-  await replaceAllProfiles(Object.values(backup.stores[PROFILES_KEY] ?? {}) as Profile[]);
+  await replaceAllProfiles(Object.values(restoredStores[PROFILES_KEY] ?? {}) as Profile[]);
   await replaceAllJigPresets(Object.values(backup.stores[JIG_PRESETS_KEY] ?? {}) as JigPreset[]);
   await replaceAllExportTemplates(Object.values(backup.stores[EXPORT_TEMPLATES_KEY] ?? {}) as ExportTemplate[]);
   await replaceAllMasterProfiles(Object.values(backup.stores[MASTER_PROFILES_KEY] ?? {}) as MasterProfile[]);

@@ -288,13 +288,15 @@ function normalizeCardAssignmentScope(value: unknown): CardAssignmentScope {
 }
 
 export function normalizeCreditCard(card: StoredCreditCard): CreditCard {
+  const number = typeof card.number === "string" ? parseCardNumberDigits(card.number) : "";
+  const cvv = typeof card.cvv === "string" ? card.cvv : "";
   return {
     id: card.id,
     profileName: card.profileName?.trim() || card.label?.trim() || "",
-    number: parseCardNumberDigits(card.number),
+    number,
     expiry: normalizeCardExpiryString(card.expiry ?? ""),
-    cvv: card.cvv,
-    brand: card.brand || detectCardBrand(card.number),
+    cvv,
+    brand: card.brand || detectCardBrand(number),
     categoryId: card.categoryId?.trim() || CARD_UNCATEGORIZED_CATEGORY_ID,
     accountStatus: normalizeCardReviewStatus(card.accountStatus),
     assignmentScope: normalizeCardAssignmentScope(card.assignmentScope),

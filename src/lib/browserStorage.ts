@@ -196,6 +196,7 @@ export async function summarizeProfiles(profiles: Profile[]): Promise<ProfileSum
 }
 
 export async function listProfiles(): Promise<ProfileSummary[]> {
+  await ensureDataKey(KEYS.profiles);
   repairOrphanProfileGroupIds();
   await persistMap();
   return summarizeProfiles(Object.values(readMap<Profile>(KEYS.profiles)));
@@ -212,6 +213,7 @@ export async function getProfile(id: string): Promise<Profile> {
 }
 
 export async function saveProfile(profile: Profile): Promise<void> {
+  await ensureDataKey(KEYS.profiles);
   const profiles = readMap<Profile>(KEYS.profiles);
   const normalized = normalizeProfile({
     ...profile,
@@ -224,6 +226,7 @@ export async function saveProfile(profile: Profile): Promise<void> {
 }
 
 export async function saveProfiles(profilesToSave: Profile[]): Promise<void> {
+  await ensureDataKey(KEYS.profiles);
   const profiles = readMap<Profile>(KEYS.profiles);
   for (const profile of profilesToSave) {
     const normalized = normalizeProfile({
@@ -238,6 +241,7 @@ export async function saveProfiles(profilesToSave: Profile[]): Promise<void> {
 }
 
 export async function deleteProfile(id: string): Promise<void> {
+  await ensureDataKey(KEYS.profiles);
   const profiles = readMap<Profile>(KEYS.profiles);
   delete profiles[id];
   writeMap(KEYS.profiles, profiles);
@@ -256,6 +260,7 @@ export async function loadAllProfiles(): Promise<Profile[]> {
 }
 
 export async function replaceAllProfiles(profilesToRestore: Profile[]): Promise<void> {
+  await ensureDataKey(KEYS.profiles);
   const profiles: Record<string, Profile> = {};
   for (const profile of profilesToRestore) {
     const normalized = normalizeProfile({
@@ -865,12 +870,14 @@ export async function replaceAllMasterProfiles(mastersToRestore: MasterProfile[]
 }
 
 export async function listCreditCards(): Promise<CreditCard[]> {
+  await ensureDataKey(KEYS.creditCards);
   repairOrphanCardCategoryIds();
   await persistMap();
   return Object.values(readCreditCardsMap());
 }
 
 export async function saveCreditCard(card: CreditCard): Promise<void> {
+  await ensureDataKey(KEYS.creditCards);
   const normalized = normalizeCreditCard({
     ...card,
     categoryId: resolveStoredCardCategoryId(card.categoryId),
@@ -883,6 +890,7 @@ export async function saveCreditCard(card: CreditCard): Promise<void> {
 }
 
 export async function deleteCreditCard(id: string): Promise<void> {
+  await ensureDataKey(KEYS.creditCards);
   const cards = readCreditCardsMap();
   delete cards[id];
   writeMap(KEYS.creditCards, cards);
@@ -890,6 +898,7 @@ export async function deleteCreditCard(id: string): Promise<void> {
 }
 
 export async function importCreditCards(cardsToImport: CreditCard[]): Promise<void> {
+  await ensureDataKey(KEYS.creditCards);
   const cards = readCreditCardsMap();
   for (const card of cardsToImport) {
     const normalized = normalizeCreditCard({
@@ -904,6 +913,7 @@ export async function importCreditCards(cardsToImport: CreditCard[]): Promise<vo
 }
 
 export async function replaceAllCreditCards(cardsToRestore: CreditCard[]): Promise<void> {
+  await ensureDataKey(KEYS.creditCards);
   const cards: Record<string, CreditCard> = {};
   for (const card of cardsToRestore) {
     const normalized = normalizeCreditCard({

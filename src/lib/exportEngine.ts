@@ -218,6 +218,47 @@ function renderTemplate(profile: Profile, template: ExportTemplate): string {
   );
 }
 
+const CARD_TEMPLATE_TOKEN = /\{\{\s*payment\.(number|cvv)\s*\}\}/i;
+
+export function exportIncludesCardNumbers(
+  options: ExportOptions,
+  templates: ExportTemplate[] = [],
+): boolean {
+  for (const format of options.formats) {
+    if (format === "aycd" || format === "stellar_aio") {
+      return true;
+    }
+    if (format === "template") {
+      const template = templates.find((item) => item.id === options.templateId);
+      if (template && CARD_TEMPLATE_TOKEN.test(template.body)) {
+        return true;
+      }
+      continue;
+    }
+    if (options.fields.payment) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function maskPanForPreview(number: string): string {
+  const digits = number.replace(/\D/g, "");
+  if (!digits) return "";
+  return digits.length >= 4 ? `••••${digits.slice(-4)}` : `••••${digits}`;
+}
+
+export function maskProfilesForCardPreview(profiles: Profile[]): Profile[] {
+  return profiles.map((profile) => ({
+    ...profile,
+    payment: {
+      ...profile.payment,
+      number: maskPanForPreview(profile.payment.number),
+      cvv: profile.payment.cvv ? "•••" : "",
+    },
+  }));
+}
+
 export function exportProfiles(
   profiles: Profile[],
   options: ExportOptions,

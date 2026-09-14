@@ -4,6 +4,7 @@ mod db;
 mod geocodio;
 mod imap;
 mod license;
+mod vault;
 
 use commands::{init_db, DbState};
 use std::sync::Mutex;
@@ -233,6 +234,11 @@ pub fn run() {
             commands::check_license,
             commands::clear_license,
             commands::licensing_required,
+            vault::protect_secret,
+            vault::protect_secrets,
+            vault::unprotect_secret,
+            vault::unprotect_secrets,
+            vault::confirm_windows_user,
         ])
         .on_page_load(|webview, payload| {
             recover_webview(webview, payload);

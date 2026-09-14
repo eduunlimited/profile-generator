@@ -1,3 +1,4 @@
+import { decryptStore, encryptStore, SECRET_STORAGE_KEYS } from "./cardSecrets";
 import { isBrowserUiMode } from "./env";
 
 export const STORAGE_KEY_TO_FILE: Record<string, string> = {
@@ -87,6 +88,10 @@ async function persistDataFile(fileName: string, value: Record<string, unknown>)
   }
 }
 
+function persistChainKey(key: string): string {
+  return STORAGE_KEY_TO_FILE[key] ?? key;
+}
+
 function enqueuePersist(fileName: string, value: Record<string, unknown>): Promise<void> {
   const snapshot = cloneMap(value);
   const previous = persistChain.get(fileName) ?? Promise.resolve();
@@ -94,6 +99,25 @@ function enqueuePersist(fileName: string, value: Record<string, unknown>): Promi
     .catch(() => undefined)
     .then(() => persistDataFile(fileName, snapshot));
   persistChain.set(fileName, next);
+  return next;
+}
+
+function enqueueSecretPersist(key: string, value: Record<string, unknown>): Promise<void> {
+  const chainKey = persistChainKey(key);
+  const snapshot = cloneMap(value);
+  const previous = persistChain.get(chainKey) ?? Promise.resolve();
+  const next = previous.catch(() => undefined).then(async () => {
+    const encrypted = await encryptStore(key, snapshot);
+    const fileName = STORAGE_KEY_TO_FILE[key];
+    if (usesProjectDataFiles()) {
+      if (fileName) {
+        await persistDataFile(fileName, encrypted);
+      }
+      return;
+    }
+    writeLocalStorageMap(key, encrypted);
+  });
+  persistChain.set(chainKey, next);
   return next;
 }
 
@@ -115,7 +139,12 @@ async function hydrateKey(key: string): Promise<void> {
   // to migrate into an empty file — never to overwrite a newer rename on disk.
   if (Object.keys(data).length === 0 && Object.keys(fromBrowser).length > 0) {
     data = fromBrowser;
-    await persistDataFile(fileName, data);
+    const toPersist = SECRET_STORAGE_KEYS.has(key) ? await encryptStore(key, data) : data;
+    await persistDataFile(fileName, toPersist);
+  }
+
+  if (SECRET_STORAGE_KEYS.has(key)) {
+    data = await decryptStore(key, data);
   }
 
   cache.set(key, data);
@@ -128,31 +157,54 @@ async function hydrateKeySafe(key: string): Promise<void> {
   } catch (error) {
     console.error(`Failed to load ${STORAGE_KEY_TO_FILE[key] ?? key}:`, error);
     if (!cache.has(key)) {
-      cache.set(key, readLocalStorageMap(key));
+      cache.set(key, SECRET_STORAGE_KEYS.has(key) ? {} : readLocalStorageMap(key));
     }
   }
 }
 
+async function hydratePackagedSecretKeys(): Promise<void> {
+  await Promise.all(
+    [...SECRET_STORAGE_KEYS].map(async (key) => {
+      if (cache.has(key)) return;
+      try {
+        const decrypted = await decryptStore(key, readLocalStorageMap(key));
+        cache.set(key, decrypted);
+      } catch (error) {
+        console.error(`Failed to decrypt ${STORAGE_KEY_TO_FILE[key] ?? key}:`, error);
+        if (!cache.has(key)) {
+          cache.set(key, {});
+        }
+      }
+    }),
+  );
+}
+
 export async function ensureDataKey(key: string): Promise<void> {
-  if (!usesProjectDataFiles()) return;
   if (cache.has(key)) return;
-  await hydrateKeySafe(key);
+  if (usesProjectDataFiles()) {
+    await hydrateKeySafe(key);
+    return;
+  }
+  if (SECRET_STORAGE_KEYS.has(key)) {
+    await initLocalDataStore();
+  }
 }
 
 export async function initLocalDataStore(): Promise<void> {
-  if (!usesProjectDataFiles()) return;
   if (!hydratePromise) {
-    hydratePromise = (async () => {
-      await Promise.all(
-        Object.keys(STORAGE_KEY_TO_FILE)
-          .filter((key) => !SKIP_EAGER_HYDRATE.has(key))
-          .map((key) => hydrateKeySafe(key)),
-      );
-      // Drop leftover mirrors even for keys that are not eager-loaded (mail).
-      for (const key of Object.keys(STORAGE_KEY_TO_FILE)) {
-        localStorage.removeItem(key);
-      }
-    })();
+    hydratePromise = usesProjectDataFiles()
+      ? (async () => {
+          await Promise.all(
+            Object.keys(STORAGE_KEY_TO_FILE)
+              .filter((key) => !SKIP_EAGER_HYDRATE.has(key))
+              .map((key) => hydrateKeySafe(key)),
+          );
+          // Drop leftover mirrors even for keys that are not eager-loaded (mail).
+          for (const key of Object.keys(STORAGE_KEY_TO_FILE)) {
+            localStorage.removeItem(key);
+          }
+        })()
+      : hydratePackagedSecretKeys();
   }
   await hydratePromise;
 }
@@ -166,7 +218,7 @@ export function readCachedMap<T>(key: string): Record<string, T> {
   if (cached !== undefined) {
     return cached as Record<string, T>;
   }
-  if (usesProjectDataFiles()) {
+  if (usesProjectDataFiles() || SECRET_STORAGE_KEYS.has(key)) {
     return {} as Record<string, T>;
   }
   return readLocalStorageMap(key) as Record<string, T>;
@@ -175,6 +227,11 @@ export function readCachedMap<T>(key: string): Record<string, T> {
 export function writeCachedMap<T>(key: string, value: Record<string, T>): Promise<void> {
   const snapshot = cloneMap(value as Record<string, unknown>);
   cache.set(key, snapshot);
+  if (SECRET_STORAGE_KEYS.has(key)) {
+    return enqueueSecretPersist(key, snapshot).catch((error) => {
+      console.error(`Encrypted save failed for ${STORAGE_KEY_TO_FILE[key] ?? key}:`, error);
+    });
+  }
   writeLocalStorageMap(key, snapshot);
   if (usesProjectDataFiles()) {
     const fileName = STORAGE_KEY_TO_FILE[key];

@@ -1,5 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import * as browserStorage from "./browserStorage";
+import {
+  decryptProfileSecrets,
+  decryptProfilesList,
+  encryptProfileSecrets,
+  encryptProfilesList,
+} from "./cardSecrets";
 import { isTauriRuntime } from "./env";
 import { usesProjectDataFiles } from "./localDataStore";
 import { sortProfilesByName } from "./profileNameUtils";
@@ -17,12 +23,14 @@ function usesRustProfileStore(): boolean {
 
 const backend = usesRustProfileStore()
   ? {
-      listProfiles: () => invoke<Profile[]>("list_profiles"),
-      getProfile: (id: string) => invoke<Profile>("get_profile", { id }),
-      saveProfile: (profile: Profile) => invoke("save_profile", { profile }),
-      saveProfiles: (profiles: Profile[]) => invoke("save_profiles", { profiles }),
+      listProfiles: async () => decryptProfilesList(await invoke<Profile[]>("list_profiles")),
+      getProfile: async (id: string) => decryptProfileSecrets(await invoke<Profile>("get_profile", { id })),
+      saveProfile: async (profile: Profile) => invoke("save_profile", { profile: await encryptProfileSecrets(profile) }),
+      saveProfiles: async (profiles: Profile[]) =>
+        invoke("save_profiles", { profiles: await encryptProfilesList(profiles) }),
       deleteProfile: (id: string) => invoke("delete_profile", { id }),
-      replaceAllProfiles: (profiles: Profile[]) => invoke("replace_profiles", { profiles }),
+      replaceAllProfiles: async (profiles: Profile[]) =>
+        invoke("replace_profiles", { profiles: await encryptProfilesList(profiles) }),
       listJigPresets: () => invoke<JigPreset[]>("list_jig_presets"),
       saveJigPreset: (preset: JigPreset) => invoke("save_jig_preset", { preset }),
       deleteJigPreset: (id: string) => invoke("delete_jig_preset", { id }),
@@ -40,7 +48,7 @@ const backend = usesRustProfileStore()
 
 export async function listProfiles(): Promise<ProfileSummary[]> {
   if (usesRustProfileStore()) {
-    const profiles = await invoke<Profile[]>("list_profiles");
+    const profiles = await decryptProfilesList(await invoke<Profile[]>("list_profiles"));
     return sortProfilesByName(await browserStorage.summarizeProfiles(profiles));
   }
   return sortProfilesByName(await browserStorage.listProfiles());
@@ -64,14 +72,14 @@ export async function deleteProfile(id: string): Promise<void> {
 
 export async function loadAllProfiles(): Promise<Profile[]> {
   if (usesRustProfileStore()) {
-    return invoke<Profile[]>("list_profiles");
+    return decryptProfilesList(await invoke<Profile[]>("list_profiles"));
   }
   return browserStorage.loadAllProfiles();
 }
 
 export async function replaceAllProfiles(profiles: Profile[]): Promise<void> {
   if (usesRustProfileStore()) {
-    await invoke("replace_profiles", { profiles });
+    await invoke("replace_profiles", { profiles: await encryptProfilesList(profiles) });
     return;
   }
   await browserStorage.replaceAllProfiles(profiles);

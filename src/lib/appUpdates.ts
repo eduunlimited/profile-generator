@@ -1,4 +1,4 @@
-import { ask } from "@tauri-apps/plugin-dialog";
+import { ask, message } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { isTauriRuntime } from "./env";
@@ -31,10 +31,9 @@ function isUnreachableUpdateFeed(message: string): boolean {
 }
 
 async function showUpToDate(): Promise<void> {
-  await ask("You are running the latest version.", {
+  await message("You are running the latest version.", {
     title: "No updates",
     kind: "info",
-    okLabel: "OK",
   });
 }
 
@@ -81,10 +80,9 @@ export async function checkForAppUpdates(options?: { silent?: boolean }): Promis
       return { available: false };
     }
     if (!options?.silent) {
-      await ask(raw, {
+      await message(raw, {
         title: "Update check failed",
         kind: "error",
-        okLabel: "OK",
       });
       throw new Error(raw);
     }

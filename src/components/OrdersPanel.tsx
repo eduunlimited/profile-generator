@@ -564,7 +564,13 @@ export function OrdersPanel({ profiles, poolEmails = [], cards = [] }: OrdersPan
               <h4>Timeline</h4>
               <ol className="orders-timeline">
                 {active.events.map((event) => (
-                  <li key={`${event.accountId}:${event.uid}:${event.kind}`}>
+                  <li
+                    key={
+                      event.messageId
+                        ? `${event.accountId}:id:${event.messageId}`
+                        : `${event.accountId}:uid:${event.uid}`
+                    }
+                  >
                     <strong>{EVENT_LABEL[event.kind]}</strong>
                     <span>{formatWhen(event.date, event.dateMs)}</span>
                     <span className="muted">{event.subject}</span>

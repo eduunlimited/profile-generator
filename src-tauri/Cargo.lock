@@ -3061,7 +3061,7 @@ dependencies = [
 
 [[package]]
 name = "profile-generator"
-version = "0.2.103"
+version = "0.2.104"
 dependencies = [
  "aes-gcm",
  "base64 0.22.1",

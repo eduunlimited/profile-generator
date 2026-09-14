@@ -69,6 +69,60 @@ export function storedImapMessageKey(message: Pick<StoredImapMessage, "messageId
   return messageId ? `id:${messageId}` : `uid:${message.uid}`;
 }
 
+export function storedImapAliasKeys(message: Pick<StoredImapMessage, "messageId" | "uid">): string[] {
+  const keys = [`uid:${message.uid}`];
+  const messageId = message.messageId?.trim().toLowerCase();
+  if (messageId) keys.push(`id:${messageId}`);
+  return keys;
+}
+
+function findIndexedImapMessage(
+  index: Map<string, StoredImapMessage>,
+  message: Pick<StoredImapMessage, "messageId" | "uid">,
+): StoredImapMessage | undefined {
+  for (const key of storedImapAliasKeys(message)) {
+    const hit = index.get(key);
+    if (hit) return hit;
+  }
+  return undefined;
+}
+
+function indexImapMessage(index: Map<string, StoredImapMessage>, message: StoredImapMessage): void {
+  for (const key of storedImapAliasKeys(message)) {
+    index.set(key, message);
+  }
+}
+
+function unindexImapMessage(index: Map<string, StoredImapMessage>, message: StoredImapMessage): void {
+  for (const key of storedImapAliasKeys(message)) {
+    if (index.get(key) === message) index.delete(key);
+  }
+}
+
+function preferStoredImapMessage(current: StoredImapMessage, incoming: StoredImapMessage): StoredImapMessage {
+  return {
+    ...current,
+    ...incoming,
+    messageId: incoming.messageId?.trim() || current.messageId,
+    snippet: incoming.snippet?.trim() || current.snippet,
+    body: incoming.body?.trim() || current.body,
+    htmlBody: incoming.htmlBody?.trim() || current.htmlBody,
+    date: incoming.dateMs > 0 ? incoming.date : current.date,
+    dateMs: incoming.dateMs > 0 ? incoming.dateMs : current.dateMs,
+    fetchedAt: incoming.fetchedAt || current.fetchedAt,
+  };
+}
+
+export function foldStoredImapMessages(messages: StoredImapMessage[]): StoredImapMessage[] {
+  const index = new Map<string, StoredImapMessage>();
+  for (const message of messages) {
+    const previous = findIndexedImapMessage(index, message);
+    if (previous) unindexImapMessage(index, previous);
+    indexImapMessage(index, previous ? preferStoredImapMessage(previous, message) : message);
+  }
+  return [...new Set(index.values())];
+}
+
 export function parseSender(from: string, fromName?: string, fromEmail?: string): { name: string; email: string } {
   const name = fromName?.trim() ?? "";
   const email = fromEmail?.trim() ?? "";
@@ -157,22 +211,9 @@ export function mergeStoredImapMessages(
   cap?: number,
 ): StoredImapMessage[] {
   const fetchedAt = new Date().toISOString();
-  const byKey = new Map<string, StoredImapMessage>();
-  for (const message of existing) {
-    byKey.set(storedImapMessageKey(message), toStoredImapHeaders(message, message.fetchedAt));
-  }
-  for (const message of incoming) {
-    const stored = toStoredImapHeaders(message, fetchedAt);
-    const previous = byKey.get(storedImapMessageKey(stored));
-    if (previous && !stored.dateMs && previous.dateMs) {
-      stored.dateMs = previous.dateMs;
-      stored.date = stored.date || previous.date;
-    }
-    if (previous && !stored.snippet && previous.snippet) {
-      stored.snippet = previous.snippet;
-    }
-    byKey.set(storedImapMessageKey(stored), stored);
-  }
-  const merged = [...byKey.values()].sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
+  const merged = foldStoredImapMessages([
+    ...existing.map((message) => toStoredImapHeaders(message, message.fetchedAt)),
+    ...incoming.map((message) => toStoredImapHeaders(message, fetchedAt)),
+  ]).sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
   return cap ? merged.slice(0, cap) : merged;
 }

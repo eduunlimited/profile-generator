@@ -26,7 +26,7 @@ import {
   sortProfileGroups,
   PROFILE_UNGROUPED_GROUP_ID,
 } from "./profileGroupUtils";
-import { toStoredImapHeaders } from "./imapInbox";
+import { foldStoredImapMessages, toStoredImapHeaders } from "./imapInbox";
 import { canonicalizeOrderId, orderRecordId } from "./orderEmail/classify";
 import { finalizeParsedOrder, upsertParsedOrders } from "./orderEmail/merge";
 import { repairUtf8Mojibake } from "./orderEmail/parse";
@@ -1213,18 +1213,20 @@ export async function deleteImapAccount(id: string): Promise<void> {
 export async function getImapMail(accountId: string): Promise<StoredImapMessage[]> {
   await ensureDataKey(KEYS.imapMail);
   const stored = readMap<StoredImapMessage[]>(KEYS.imapMail)[accountId] ?? [];
-  return stored
-    .map((message) => ({
+  return foldStoredImapMessages(
+    stored.map((message) => ({
       ...toStoredImapHeaders(message, message.fetchedAt),
       dateMs: Number.isFinite(message.dateMs) ? message.dateMs : toStoredImapHeaders(message).dateMs,
-    }))
-    .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
+    })),
+  ).sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
 }
 
 export async function saveImapMail(accountId: string, messages: StoredImapMessage[]): Promise<void> {
   await ensureDataKey(KEYS.imapMail);
   const mail = readMap<StoredImapMessage[]>(KEYS.imapMail);
-  mail[accountId] = messages.map((message) => toStoredImapHeaders(message, message.fetchedAt));
+  mail[accountId] = foldStoredImapMessages(
+    messages.map((message) => toStoredImapHeaders(message, message.fetchedAt)),
+  );
   writeMap(KEYS.imapMail, mail);
   await persistMap();
 }
@@ -1236,12 +1238,16 @@ export async function compactImapMailIfNeeded(): Promise<void> {
   const next: Record<string, StoredImapMessage[]> = {};
   for (const [id, messages] of Object.entries(mail)) {
     const list = Array.isArray(messages) ? messages : [];
-    if (list.some((message) => Boolean(message.htmlBody?.trim() || message.body?.trim()))) {
+    const folded = foldStoredImapMessages(
+      list.map((message) => toStoredImapHeaders(message, message.fetchedAt)),
+    ).sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
+    if (
+      folded.length !== list.length ||
+      list.some((message) => Boolean(message.htmlBody?.trim() || message.body?.trim()))
+    ) {
       changed = true;
     }
-    next[id] = list
-      .map((message) => toStoredImapHeaders(message, message.fetchedAt))
-      .sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
+    next[id] = folded;
   }
   if (!changed) return;
   writeMap(KEYS.imapMail, next);

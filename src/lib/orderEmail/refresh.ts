@@ -9,7 +9,7 @@ import {
   searchImapHeaders,
 } from "../api";
 import { formatError } from "../errorUtils";
-import { imapAccountToSettings, storedImapMessageKey, toStoredImapHeaders } from "../imapInbox";
+import { foldStoredImapMessages, imapAccountToSettings, storedImapAliasKeys, toStoredImapHeaders } from "../imapInbox";
 import type { ImapAccount, ParsedOrder, StoredImapMessage } from "../types";
 import {
   classifyPokemonCenterMessage,
@@ -48,21 +48,21 @@ export interface OrderRefreshResult {
 }
 
 async function headersForAccount(account: ImapAccount): Promise<StoredImapMessage[]> {
-  const stored = await getImapMail(account.id);
-  const byKey = new Map(stored.map((message) => [storedImapMessageKey(message), message]));
-  let added = 0;
-  try {
-    const searched = await searchImapHeaders(imapAccountToSettings(account), [...ORDER_SEARCH_SUBJECTS]);
-    for (const message of searched) {
-      const key = storedImapMessageKey(message);
-      if (byKey.has(key)) continue;
-      byKey.set(key, toStoredImapHeaders(message));
-      added += 1;
-    }
-  } catch {
-    // Stored headers still classify; SEARCH is a supplement for Hide My Email inboxes.
-  }
-  const headers = [...byKey.values()];
+  const stored = foldStoredImapMessages(await getImapMail(account.id));
+  const beforeCount = stored.length;
+  const headers = foldStoredImapMessages([
+    ...stored,
+    ...(await (async () => {
+      try {
+        const searched = await searchImapHeaders(imapAccountToSettings(account), [...ORDER_SEARCH_SUBJECTS]);
+        return searched.map((message) => toStoredImapHeaders(message));
+      } catch {
+        // Stored headers still classify; SEARCH is a supplement for Hide My Email inboxes.
+        return [] as StoredImapMessage[];
+      }
+    })()),
+  ]);
+  const added = Math.max(0, headers.length - beforeCount);
   if (added > 0) {
     try {
       await saveImapMail(account.id, headers);
@@ -104,16 +104,14 @@ function classifyPickupFromParts(
 
 async function rememberPickupSnippets(accountId: string, items: ClassifiedOrderMessage[]): Promise<void> {
   if (items.length === 0) return;
-  const stored = await getImapMail(accountId);
-  const byKey = new Map(stored.map((message) => [storedImapMessageKey(message), message]));
+  const result = foldStoredImapMessages(await getImapMail(accountId));
   let changed = false;
   for (const item of items) {
     const snippet = `Order #: ${item.orderId}. Your order was picked up.`;
-    const key = storedImapMessageKey(item.message);
-    const existing = byKey.get(key);
+    const aliases = new Set(storedImapAliasKeys(item.message));
+    const existing = result.find((message) => storedImapAliasKeys(message).some((key) => aliases.has(key)));
     if (!existing) {
-      byKey.set(
-        key,
+      result.push(
         toStoredImapHeaders({
           uid: item.message.uid,
           messageId: item.message.messageId,
@@ -130,10 +128,10 @@ async function rememberPickupSnippets(accountId: string, items: ClassifiedOrderM
       continue;
     }
     if (existing.snippet?.includes(`Order #: ${item.orderId}`)) continue;
-    byKey.set(key, { ...existing, snippet });
+    result[result.indexOf(existing)] = { ...existing, snippet };
     changed = true;
   }
-  if (changed) await saveImapMail(accountId, [...byKey.values()]);
+  if (changed) await saveImapMail(accountId, foldStoredImapMessages(result));
 }
 
 function classifyPokemonCenterFromParts(

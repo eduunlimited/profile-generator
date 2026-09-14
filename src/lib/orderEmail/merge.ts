@@ -55,6 +55,88 @@ function looksLikePickupConfirmation(message: ClassifiedOrderMessage["message"])
   );
 }
 
+function eventAliasKeys(event: Pick<OrderEvent, "accountId" | "uid" | "messageId">): string[] {
+  const keys: string[] = [];
+  if (event.uid) keys.push(`${event.accountId}:uid:${event.uid}`);
+  const messageId = event.messageId?.trim().toLowerCase();
+  if (messageId) keys.push(`${event.accountId}:id:${messageId}`);
+  return keys;
+}
+
+function normalizeEventSubject(subject: string): string {
+  return subject.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function fuzzyEventKey(event: OrderEvent): string {
+  const bucket = Number.isFinite(event.dateMs) ? Math.round(event.dateMs / 2000) : 0;
+  return `${event.accountId}:${event.kind}:${normalizeEventSubject(event.subject)}:${bucket}`;
+}
+
+function preferEvent(current: OrderEvent, incoming: OrderEvent): OrderEvent {
+  const incomingRank = STATUS_RANK[eventStatus(incoming.kind)];
+  const currentRank = STATUS_RANK[eventStatus(current.kind)];
+  const kind = incomingRank >= currentRank ? incoming.kind : current.kind;
+  const incomingSubject = incoming.subject.trim();
+  const currentSubject = current.subject.trim();
+  return {
+    ...current,
+    ...incoming,
+    kind,
+    uid: incoming.uid || current.uid,
+    messageId: incoming.messageId?.trim() || current.messageId,
+    subject: incomingSubject.length >= currentSubject.length ? incoming.subject : current.subject,
+    date: incoming.dateMs > 0 ? incoming.date : current.date,
+    dateMs: incoming.dateMs > 0 ? incoming.dateMs : current.dateMs,
+  };
+}
+
+function findIndexedEvent(index: Map<string, OrderEvent>, event: OrderEvent): OrderEvent | undefined {
+  for (const key of eventAliasKeys(event)) {
+    const hit = index.get(key);
+    if (hit) return hit;
+  }
+  const fuzzyHit = index.get(`fuzzy:${fuzzyEventKey(event)}`);
+  if (fuzzyHit) return fuzzyHit;
+  const bucket = Number.isFinite(event.dateMs) ? Math.round(event.dateMs / 2000) : 0;
+  for (const delta of [-1, 1]) {
+    const neighbor = index.get(
+      `fuzzy:${event.accountId}:${event.kind}:${normalizeEventSubject(event.subject)}:${bucket + delta}`,
+    );
+    if (neighbor && Math.abs((neighbor.dateMs || 0) - (event.dateMs || 0)) <= 2000) return neighbor;
+  }
+  return undefined;
+}
+
+function indexEvent(index: Map<string, OrderEvent>, event: OrderEvent): void {
+  for (const key of eventAliasKeys(event)) index.set(key, event);
+  index.set(`fuzzy:${fuzzyEventKey(event)}`, event);
+}
+
+function unindexEvent(index: Map<string, OrderEvent>, event: OrderEvent): void {
+  for (const key of eventAliasKeys(event)) {
+    if (index.get(key) === event) index.delete(key);
+  }
+  const fuzzy = `fuzzy:${fuzzyEventKey(event)}`;
+  if (index.get(fuzzy) === event) index.delete(fuzzy);
+}
+
+function dedupeOrderEvents(events: OrderEvent[]): OrderEvent[] {
+  const index = new Map<string, OrderEvent>();
+  for (const event of events) {
+    const previous = findIndexedEvent(index, event);
+    if (previous) unindexEvent(index, previous);
+    indexEvent(index, previous ? preferEvent(previous, event) : event);
+  }
+  return [...new Set(index.values())].sort((a, b) => a.dateMs - b.dateMs || a.uid - b.uid);
+}
+
+function remapPickupEvents(events: OrderEvent[], fulfillment: OrderFulfillment | undefined): OrderEvent[] {
+  if (fulfillment !== "pickup") return events;
+  const hasPickupEvent = events.some((event) => event.kind === "picked_up");
+  if (hasPickupEvent) return events.filter((event) => event.kind !== "delivered");
+  return events.map((event) => (event.kind === "delivered" ? { ...event, kind: "picked_up" as const } : event));
+}
+
 export function finalizeParsedOrder(order: ParsedOrder): ParsedOrder {
   const hasPickupEvent = order.events.some((event) => event.kind === "picked_up");
   const fulfillment: OrderFulfillment | undefined =
@@ -63,10 +145,7 @@ export function finalizeParsedOrder(order: ParsedOrder): ParsedOrder {
       : order.fulfillment === "delivery"
         ? "delivery"
         : undefined;
-  const events =
-    fulfillment === "pickup"
-      ? order.events.map((event) => (event.kind === "delivered" ? { ...event, kind: "picked_up" as const } : event))
-      : order.events;
+  const events = dedupeOrderEvents(remapPickupEvents(order.events, fulfillment));
   let status: OrderStatus = "placed";
   for (const event of events) status = strongerStatus(status, eventStatus(event.kind));
   return { ...order, fulfillment, events, status };
@@ -100,11 +179,6 @@ export function classifyStoredMessage(
     message,
     dateMs,
   };
-}
-
-function eventKey(event: Pick<OrderEvent, "accountId" | "uid" | "messageId">): string {
-  const messageId = event.messageId?.trim().toLowerCase();
-  return messageId ? `${event.accountId}:id:${messageId}` : `${event.accountId}:uid:${event.uid}`;
 }
 
 function toEvent(classified: ClassifiedOrderMessage): OrderEvent {
@@ -158,12 +232,11 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
   orderId = canonicalizeOrderId(orderId);
   const placed = group.filter((item) => item.kind === "placed").sort((a, b) => a.dateMs - b.dateMs);
   if (placed.length === 0) return null;
-  const events = [...group]
-    .sort((a, b) => a.dateMs - b.dateMs || a.message.uid - b.message.uid)
-    .map(toEvent);
-  const uniqueEvents = new Map<string, OrderEvent>();
-  for (const event of events) uniqueEvents.set(eventKey(event), event);
-  const orderedEvents = [...uniqueEvents.values()].sort((a, b) => a.dateMs - b.dateMs || a.uid - b.uid);
+  const orderedEvents = dedupeOrderEvents(
+    [...group]
+      .sort((a, b) => a.dateMs - b.dateMs || a.message.uid - b.message.uid)
+      .map(toEvent),
+  );
   const confirmation = placed[placed.length - 1];
   const shipped = group.filter((item) => item.kind === "shipped").sort((a, b) => b.dateMs - a.dateMs)[0];
   const total = extractOrderTotal(
@@ -245,10 +318,7 @@ export function upsertParsedOrders(existing: ParsedOrder[], incoming: ParsedOrde
       byId.set(next.id, finalizeParsedOrder(next));
       return;
     }
-    const events = new Map<string, OrderEvent>();
-    for (const event of previous.events) events.set(eventKey(event), event);
-    for (const event of next.events) events.set(eventKey(event), event);
-    const mergedEvents = [...events.values()].sort((a, b) => a.dateMs - b.dateMs || a.uid - b.uid);
+    const mergedEvents = dedupeOrderEvents([...previous.events, ...next.events]);
     const updatedMs = Math.max(
       Date.parse(previous.updatedAt) || 0,
       Date.parse(next.updatedAt) || 0,
@@ -289,9 +359,7 @@ export function attachClassifiedEvents(
   for (const item of classified) {
     const previous = byOrderId.get(orderRecordId(item.retailer, item.orderId));
     if (!previous) continue;
-    const event = toEvent(item);
-    if (previous.events.some((existing) => eventKey(existing) === eventKey(event))) continue;
-    const events = [...previous.events, event].sort((a, b) => a.dateMs - b.dateMs || a.uid - b.uid);
+    const events = dedupeOrderEvents([...previous.events, toEvent(item)]);
     const updatedMs = Math.max(Date.parse(previous.updatedAt) || 0, item.dateMs);
     const trackingNumber =
       previous.trackingNumber ||

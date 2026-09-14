@@ -135,6 +135,81 @@ const ADDRESS_SKIP_LINE =
   /^(?:payment(?:\s+method)?|billing(?:\s+address)?|visa\b|mastercard|amex|american express|discover|redcard|ending in|\*{2,}\d{4}|gift(?:\s+message)?|track(?:ing)?|view\s+order|promo|circle|shop|http|www\.|target\.com|write a review|visit|thanks|color|size|style|dcpi|sku|new releases|customer service)/i;
 const CITY_STATE_ZIP = /^(.+?),?\s+([A-Za-z]{2}),?\s+(\d{5}(?:-\d{4})?)$/;
 const COUNTRY_LINE = /^(?:united states|usa|u\.s\.a\.?)$/i;
+const US_STATE_NAME_TO_ABBR: Record<string, string> = {
+  alabama: "AL",
+  alaska: "AK",
+  arizona: "AZ",
+  arkansas: "AR",
+  california: "CA",
+  colorado: "CO",
+  connecticut: "CT",
+  delaware: "DE",
+  "district of columbia": "DC",
+  florida: "FL",
+  georgia: "GA",
+  hawaii: "HI",
+  idaho: "ID",
+  illinois: "IL",
+  indiana: "IN",
+  iowa: "IA",
+  kansas: "KS",
+  kentucky: "KY",
+  louisiana: "LA",
+  maine: "ME",
+  maryland: "MD",
+  massachusetts: "MA",
+  michigan: "MI",
+  minnesota: "MN",
+  mississippi: "MS",
+  missouri: "MO",
+  montana: "MT",
+  nebraska: "NE",
+  nevada: "NV",
+  "new hampshire": "NH",
+  "new jersey": "NJ",
+  "new mexico": "NM",
+  "new york": "NY",
+  "north carolina": "NC",
+  "north dakota": "ND",
+  ohio: "OH",
+  oklahoma: "OK",
+  oregon: "OR",
+  pennsylvania: "PA",
+  "rhode island": "RI",
+  "south carolina": "SC",
+  "south dakota": "SD",
+  tennessee: "TN",
+  texas: "TX",
+  utah: "UT",
+  vermont: "VT",
+  virginia: "VA",
+  washington: "WA",
+  "west virginia": "WV",
+  wisconsin: "WI",
+  wyoming: "WY",
+};
+
+function parseCityStateZip(line: string): { city: string; state: string; postalCode: string } | undefined {
+  const trimmed = line.replace(/\s+/g, " ").trim();
+  const abbr = trimmed.match(CITY_STATE_ZIP);
+  if (abbr?.[1] && abbr[2] && abbr[3]) {
+    const city = abbr[1].replace(/,+$/, "").trim();
+    if (city) return { city, state: abbr[2].toUpperCase(), postalCode: abbr[3] };
+  }
+  const named = trimmed.match(/^(.+?),?\s+([A-Za-z][A-Za-z\s]+?),?\s+(\d{5}(?:-\d{4})?)$/);
+  if (!named?.[1] || !named[2] || !named[3]) return undefined;
+  const state = US_STATE_NAME_TO_ABBR[named[2].trim().toLowerCase().replace(/\s+/g, " ")];
+  const city = named[1].replace(/,+$/, "").trim();
+  if (!state || !city) return undefined;
+  return { city, state, postalCode: named[3] };
+}
+
+function isPhoneAddressLine(line: string): boolean {
+  return (
+    /^(?:t|tel|telephone|phone|p)\s*[.:]/i.test(line) ||
+    /^\+?1?[\s.-]?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}$/.test(line)
+  );
+}
 
 function isAddressLabelLine(line: string): boolean {
   return SHIPPING_ADDRESS_LABEL.test(line) || PICKUP_ADDRESS_LABEL.test(line);
@@ -156,9 +231,9 @@ function collectLabeledAddressLines(text: string, kind: "shipping" | "pickup"): 
     for (let next = index + 1; next < lines.length && collected.length < 6; next += 1) {
       const value = lines[next];
       if (isAddressLabelLine(value) || ADDRESS_HARD_STOP.test(value)) break;
-      if (COUNTRY_LINE.test(value) || ADDRESS_SKIP_LINE.test(value)) continue;
+      if (COUNTRY_LINE.test(value) || ADDRESS_SKIP_LINE.test(value) || isPhoneAddressLine(value)) continue;
       collected.push(value);
-      if (CITY_STATE_ZIP.test(value) && collected.length >= 2) break;
+      if (parseCityStateZip(value) && collected.length >= 2) break;
       if (collected.length === 1 && parseCommaSeparatedAddress(value, kind)) break;
     }
     if (collected.length >= 2) return collected;
@@ -199,9 +274,25 @@ function extractShippingLinesFromHtml(html: string): string[] | undefined {
 
 function parseCommaSeparatedAddress(value: string, source: "shipping" | "pickup"): OrderAddress | undefined {
   const line = decodeEntities(value).replace(/\s+/g, " ").trim();
-  const tail = line.match(/^(.*),\s*([A-Za-z]{2}),?\s+(\d{5}(?:-\d{4})?)$/);
-  if (!tail) return undefined;
-  const parts = tail[1]
+  const abbr = line.match(/^(.*),\s*([A-Za-z]{2}),?\s+(\d{5}(?:-\d{4})?)$/);
+  if (abbr?.[1] && abbr[2] && abbr[3]) {
+    return addressFromCommaHead(abbr[1], abbr[2].toUpperCase(), abbr[3], source);
+  }
+  const named = line.match(/^(.*),\s*([A-Za-z][A-Za-z\s]+),\s*(\d{5}(?:-\d{4})?)$/);
+  if (named?.[1] && named[2] && named[3]) {
+    const state = US_STATE_NAME_TO_ABBR[named[2].trim().toLowerCase().replace(/\s+/g, " ")];
+    if (state) return addressFromCommaHead(named[1], state, named[3], source);
+  }
+  return undefined;
+}
+
+function addressFromCommaHead(
+  head: string,
+  state: string,
+  postalCode: string,
+  source: "shipping" | "pickup",
+): OrderAddress | undefined {
+  const parts = head
     .split(",")
     .map((part) => part.trim())
     .filter(Boolean);
@@ -217,8 +308,6 @@ function parseCommaSeparatedAddress(value: string, source: "shipping" | "pickup"
   const line1 = street[0];
   const line2 = street.slice(1).join(", ").trim() || undefined;
   if (!line1 || !city) return undefined;
-  const state = tail[2].toUpperCase();
-  const postalCode = tail[3];
   return {
     name,
     line1,
@@ -245,11 +334,11 @@ function parseAddressLines(lines: string[], source: "shipping" | "pickup"): Orde
   let postalCode: string | undefined;
   let cityIndex = -1;
   for (let index = cleaned.length - 1; index >= 0; index -= 1) {
-    const match = cleaned[index].match(CITY_STATE_ZIP);
+    const match = parseCityStateZip(cleaned[index]);
     if (!match) continue;
-    city = match[1].replace(/,+$/, "").trim();
-    state = match[2].toUpperCase();
-    postalCode = match[3];
+    city = match.city;
+    state = match.state;
+    postalCode = match.postalCode;
     cityIndex = index;
     break;
   }
@@ -386,6 +475,53 @@ export function extractTargetOrderAddress(...parts: string[]): OrderAddress | un
     const parsed = parseCommaSeparatedAddress(`${store[1].trim()}, ${store[2].trim()}`, "pickup");
     if (parsed) return parsed;
   }
+  return undefined;
+}
+
+const POKEMON_CENTER_ADDRESS_STOP =
+  /\bbilling\s+address\b|\bshipping\s+method\b|\bpayment\s+method\b|\border\s+summary\b|\bsku\s*#|\bsales\s+tax\b|\border\s+subtotal\b/i;
+
+function isolatePaymentAndShipping(value: string): string {
+  const match = value.match(/payment\s*(?:&amp;|&|and)\s*shipping[\s\S]*/i);
+  return match?.[0] ?? value;
+}
+
+function sliceAfterShippingAddressLabel(value: string): string | undefined {
+  const match = value.match(/\bshipping\s+address\b([\s\S]*)/i);
+  if (!match?.[1]) return undefined;
+  return match[1].split(POKEMON_CENTER_ADDRESS_STOP)[0] ?? "";
+}
+
+function pokemonCenterAddressLines(text: string): string[] {
+  return emailPlainText(text)
+    .split("\n")
+    .map((line) => line.replace(/^[:\-\s]+/, "").trim())
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !COUNTRY_LINE.test(line) &&
+        !isPhoneAddressLine(line) &&
+        !isAddressLabelLine(line) &&
+        !/^(?:change|edit|update)$/i.test(line),
+    );
+}
+
+export function extractPokemonCenterOrderAddress(...parts: string[]): OrderAddress | undefined {
+  const joined = parts.filter(Boolean).map(maybeDecodeQuotedPrintable);
+  if (joined.length === 0) return undefined;
+  for (const part of joined) {
+    const section = isolatePaymentAndShipping(part);
+    const afterLabel = sliceAfterShippingAddressLabel(section);
+    if (!afterLabel?.trim()) continue;
+    const parsed = parseAddressLines(pokemonCenterAddressLines(afterLabel).slice(0, 8), "shipping");
+    if (parsed) return parsed;
+  }
+  return undefined;
+}
+
+export function extractOrderShippingAddress(retailer: string, ...parts: string[]): OrderAddress | undefined {
+  if (retailer === "pokemon-center") return extractPokemonCenterOrderAddress(...parts);
+  if (retailer === "target") return extractTargetOrderAddress(...parts);
   return undefined;
 }
 

@@ -518,7 +518,7 @@ export function OrderPerformancePanel({
                                 <span>Item</span>
                                 <span>Value</span>
                                 <span>Card</span>
-                                <span>Address</span>
+                                <span>Shipping address</span>
                                 <span>Status</span>
                               </li>
                               {timelineOrders.map((order) => {

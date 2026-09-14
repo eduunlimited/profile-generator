@@ -511,7 +511,7 @@ export function OrdersPanel({ profiles, poolEmails = [], cards = [] }: OrdersPan
                   <dd>{formatTotal(active)}</dd>
                 </div>
                 <div className="orders-detail-address">
-                  <dt>{active.shippingAddress?.source === "pickup" ? "Pickup address" : "Address"}</dt>
+                  <dt>{active.shippingAddress?.source === "pickup" ? "Pickup address" : "Shipping address"}</dt>
                   <dd>
                     {formatOrderAddress(active.shippingAddress) ? (
                       <span className="orders-address-block">{formatOrderAddress(active.shippingAddress)}</span>

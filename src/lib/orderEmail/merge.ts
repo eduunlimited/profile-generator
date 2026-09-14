@@ -12,7 +12,7 @@ import { sortOrdersByPlaced } from "./dashboard";
 import {
   extractOrderItems,
   extractOrderTotal,
-  extractTargetOrderAddress,
+  extractOrderShippingAddress,
   extractTargetOrderPayment,
   extractTrackingNumber,
   mergeOrderAddress,
@@ -197,7 +197,7 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
     confirmation.message.body ?? "",
     confirmation.message.snippet ?? "",
   ];
-  const shippingAddress = retailer === "target" ? extractTargetOrderAddress(...confirmationParts) : undefined;
+  const shippingAddress = extractOrderShippingAddress(retailer, ...confirmationParts);
   const payment = retailer === "target" ? extractTargetOrderPayment(...confirmationParts) : undefined;
   const placedAt = new Date(placed[0].dateMs || Date.parse(placed[0].message.date) || Date.now()).toISOString();
   const updatedMs = Math.max(...orderedEvents.map((event) => event.dateMs), placed[0].dateMs);

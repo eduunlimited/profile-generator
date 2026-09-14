@@ -32,7 +32,7 @@ import {
 import {
   extractOrderItems,
   extractOrderTotal,
-  extractTargetOrderAddress,
+  extractOrderShippingAddress,
   extractTargetOrderPayment,
   extractTrackingNumber,
   itemsLookIncomplete,
@@ -185,13 +185,14 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
       .find((event) => event.kind === "shipped" && event.accountId === account.id);
     Object.assign(order, finalizeParsedOrder(order));
     const fetches: { eventUid: number; kind: "placed" | "picked_up" | "shipped" }[] = [];
+    const missingAddress = !order.shippingAddress?.line1 && !order.shippingAddress?.raw;
     if (
       confirmation &&
       (order.total == null ||
         itemsLookIncomplete(order.items) ||
         !order.fulfillment ||
-        (order.retailer === "target" &&
-          ((!order.shippingAddress?.line1 && !order.shippingAddress?.raw) || !order.payment?.raw)))
+        ((order.retailer === "target" || order.retailer === "pokemon-center") && missingAddress) ||
+        (order.retailer === "target" && !order.payment?.raw))
     ) {
       fetches.push({ eventUid: confirmation.uid, kind: "placed" });
     }
@@ -221,9 +222,9 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
             } else if (html || full.body?.trim()) {
               order.fulfillment = order.fulfillment ?? "delivery";
             }
+            const address = extractOrderShippingAddress(order.retailer, html || text);
+            if (address) order.shippingAddress = mergeOrderAddress(address, order.shippingAddress);
             if (order.retailer === "target") {
-              const address = extractTargetOrderAddress(html || text);
-              if (address) order.shippingAddress = mergeOrderAddress(address, order.shippingAddress);
               const payment = extractTargetOrderPayment(html || text);
               if (payment) order.payment = mergeOrderPayment(payment, order.payment);
             }

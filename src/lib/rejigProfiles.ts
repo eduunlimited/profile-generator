@@ -235,7 +235,7 @@ export async function rejigProfiles(
       const slot = attempt === 0 ? slots[index] : applyLocalSlot(profile);
       const misspell = needsMisspell ? misspellResults[index] : undefined;
       const jigged = finalizeSlot(profile, slot, misspell);
-      const address = hasAddressJig || sourceFromMaster ? jigged.address : profile.address;
+      const address = hasAddressJig || sourceFromMaster ? jigged.address : shippingAddressForProfile(profile);
       const fingerprint = streetLineFingerprint(address.street);
 
       if (changesStreetLine && isStreetAtCapInCategory(fingerprint, categoryId, occupiedByCategory)) {

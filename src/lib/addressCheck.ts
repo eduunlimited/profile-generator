@@ -1,4 +1,4 @@
-import { shippingAddressForProfile } from "./profileUtils";
+import { checkoutShippingAddress } from "./profileUtils";
 import type { AddressCheck, AddressCheckStatus, GeocodioLookupResult, MasterProfile, Profile, ProfileAddress } from "./types";
 
 export function billingAddressFingerprint(address: Pick<ProfileAddress, "street" | "unit" | "city" | "state" | "postalCode">): string {
@@ -8,7 +8,7 @@ export function billingAddressFingerprint(address: Pick<ProfileAddress, "street"
 }
 
 export function profileAddressFingerprint(profile: Profile): string {
-  return billingAddressFingerprint(shippingAddressForProfile(profile));
+  return billingAddressFingerprint(checkoutShippingAddress(profile));
 }
 
 export function addressCheckIsStale(profile: Profile): boolean {
@@ -19,7 +19,7 @@ export function addressCheckIsStale(profile: Profile): boolean {
 export function profileHasVerifiableAddress(
   profile: Pick<Profile, "address"> & Partial<Pick<Profile, "shippingAddress" | "billingSameAsShipping">>,
 ): boolean {
-  const address = shippingAddressForProfile(profile);
+  const address = checkoutShippingAddress(profile);
   return Boolean(
     address.street.trim() && address.city.trim() && address.state.trim() && address.postalCode.trim(),
   );
@@ -104,7 +104,7 @@ export function addressHouseKey(
   address: Pick<ProfileAddress, "street" | "city" | "state" | "postalCode">,
 ): string {
   const street = address.street.trim().toLowerCase();
-  const number = street.match(/^\d+[a-z]?/i)?.[0] ?? "";
+  const number = street.match(/^\d+/)?.[0] ?? "";
   const zip = address.postalCode.replace(/\D/g, "").slice(0, 5);
   return [number, address.city.trim().toLowerCase(), address.state.trim().toLowerCase(), zip].join("|");
 }
@@ -113,7 +113,7 @@ export function shippingMatchesMasterHouse(
   profile: Profile,
   master: Pick<MasterProfile, "address">,
 ): boolean {
-  const shipping = addressHouseKey(shippingAddressForProfile(profile));
+  const shipping = addressHouseKey(checkoutShippingAddress(profile));
   const source = addressHouseKey(master.address);
   const meaningful = (key: string) => key.replace(/\|/g, "").trim().length > 0;
   return meaningful(shipping) && meaningful(source) && shipping === source;

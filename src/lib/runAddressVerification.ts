@@ -9,7 +9,7 @@ import {
   stampFromLookup,
   withMasterMatch,
 } from "./addressCheck";
-import { shippingAddressForProfile } from "./profileUtils";
+import { checkoutShippingAddress } from "./profileUtils";
 import type { GeocodioLookupResult, MasterProfile, Profile } from "./types";
 
 export const REJIG_UNTIL_PASS_ATTEMPTS = 5;
@@ -125,7 +125,7 @@ export async function verifyProfileAddresses(
     const sample = group[0];
     let result: GeocodioLookupResult;
     try {
-      const address = shippingAddressForProfile(sample);
+      const address = checkoutShippingAddress(sample);
       result = await geocodioLookup({
         apiKey,
         street: address.street,
@@ -150,10 +150,10 @@ export async function verifyProfileAddresses(
           Boolean(masterResult?.propertyKey) &&
           result.propertyKey === masterResult?.propertyKey;
         const houseMatch = shippingMatchesMasterHouse(profile, master);
-        if (result.propertyKey && masterResult?.propertyKey) {
-          check = withMasterMatch(check, geoMatch);
-        } else if (houseMatch) {
+        if (houseMatch || geoMatch) {
           check = withMasterMatch(check, true);
+        } else if (result.propertyKey && masterResult?.propertyKey) {
+          check = withMasterMatch(check, false);
         }
       }
       const next = { ...profile, addressCheck: check };

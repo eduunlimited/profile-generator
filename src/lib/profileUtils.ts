@@ -33,8 +33,12 @@ export function syncShippingName(profile: Profile): Profile {
   };
 }
 
-export function billingSameAsShipping(profile: { billingSameAsShipping?: boolean }): boolean {
-  return profile.billingSameAsShipping !== false;
+export function billingSameAsShipping(profile: { billingSameAsShipping?: unknown }): boolean {
+  const value = profile.billingSameAsShipping;
+  if (value === false || value === 0 || value === "false" || value === "FALSE" || value === "0") {
+    return false;
+  }
+  return true;
 }
 
 export function shippingAddressForProfile(
@@ -44,6 +48,20 @@ export function shippingAddressForProfile(
     return profile.address;
   }
   return profile.shippingAddress ?? profile.address;
+}
+
+/** Ship-to used for Geocodio and master-house checks. Never uses billing when shipping exists. */
+export function checkoutShippingAddress(
+  profile: Pick<Profile, "address"> & Partial<Pick<Profile, "shippingAddress" | "billingSameAsShipping">>,
+): Profile["address"] {
+  const shipping = profile.shippingAddress;
+  if (shipping?.street.trim()) {
+    return shipping;
+  }
+  if (!billingSameAsShipping(profile)) {
+    return shipping ?? emptyProfileAddress();
+  }
+  return profile.address;
 }
 
 export function withShippingAddress(profile: Profile, address: Profile["address"]): Profile {

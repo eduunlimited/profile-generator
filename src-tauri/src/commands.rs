@@ -406,6 +406,13 @@ pub async fn geocodio_lookup(
 }
 
 #[tauri::command]
+pub async fn fetch_tracking_page(
+    request: crate::tracking::TrackingFetchRequest,
+) -> Result<crate::tracking::TrackingFetchResult, String> {
+    crate::tracking::fetch_tracking_page(request).await
+}
+
+#[tauri::command]
 pub async fn test_imap(settings: crate::imap::ImapSettings) -> Result<crate::imap::ImapTestResult, String> {
     tauri::async_runtime::spawn_blocking(move || crate::imap::test_imap(settings))
         .await

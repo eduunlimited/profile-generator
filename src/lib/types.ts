@@ -544,6 +544,7 @@ export type OrderRetailer = "target" | "walmart" | "pokemon-center";
 export type OrderStatus = "placed" | "shipped" | "delivered" | "picked_up" | "cancelled";
 export type OrderEventKind = "placed" | "shipped" | "in_transit" | "delivered" | "picked_up" | "cancelled";
 export type OrderFulfillment = "pickup" | "delivery";
+export type ShipmentCarrier = "fedex" | "ups" | "usps";
 
 export interface OrderEvent {
   kind: OrderEventKind;
@@ -589,6 +590,10 @@ export interface ParsedOrder {
   total?: number;
   currency?: string;
   trackingNumber?: string;
+  carrier?: ShipmentCarrier;
+  expectedDelivery?: string;
+  expectedDeliveryAt?: string;
+  expectedDeliverySource?: "carrier" | "email";
   items?: OrderLineItem[];
   recipientEmail?: string;
   shippingAddress?: OrderAddress;

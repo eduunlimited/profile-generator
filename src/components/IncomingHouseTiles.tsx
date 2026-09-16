@@ -1,3 +1,4 @@
+import { carrierLabel } from "../lib/orderEmail/carrier";
 import { INCOMING_VISIBLE_ROWS, type IncomingHouse } from "../lib/orderEmail/incoming";
 
 interface IncomingHouseTilesProps {
@@ -31,9 +32,14 @@ export function IncomingHouseTiles({ houses, activeId, onSelect }: IncomingHouse
                     className={`orders-incoming-row${activeId === shipment.orderId ? " is-active" : ""}`}
                     onClick={() => onSelect(shipment.orderId)}
                   >
-                    <span className="orders-incoming-tracking">{shipment.tracking}</span>
+                    <span className="orders-incoming-tracking" title={carrierLabel(shipment.carrier) || undefined}>
+                      {shipment.tracking}
+                    </span>
                     <span className="orders-incoming-site">{shipment.site}</span>
-                    <span className={`orders-incoming-eta${shipment.eta !== "—" ? " has-date" : ""}`}>
+                    <span
+                      className={`orders-incoming-eta${shipment.hasDate ? " has-date" : ""}`}
+                      title={carrierLabel(shipment.carrier) || undefined}
+                    >
                       {shipment.eta}
                     </span>
                   </button>

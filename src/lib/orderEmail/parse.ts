@@ -1,4 +1,5 @@
-import type { OrderAddress, OrderPayment } from "../types";
+import type { OrderAddress, OrderPayment, ShipmentCarrier } from "../types";
+import { detectCarrierFromText, parseDeliveryDate, preferTracking } from "./carrier";
 
 /** Windows-1252 / Latin-1 code units so UTF-8 mojibake (PokÃ©mon, â€”) can be reversed. */
 const WINDOWS_1252_FROM_CHAR = new Map<number, number>([
@@ -539,14 +540,43 @@ function looksLikeKnownOrderId(value: string, orderId?: string): boolean {
   return /^10\d{13}$/.test(value) || /^91\d{13}$/.test(value) || /^P\d{8,14}$/i.test(value);
 }
 
+export function shipmentHintsFromText(
+  orderId: string | undefined,
+  ...parts: string[]
+): {
+  tracking?: string;
+  carrier?: ShipmentCarrier;
+  expectedDelivery?: string;
+} {
+  const joined = parts.filter(Boolean).join("\n");
+  const text = emailPlainText(joined);
+  const candidates: string[] = [];
+  const add = (value?: string) => {
+    const id = value?.replace(/[\s-]/g, "").toUpperCase();
+    if (!id || looksLikeKnownOrderId(id, orderId) || id.length < 8 || id.length > 34) return;
+    candidates.push(id);
+  };
+
+  for (const match of joined.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
+    add(match[0].match(/(?:trknbr|tracking(?:_?number)?|tracknum|tLabels)=([A-Z0-9-]+)/i)?.[1]);
+  }
+  add(text.match(/\b(1Z[A-Z0-9]{16})\b/i)?.[1]);
+  for (const match of text.matchAll(/\b(9[1-5]\d{19,32})\b/g)) add(match[1]);
+  for (const match of text.matchAll(/\b(96\d{18,22})\b/g)) add(match[1]);
+  add(text.match(/\b(\d{15})\b/)?.[1]);
+  add(text.match(/tracking(?:\s*(?:number|#))?[:\s]*([A-Z0-9]{8,34})/i)?.[1]);
+  add(text.match(/(?:trknbr|tracknum)=([A-Z0-9]{8,34})/i)?.[1]);
+
+  const tracking = preferTracking(...candidates);
+  return {
+    tracking,
+    carrier: detectCarrierFromText(joined, tracking),
+    expectedDelivery: parseDeliveryDate(text),
+  };
+}
+
 export function extractTrackingNumber(orderId: string | undefined, ...parts: string[]): string | undefined {
-  const text = emailPlainText(parts.filter(Boolean).join("\n"));
-  const labeled = text.match(/tracking(?:\s*(?:number|#))?[:\s]*([A-Z0-9]{8,32})/i)?.[1];
-  if (labeled && !looksLikeKnownOrderId(labeled, orderId)) return labeled.toUpperCase();
-  const fromUrl = text.match(/(?:trknbr|tracking(?:_?number)?|tracknum)=([A-Z0-9]{8,32})/i)?.[1];
-  if (fromUrl && !looksLikeKnownOrderId(fromUrl, orderId)) return fromUrl.toUpperCase();
-  const ups = text.match(/\b(1Z[A-Z0-9]{16})\b/i)?.[1];
-  return ups ? ups.toUpperCase() : undefined;
+  return shipmentHintsFromText(orderId, ...parts).tracking;
 }
 
 const ITEM_SKIP =

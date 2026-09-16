@@ -1309,6 +1309,14 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
     total: typeof raw.total === "number" && Number.isFinite(raw.total) ? raw.total : undefined,
     currency: raw.currency?.trim() || (raw.total != null ? "USD" : undefined),
     trackingNumber: raw.trackingNumber?.trim() || undefined,
+    carrier:
+      raw.carrier === "fedex" || raw.carrier === "ups" || raw.carrier === "usps" ? raw.carrier : undefined,
+    expectedDelivery: /^\d{4}-\d{2}-\d{2}$/.test(raw.expectedDelivery ?? "") ? raw.expectedDelivery : undefined,
+    expectedDeliveryAt: raw.expectedDeliveryAt?.trim() || undefined,
+    expectedDeliverySource:
+      raw.expectedDeliverySource === "carrier" || raw.expectedDeliverySource === "email"
+        ? raw.expectedDeliverySource
+        : undefined,
     items: (() => {
       const items = Array.isArray(raw.items)
         ? raw.items

@@ -30,15 +30,19 @@ import {
   upsertParsedOrders,
 } from "./merge";
 import {
+  detectCarrier,
+  detectCarrierFromText,
+} from "./carrier";
+import {
   extractOrderItems,
   extractOrderTotal,
   extractOrderShippingAddress,
   extractTargetOrderPayment,
-  extractTrackingNumber,
   itemsLookIncomplete,
   mergeOrderAddress,
   mergeOrderItems,
   mergeOrderPayment,
+  shipmentHintsFromText,
 } from "./parse";
 
 export interface OrderRefreshResult {
@@ -197,7 +201,12 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
     if (pickedUp && itemsLookIncomplete(order.items)) {
       fetches.push({ eventUid: pickedUp.uid, kind: "picked_up" });
     }
-    if (shipped && !order.trackingNumber && order.status !== "cancelled" && order.fulfillment !== "pickup") {
+    const needsShipmentHints =
+      order.status !== "cancelled" &&
+      order.fulfillment !== "pickup" &&
+      order.status === "shipped" &&
+      (!order.trackingNumber || !order.expectedDelivery || !order.carrier);
+    if (shipped && needsShipmentHints) {
       fetches.push({ eventUid: shipped.uid, kind: "shipped" });
     }
     for (const fetch of fetches) {
@@ -233,8 +242,17 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
         if (fetch.kind === "shipped") {
           const html = full.htmlBody?.trim() || "";
           const text = [full.body, full.snippet, full.subject].filter(Boolean).join("\n");
-          const tracking = extractTrackingNumber(order.orderId, html || text);
-          if (tracking) order.trackingNumber = tracking;
+          const hints = shipmentHintsFromText(order.orderId, html || text);
+          if (hints.tracking) order.trackingNumber = hints.tracking;
+          order.carrier =
+            hints.carrier ??
+            detectCarrierFromText(html || text, hints.tracking ?? order.trackingNumber) ??
+            detectCarrier(hints.tracking ?? order.trackingNumber) ??
+            order.carrier;
+          if (hints.expectedDelivery) {
+            order.expectedDelivery = hints.expectedDelivery;
+            order.expectedDeliverySource = "email";
+          }
         }
       } catch {
         // Keep the subject-derived row; amount/tracking stay empty until a later refresh.

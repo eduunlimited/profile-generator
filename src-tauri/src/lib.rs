@@ -3,6 +3,7 @@ mod commands;
 mod db;
 mod geocodio;
 mod imap;
+mod tracking;
 mod license;
 mod vault;
 
@@ -230,6 +231,7 @@ pub fn run() {
             commands::fetch_imap_message,
             commands::search_imap_headers,
             commands::geocodio_lookup,
+            commands::fetch_tracking_page,
             commands::activate_license,
             commands::check_license,
             commands::clear_license,

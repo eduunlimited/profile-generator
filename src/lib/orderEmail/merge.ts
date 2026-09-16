@@ -9,12 +9,13 @@ import {
   type ClassifiedOrderMessage,
 } from "./classify";
 import { sortOrdersByPlaced } from "./dashboard";
+import { detectCarrier, preferTracking } from "./carrier";
 import {
   extractOrderItems,
   extractOrderTotal,
   extractOrderShippingAddress,
   extractTargetOrderPayment,
-  extractTrackingNumber,
+  shipmentHintsFromText,
   mergeOrderAddress,
   mergeOrderItems,
   mergeOrderPayment,
@@ -245,8 +246,8 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
     confirmation.message.body ?? "",
     confirmation.message.htmlBody ?? "",
   );
-  const trackingNumber = shipped
-    ? extractTrackingNumber(
+  const shipmentHints = shipped
+    ? shipmentHintsFromText(
         orderId,
         shipped.message.subject,
         shipped.message.snippet ?? "",
@@ -254,6 +255,7 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
         shipped.message.htmlBody ?? "",
       )
     : undefined;
+  const trackingNumber = shipmentHints?.tracking;
   const items = group.reduce(
     (current, item) =>
       mergeOrderItems(
@@ -283,6 +285,9 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
     total,
     currency: total != null ? "USD" : undefined,
     trackingNumber,
+    carrier: shipmentHints?.carrier ?? detectCarrier(trackingNumber),
+    expectedDelivery: shipmentHints?.expectedDelivery,
+    expectedDeliverySource: shipmentHints?.expectedDelivery ? "email" : undefined,
     items,
     recipientEmail: withEmail,
     shippingAddress,
@@ -334,7 +339,17 @@ export function upsertParsedOrders(existing: ParsedOrder[], incoming: ParsedOrde
         fulfillment: next.fulfillment ?? previous.fulfillment,
         total: next.total ?? previous.total,
         currency: next.total != null ? (next.currency ?? "USD") : previous.currency,
-        trackingNumber: next.trackingNumber ?? previous.trackingNumber,
+        trackingNumber: preferTracking(next.trackingNumber, previous.trackingNumber),
+        carrier: next.carrier ?? (next.trackingNumber && previous.trackingNumber && next.trackingNumber !== previous.trackingNumber
+          ? detectCarrier(next.trackingNumber)
+          : previous.carrier),
+        expectedDelivery:
+          next.expectedDelivery ??
+          (next.trackingNumber && previous.trackingNumber && next.trackingNumber !== previous.trackingNumber
+            ? undefined
+            : previous.expectedDelivery),
+        expectedDeliveryAt: next.expectedDeliveryAt ?? previous.expectedDeliveryAt,
+        expectedDeliverySource: next.expectedDeliverySource ?? previous.expectedDeliverySource,
         items: mergeOrderItems(previous.items, next.items ?? []) ?? next.items ?? previous.items,
         recipientEmail: next.recipientEmail ?? previous.recipientEmail,
         shippingAddress: mergeOrderAddress(next.shippingAddress, previous.shippingAddress),
@@ -361,23 +376,28 @@ export function attachClassifiedEvents(
     if (!previous) continue;
     const events = dedupeOrderEvents([...previous.events, toEvent(item)]);
     const updatedMs = Math.max(Date.parse(previous.updatedAt) || 0, item.dateMs);
-    const trackingNumber =
-      previous.trackingNumber ||
-      (item.kind === "shipped" || item.kind === "delivered"
-        ? extractTrackingNumber(
+    const hints =
+      item.kind === "shipped" || item.kind === "delivered"
+        ? shipmentHintsFromText(
             item.orderId,
             item.message.subject,
             item.message.snippet ?? "",
             item.message.body ?? "",
             item.message.htmlBody ?? "",
           )
-        : undefined);
+        : undefined;
+    const trackingNumber = preferTracking(hints?.tracking, previous.trackingNumber);
     byOrderId.set(
       previous.id,
       finalizeParsedOrder({
         ...previous,
         fulfillment: item.kind === "picked_up" ? "pickup" : previous.fulfillment ?? "delivery",
         trackingNumber,
+        carrier: hints?.carrier ?? detectCarrier(trackingNumber) ?? previous.carrier,
+        expectedDelivery: hints?.expectedDelivery ?? previous.expectedDelivery,
+        expectedDeliverySource: hints?.expectedDelivery
+          ? "email"
+          : previous.expectedDeliverySource,
         events,
         updatedAt: new Date(updatedMs || Date.now()).toISOString(),
       }),

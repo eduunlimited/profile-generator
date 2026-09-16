@@ -21,6 +21,7 @@ export {
 export {
   extractOrderTotal,
   extractTrackingNumber,
+  shipmentHintsFromText,
   extractOrderItems,
   extractPokemonCenterItems,
   extractPokemonCenterOrderAddress,
@@ -82,6 +83,8 @@ export { formatOrderCardDisplay, matchOrderCardName, orderCardSearchText } from 
 export type { OrderCardDisplay } from "./payment";
 export { refreshTargetOrders } from "./refresh";
 export type { OrderRefreshResult } from "./refresh";
+export { refreshIncomingDeliveryDates } from "./trackingLookup";
+export { carrierLabel, detectCarrier, formatEtaLabel } from "./carrier";
 export {
   groupIncomingHouses,
   filterIncomingHouses,

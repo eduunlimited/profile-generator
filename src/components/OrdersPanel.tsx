@@ -17,6 +17,7 @@ import {
   orderTableItem,
   orderCardSearchText,
   PARSED_ORDER_SITES,
+  refreshIncomingDeliveryDates,
   refreshTargetOrders,
   repairUtf8Mojibake,
   retailerLabel,
@@ -156,7 +157,8 @@ export function OrdersPanel({
     setTone("ok");
     try {
       const result = await refreshTargetOrders();
-      setOrders(result.orders);
+      const withDates = await refreshIncomingDeliveryDates(result.orders);
+      setOrders(withDates);
       setStatus(result.status);
       setTone(result.tone);
       const currentId = activeIdRef.current;
@@ -241,6 +243,8 @@ export function OrdersPanel({
           order.orderId,
           order.status,
           order.trackingNumber ?? "",
+          order.carrier ?? "",
+          order.expectedDelivery ?? "",
           order.recipientEmail ?? "",
           formatItemNames(order),
           itemSearchText(order),
@@ -271,6 +275,17 @@ export function OrdersPanel({
       ),
     [siteOrders, spendPeriod, masterProfiles, profiles, poolEmails, query],
   );
+
+  useEffect(() => {
+    if (listFilter !== "in_transit" || orders.length === 0) return;
+    let cancelled = false;
+    void refreshIncomingDeliveryDates(orders).then((next) => {
+      if (!cancelled && next !== orders) setOrders(next);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [listFilter, orders]);
 
   const active = filtered.find((order) => order.id === activeId) ?? null;
   const showTracking = listFilter !== "cancelled" && filtered.some((order) => order.status !== "cancelled");

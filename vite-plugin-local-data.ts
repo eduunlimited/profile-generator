@@ -36,6 +36,63 @@ export function localDataPlugin(): Plugin {
   return {
     name: "local-data",
     configureServer(server) {
+      server.middlewares.use("/__track", (req, res, next) => {
+        if (req.method !== "POST") {
+          next();
+          return;
+        }
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk: Buffer) => chunks.push(chunk));
+        req.on("end", () => {
+          void (async () => {
+            try {
+              const payload = JSON.parse(Buffer.concat(chunks).toString("utf8")) as {
+                url?: string;
+                method?: string;
+                json?: unknown;
+              };
+              const target = new URL(payload.url ?? "");
+              const host = target.hostname.toLowerCase();
+              const allowed =
+                host === "www.fedex.com" ||
+                host === "www.ups.com" ||
+                host === "webapis.ups.com" ||
+                host === "wwwapps.ups.com" ||
+                host === "tools.usps.com" ||
+                host === "www.usps.com";
+              if (!allowed) {
+                res.statusCode = 400;
+                res.setHeader("Content-Type", "application/json");
+                res.end(JSON.stringify({ status: 0, text: "" }));
+                return;
+              }
+              const response = await fetch(target.toString(), {
+                method: payload.method === "POST" ? "POST" : "GET",
+                headers: {
+                  "User-Agent":
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+                  Accept: "text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8",
+                  "Accept-Language": "en-US,en;q=0.9",
+                  ...(payload.json != null ? { "Content-Type": "application/json" } : {}),
+                },
+                body: payload.json != null ? JSON.stringify(payload.json) : undefined,
+                redirect: "follow",
+                signal: AbortSignal.timeout(15000),
+              });
+              const text = (await response.text()).slice(0, 250_000);
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.setHeader("Cache-Control", "no-store");
+              res.end(JSON.stringify({ status: response.status, text }));
+            } catch {
+              res.statusCode = 200;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ status: 0, text: "" }));
+            }
+          })();
+        });
+      });
+
       server.middlewares.use("/__geocode", (req, res, next) => {
         if (req.method !== "POST") {
           next();

@@ -1,5 +1,6 @@
 import { addressHouseKey } from "../addressCheck";
-import type { MasterProfile, ParsedOrder, PoolEmail, ProfileSummary } from "../types";
+import type { MasterProfile, ParsedOrder, PoolEmail, ProfileSummary, ShipmentCarrier } from "../types";
+import { carrierLabel, detectCarrier, formatEtaLabel } from "./carrier";
 import { isInTransitOrder, retailerLabel } from "./dashboard";
 import { profilesMatchingOrderEmail } from "./performance";
 
@@ -10,7 +11,9 @@ export interface IncomingShipment {
   orderId: string;
   tracking: string;
   site: string;
+  carrier?: ShipmentCarrier;
   eta: string;
+  hasDate: boolean;
 }
 
 export interface IncomingHouse {
@@ -290,11 +293,16 @@ export function masterAddressForOrder(
 }
 
 function toShipment(order: ParsedOrder): IncomingShipment {
+  const tracking = order.trackingNumber?.trim() || "—";
+  const carrier = order.carrier ?? detectCarrier(tracking);
+  const dateLabel = formatEtaLabel(order.expectedDelivery);
   return {
     orderId: order.id,
-    tracking: order.trackingNumber?.trim() || "—",
+    tracking,
     site: retailerLabel(order.retailer),
-    eta: "—",
+    carrier,
+    eta: dateLabel !== "—" ? dateLabel : carrierLabel(carrier) || "—",
+    hasDate: dateLabel !== "—",
   };
 }
 
@@ -335,7 +343,7 @@ export function filterIncomingHouses(houses: IncomingHouse[], query: string): In
     .map((house) => ({
       ...house,
       shipments: house.shipments.filter((shipment) => {
-        const haystack = `${house.addressLine} ${shipment.tracking} ${shipment.site} ${shipment.eta}`.toLowerCase();
+        const haystack = `${house.addressLine} ${shipment.tracking} ${shipment.site} ${shipment.eta} ${carrierLabel(shipment.carrier)}`.toLowerCase();
         return haystack.includes(needle);
       }),
     }))

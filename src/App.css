@@ -4429,7 +4429,7 @@ textarea {
 .orders-incoming-cols,
 .orders-incoming-row {
   display: grid;
-  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr) 7.5rem;
   gap: 12px;
   align-items: center;
   padding: 0 12px;

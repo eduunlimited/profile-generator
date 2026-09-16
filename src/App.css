@@ -4517,9 +4517,17 @@ textarea {
   background: rgba(52, 211, 153, 0.1);
 }
 
+.orders-performance-tiles .order-tile-success:hover {
+  border-color: #34d399;
+}
+
 .orders-performance-tiles .order-tile-danger {
   border-color: var(--danger);
   background: rgba(248, 113, 113, 0.1);
+}
+
+.orders-performance-tiles .order-tile-danger:hover {
+  border-color: var(--danger);
 }
 
 .order-metric-ok {

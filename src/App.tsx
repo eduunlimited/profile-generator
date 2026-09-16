@@ -1002,7 +1002,12 @@ function AppContent() {
 
           {activeTab === "orders" || ordersTabOpened ? (
             <div className={`accounts-panel${activeTab === "orders" ? "" : " is-tab-hidden"}`}>
-              <OrdersPanel profiles={profiles} poolEmails={poolEmails} cards={creditCards} />
+              <OrdersPanel
+                profiles={profiles}
+                masterProfiles={masterProfiles}
+                poolEmails={poolEmails}
+                cards={creditCards}
+              />
             </div>
           ) : null}
 

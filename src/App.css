@@ -4380,6 +4380,119 @@ textarea {
   padding: var(--space-sm) var(--space-md) var(--space-md);
 }
 
+.orders-incoming-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-md);
+  align-items: start;
+}
+
+.orders-incoming-tile {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  border-radius: var(--radius);
+  min-width: 0;
+}
+
+.orders-incoming-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-sm);
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.orders-incoming-head h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orders-incoming-head span {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.orders-incoming-cols,
+.orders-incoming-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  padding: 0 12px;
+}
+
+.orders-incoming-cols {
+  height: 22px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.orders-incoming-list,
+.orders-incoming-list-scroll {
+  height: 84px;
+}
+
+.orders-incoming-list {
+  overflow: hidden;
+}
+
+.orders-incoming-list-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.orders-incoming-row {
+  width: 100%;
+  height: 28px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.orders-incoming-row:hover,
+.orders-incoming-row.is-active {
+  background: var(--cyan-dim);
+}
+
+.orders-incoming-tracking {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  background: transparent;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.orders-incoming-eta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.orders-incoming-eta.has-date {
+  color: var(--text);
+}
+
+.orders-incoming-more {
+  display: flex;
+  justify-content: flex-end;
+  padding: 4px 12px 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
 .orders-performance-overview {
   padding: var(--space-sm) var(--table-content-padding-right) var(--space-md) var(--space-sm);
   overflow: auto;
@@ -4741,6 +4854,10 @@ textarea {
 @media (max-width: 1100px) {
   .orders-tiles {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .orders-incoming-grid {
+    grid-template-columns: 1fr;
   }
 }
 

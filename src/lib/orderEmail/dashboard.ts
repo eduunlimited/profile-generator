@@ -88,6 +88,7 @@ export function isSuccessfulOrder(order: ParsedOrder): boolean {
 }
 
 export function isInTransitOrder(order: ParsedOrder): boolean {
+  if (order.fulfillment === "pickup" || order.status === "picked_up") return false;
   return order.status === "shipped";
 }
 

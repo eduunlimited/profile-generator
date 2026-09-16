@@ -7,6 +7,8 @@ import {
   filterOrdersBySite,
   formatOrderAddress,
   formatOrderMoney,
+  groupIncomingHouses,
+  filterIncomingHouses,
   ORDER_REFRESH_MS,
   ORDER_SITES,
   orderEmailKey,
@@ -28,6 +30,7 @@ import {
 } from "../lib/orderEmail";
 import type {
   CreditCard,
+  MasterProfile,
   OrderEventKind,
   OrderLineItem,
   OrderStatus,
@@ -35,6 +38,7 @@ import type {
   PoolEmail,
   ProfileSummary,
 } from "../lib/types";
+import { IncomingHouseTiles } from "./IncomingHouseTiles";
 import { OrderCardLabel } from "./OrderCardLabel";
 
 const STATUS_LABEL: Record<OrderStatus, string> = {
@@ -118,11 +122,17 @@ function cardNameByEmailMap(profiles: ProfileSummary[], poolEmails: PoolEmail[])
 
 interface OrdersPanelProps {
   profiles: ProfileSummary[];
+  masterProfiles?: MasterProfile[];
   poolEmails?: PoolEmail[];
   cards?: CreditCard[];
 }
 
-export function OrdersPanel({ profiles, poolEmails = [], cards = [] }: OrdersPanelProps) {
+export function OrdersPanel({
+  profiles,
+  masterProfiles = [],
+  poolEmails = [],
+  cards = [],
+}: OrdersPanelProps) {
   const [orders, setOrders] = useState<ParsedOrder[]>([]);
   const [siteFilter, setSiteFilter] = useState<OrderSiteFilter>("all");
   const [query, setQuery] = useState("");
@@ -246,7 +256,22 @@ export function OrdersPanel({ profiles, poolEmails = [], cards = [] }: OrdersPan
     );
   }, [siteOrders, query, listFilter, spendPeriod, emailFilter, cardNames, cards, profiles]);
 
-  const active = filtered.find((order) => order.id === activeId) ?? null;
+  const incomingHouses = useMemo(
+    () =>
+      filterIncomingHouses(
+        groupIncomingHouses(
+          filterOrders(siteOrders, "in_transit", spendPeriod),
+          masterProfiles,
+          profiles,
+          poolEmails,
+        ),
+        query,
+      ),
+    [siteOrders, spendPeriod, masterProfiles, profiles, poolEmails, query],
+  );
+
+  const active =
+    (listFilter === "in_transit" ? orders : filtered).find((order) => order.id === activeId) ?? null;
   const showTracking = listFilter !== "cancelled" && filtered.some((order) => order.status !== "cancelled");
 
   const toggleFilter = (next: OrderListFilter) => {
@@ -266,7 +291,11 @@ export function OrdersPanel({ profiles, poolEmails = [], cards = [] }: OrdersPan
             <button type="button" className="btn-primary" disabled={busy} onClick={() => void runRefresh()}>
               {busy ? "Scanning…" : "Refresh orders"}
             </button>
-            <span className="muted">{filtered.length} shown</span>
+            <span className="muted">
+              {listFilter === "in_transit"
+                ? `${incomingHouses.reduce((sum, house) => sum + house.shipments.length, 0)} shown`
+                : `${filtered.length} shown`}
+            </span>
           </div>
           <input
             className="table-search profiles-table-search"
@@ -396,7 +425,27 @@ export function OrdersPanel({ profiles, poolEmails = [], cards = [] }: OrdersPan
 
       <div className="orders-stack">
         <div className="table-scroll orders-table-scroll">
-          {filtered.length === 0 ? (
+          {listFilter === "in_transit" ? (
+            incomingHouses.length === 0 ? (
+              <p className="table-empty">
+                {siteFilter !== "all" && !PARSED_ORDER_SITES.has(siteFilter)
+                  ? `${siteFilterLabel(siteFilter)} order emails are not parsed yet.`
+                  : query.trim()
+                    ? "No in-transit shipments match this search."
+                    : siteOrders.length > 0
+                      ? `No ${siteFilterLabel(siteFilter)} shipments in transit in this timeframe.`
+                      : orders.length === 0
+                        ? "No orders with a confirmation email yet. Refresh to scan the loaded mail."
+                        : "No in-transit shipments in this timeframe."}
+              </p>
+            ) : (
+              <IncomingHouseTiles
+                houses={incomingHouses}
+                activeId={activeId}
+                onSelect={(id) => setActiveId(activeId === id ? null : id)}
+              />
+            )
+          ) : filtered.length === 0 ? (
             <p className="table-empty">
               {siteFilter !== "all" && !PARSED_ORDER_SITES.has(siteFilter)
                 ? `${siteFilterLabel(siteFilter)} order emails are not parsed yet.`

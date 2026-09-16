@@ -82,3 +82,9 @@ export { formatOrderCardDisplay, matchOrderCardName, orderCardSearchText } from 
 export type { OrderCardDisplay } from "./payment";
 export { refreshTargetOrders } from "./refresh";
 export type { OrderRefreshResult } from "./refresh";
+export {
+  groupIncomingHouses,
+  filterIncomingHouses,
+  INCOMING_VISIBLE_ROWS,
+} from "./incoming";
+export type { IncomingHouse, IncomingShipment } from "./incoming";

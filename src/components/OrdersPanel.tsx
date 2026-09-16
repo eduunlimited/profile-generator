@@ -9,6 +9,7 @@ import {
   formatOrderMoney,
   groupIncomingHouses,
   filterIncomingHouses,
+  masterAddressForOrder,
   ORDER_REFRESH_MS,
   ORDER_SITES,
   orderEmailKey,
@@ -246,6 +247,7 @@ export function OrdersPanel({
           formatItemQty(order),
           cardTitleFor(order),
           formatOrderAddress(order.shippingAddress),
+          masterAddressForOrder(order, masterProfiles, profiles, poolEmails) ?? "",
           order.total != null ? formatTotal(order) : "",
           retailerLabel(order.retailer),
         ]
@@ -254,7 +256,7 @@ export function OrdersPanel({
         return haystack.includes(needle);
       }),
     );
-  }, [siteOrders, query, listFilter, spendPeriod, emailFilter, cardNames, cards, profiles]);
+  }, [siteOrders, query, listFilter, spendPeriod, emailFilter, cardNames, cards, profiles, masterProfiles, poolEmails]);
 
   const incomingHouses = useMemo(
     () =>
@@ -270,8 +272,7 @@ export function OrdersPanel({
     [siteOrders, spendPeriod, masterProfiles, profiles, poolEmails, query],
   );
 
-  const active =
-    (listFilter === "in_transit" ? orders : filtered).find((order) => order.id === activeId) ?? null;
+  const active = filtered.find((order) => order.id === activeId) ?? null;
   const showTracking = listFilter !== "cancelled" && filtered.some((order) => order.status !== "cancelled");
 
   const toggleFilter = (next: OrderListFilter) => {
@@ -291,11 +292,7 @@ export function OrdersPanel({
             <button type="button" className="btn-primary" disabled={busy} onClick={() => void runRefresh()}>
               {busy ? "Scanning…" : "Refresh orders"}
             </button>
-            <span className="muted">
-              {listFilter === "in_transit"
-                ? `${incomingHouses.reduce((sum, house) => sum + house.shipments.length, 0)} shown`
-                : `${filtered.length} shown`}
-            </span>
+            <span className="muted">{`${filtered.length} shown`}</span>
           </div>
           <input
             className="table-search profiles-table-search"
@@ -423,29 +420,19 @@ export function OrdersPanel({
         </div>
       ) : null}
 
+      {listFilter === "in_transit" && incomingHouses.length > 0 ? (
+        <div className="orders-incoming-wrap">
+          <IncomingHouseTiles
+            houses={incomingHouses}
+            activeId={activeId}
+            onSelect={(id) => setActiveId(activeId === id ? null : id)}
+          />
+        </div>
+      ) : null}
+
       <div className="orders-stack">
         <div className="table-scroll orders-table-scroll">
-          {listFilter === "in_transit" ? (
-            incomingHouses.length === 0 ? (
-              <p className="table-empty">
-                {siteFilter !== "all" && !PARSED_ORDER_SITES.has(siteFilter)
-                  ? `${siteFilterLabel(siteFilter)} order emails are not parsed yet.`
-                  : query.trim()
-                    ? "No in-transit shipments match this search."
-                    : siteOrders.length > 0
-                      ? `No ${siteFilterLabel(siteFilter)} shipments in transit in this timeframe.`
-                      : orders.length === 0
-                        ? "No orders with a confirmation email yet. Refresh to scan the loaded mail."
-                        : "No in-transit shipments in this timeframe."}
-              </p>
-            ) : (
-              <IncomingHouseTiles
-                houses={incomingHouses}
-                activeId={activeId}
-                onSelect={(id) => setActiveId(activeId === id ? null : id)}
-              />
-            )
-          ) : filtered.length === 0 ? (
+          {filtered.length === 0 ? (
             <p className="table-empty">
               {siteFilter !== "all" && !PARSED_ORDER_SITES.has(siteFilter)
                 ? `${siteFilterLabel(siteFilter)} order emails are not parsed yet.`

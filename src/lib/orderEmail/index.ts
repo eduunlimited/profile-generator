@@ -85,6 +85,7 @@ export type { OrderRefreshResult } from "./refresh";
 export {
   groupIncomingHouses,
   filterIncomingHouses,
+  masterAddressForOrder,
   INCOMING_VISIBLE_ROWS,
 } from "./incoming";
 export type { IncomingHouse, IncomingShipment } from "./incoming";

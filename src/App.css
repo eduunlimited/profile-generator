@@ -4380,6 +4380,13 @@ textarea {
   padding: var(--space-sm) var(--space-md) var(--space-md);
 }
 
+.orders-incoming-wrap {
+  flex-shrink: 0;
+  padding: 0 var(--space-md);
+  max-height: 240px;
+  overflow: auto;
+}
+
 .orders-incoming-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -4422,7 +4429,7 @@ textarea {
 .orders-incoming-cols,
 .orders-incoming-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 0.9fr) auto;
   gap: 12px;
   align-items: center;
   padding: 0 12px;
@@ -4467,13 +4474,22 @@ textarea {
   background: var(--cyan-dim);
 }
 
+.orders-incoming-tracking,
+.orders-incoming-site {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .orders-incoming-tracking {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 12px;
   background: transparent;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.orders-incoming-site {
+  font-size: 12px;
+  color: var(--text);
 }
 
 .orders-incoming-eta {

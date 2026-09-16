@@ -19,6 +19,7 @@ export function IncomingHouseTiles({ houses, activeId, onSelect }: IncomingHouse
             </header>
             <div className="orders-incoming-cols">
               <span>Tracking</span>
+              <span>Site</span>
               <span>Delivery date</span>
             </div>
             <div className="orders-incoming-list">
@@ -31,6 +32,7 @@ export function IncomingHouseTiles({ houses, activeId, onSelect }: IncomingHouse
                     onClick={() => onSelect(shipment.orderId)}
                   >
                     <span className="orders-incoming-tracking">{shipment.tracking}</span>
+                    <span className="orders-incoming-site">{shipment.site}</span>
                     <span className={`orders-incoming-eta${shipment.eta !== "—" ? " has-date" : ""}`}>
                       {shipment.eta}
                     </span>

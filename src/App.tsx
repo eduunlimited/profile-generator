@@ -202,7 +202,6 @@ function AppContent() {
 
 
   const [activeTab, setActiveTab] = useState<AppTab>("profiles");
-  const [ordersTabOpened, setOrdersTabOpened] = useState(false);
   const [mailTabOpened, setMailTabOpened] = useState(false);
   const [performanceTabOpened, setPerformanceTabOpened] = useState(false);
 
@@ -630,7 +629,6 @@ function AppContent() {
       <AppNav
         activeTab={activeTab}
         onTabChange={(tab) => {
-          if (tab === "orders") setOrdersTabOpened(true);
           if (tab === "mail") setMailTabOpened(true);
           if (tab === "performance") setPerformanceTabOpened(true);
           setActiveTab(tab);
@@ -1000,16 +998,14 @@ function AppContent() {
             </div>
           ) : null}
 
-          {activeTab === "orders" || ordersTabOpened ? (
-            <div className={`accounts-panel${activeTab === "orders" ? "" : " is-tab-hidden"}`}>
-              <OrdersPanel
-                profiles={profiles}
-                masterProfiles={masterProfiles}
-                poolEmails={poolEmails}
-                cards={creditCards}
-              />
-            </div>
-          ) : null}
+          <div className={`accounts-panel${activeTab === "orders" ? "" : " is-tab-hidden"}`}>
+            <OrdersPanel
+              profiles={profiles}
+              masterProfiles={masterProfiles}
+              poolEmails={poolEmails}
+              cards={creditCards}
+            />
+          </div>
 
           {activeTab === "performance" || performanceTabOpened ? (
             <div className={`accounts-panel${activeTab === "performance" ? "" : " is-tab-hidden"}`}>

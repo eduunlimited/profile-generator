@@ -85,18 +85,40 @@ function walkSeventeenTrack(
   }
 }
 
+function tryParseJson(raw: string, objects: unknown[]) {
+  try {
+    objects.push(JSON.parse(raw));
+  } catch {
+    // Keep scanning other captured restapi bodies.
+  }
+}
+
 function jsonObjects(text: string): unknown[] {
   const objects: unknown[] = [];
-  for (const line of text.split("\n")) {
-    const start = line.indexOf("{");
-    if (start < 0) continue;
-    try {
-      objects.push(JSON.parse(line.slice(start).trim()));
-    } catch {
-      // Keep scanning other captured restapi bodies.
-    }
+  for (const block of text.split(/\n(?=\{)/)) {
+    const start = block.indexOf("{");
+    const end = block.lastIndexOf("}");
+    if (start < 0 || end <= start) continue;
+    tryParseJson(block.slice(start, end + 1).trim(), objects);
+  }
+  if (objects.length === 0) {
+    const start = text.indexOf("{");
+    const end = text.lastIndexOf("}");
+    if (start >= 0 && end > start) tryParseJson(text.slice(start, end + 1), objects);
   }
   return objects;
+}
+
+function etaFromShipment(value: unknown): string | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const record = value as Record<string, unknown>;
+  const inner = (record.shipment && typeof record.shipment === "object" ? record.shipment : record) as Record<string, unknown>;
+  const metrics = inner.time_metrics && typeof inner.time_metrics === "object" ? (inner.time_metrics as Record<string, unknown>) : undefined;
+  const window =
+    metrics?.estimated_delivery_date && typeof metrics.estimated_delivery_date === "object"
+      ? (metrics.estimated_delivery_date as Record<string, unknown>)
+      : undefined;
+  return isoFromUnknown(window?.from) ?? isoFromUnknown(window?.to);
 }
 
 function shipmentNumber(value: unknown): string | undefined {
@@ -117,7 +139,7 @@ export function parseSeventeenTrackBatch(
     for (const shipment of shipments) {
       const number = shipmentNumber(shipment);
       if (!number) continue;
-      const found: { eta?: string; carrier?: ShipmentCarrier } = {};
+      const found: { eta?: string; carrier?: ShipmentCarrier } = { eta: etaFromShipment(shipment) };
       walkSeventeenTrack(shipment, found);
       if (!found.carrier) found.carrier = detectCarrier(number);
       const previous = results.get(number);

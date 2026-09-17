@@ -39,16 +39,18 @@ export async function crawlSeventeenTrack(tracking: string, carrierFc?: string):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     });
     const bodies: string[] = [];
-    const gotBody = new Promise<void>((resolve) => {
+    const gotEta = new Promise<void>((resolve) => {
+      const ready = (text: string) =>
+        ids.some((id) => text.includes(id)) &&
+        /"estimated_delivery_date"\s*:\s*\{[\s\S]*?"(?:from|to)"\s*:\s*"\d{4}-\d{2}-\d{2}/.test(text);
       page.on("response", (response) => {
         if (!/\/track\/restapi|\/restapi\/track/i.test(response.url()) || response.status() !== 200) return;
         void response
           .text()
           .then((text) => {
-            if (text && !text.includes('"code":-14')) {
-              bodies.push(text);
-              resolve();
-            }
+            if (!text || text.includes('"code":-14')) return;
+            bodies.push(text);
+            if (ready(text)) resolve();
           })
           .catch(() => undefined);
       });
@@ -59,7 +61,7 @@ export async function crawlSeventeenTrack(tracking: string, carrierFc?: string):
       waitUntil: "domcontentloaded",
       timeout: 25000,
     });
-    await Promise.race([gotBody, new Promise((resolve) => setTimeout(resolve, 12000))]);
+    await Promise.race([gotEta, new Promise((resolve) => setTimeout(resolve, 14000))]);
     const text = await page.evaluate(() => document.body?.innerText ?? "");
     await page.close();
     return {

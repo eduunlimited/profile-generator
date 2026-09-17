@@ -1,46 +1,29 @@
 import { invoke } from "@tauri-apps/api/core";
-import { fetchImapMessage, listImapAccounts, saveOrders } from "../api";
+import { saveOrders } from "../api";
 import { isTauriRuntime } from "../env";
-import { imapAccountToSettings } from "../imapInbox";
 import type { ParsedOrder, ShipmentCarrier } from "../types";
-import {
-  allowedTrackingHost,
-  carrierCandidates,
-  detectCarrier,
-  detectCarrierFromText,
-  normalizeTracking,
-  pageLooksInvalid,
-  pageLooksTracked,
-  parseCarrierPage,
-  preferTracking,
-  trackingUrl,
-} from "./carrier";
+import { allowedTrackingHost, detectCarrier, normalizeTracking } from "./carrier";
 import { isInTransitOrder } from "./dashboard";
 import { finalizeParsedOrder } from "./merge";
-import { shipmentHintsFromText } from "./parse";
-import { parseSeventeenTrack, seventeenTrackUrl } from "./seventeenTrack";
+import { parseSeventeenTrackBatch, seventeenTrackNumbers, seventeenTrackUrl } from "./seventeenTrack";
 
-const CACHE_MS = 6 * 60 * 60 * 1000;
 const MAX_BODY = 250_000;
+const BATCH_SIZE = 40;
 
 export interface TrackingFetchResult {
   status: number;
   text: string;
 }
 
-export interface TrackingEtaResult {
-  tracking: string;
-  carrier?: ShipmentCarrier;
-  eta?: string;
-  source?: "carrier" | "email" | "17track";
+function isUsableId(id: string): boolean {
+  return id.length >= 8 && id !== "—";
 }
 
-function isFresh(order: ParsedOrder): boolean {
-  const stamped = Date.parse(order.expectedDeliveryAt ?? "");
-  if (!Number.isFinite(stamped)) return false;
-  const age = Date.now() - stamped;
-  if (order.expectedDelivery) return age < CACHE_MS;
-  return age < 10 * 60 * 1000;
+function missingDateOrders(orders: ParsedOrder[]): ParsedOrder[] {
+  return orders.filter((order) => {
+    if (!isInTransitOrder(order) || order.expectedDelivery) return false;
+    return isUsableId(normalizeTracking(order.trackingNumber ?? ""));
+  });
 }
 
 function applyShipmentFields(
@@ -53,44 +36,33 @@ function applyShipmentFields(
     stamp?: boolean;
   },
 ): ParsedOrder {
-  const tracking = preferTracking(patch.tracking, order.trackingNumber) ?? order.trackingNumber;
+  const tracking = patch.tracking ?? order.trackingNumber;
   const carrier = patch.carrier ?? detectCarrier(tracking) ?? order.carrier;
   const expectedDelivery = patch.expectedDelivery ?? order.expectedDelivery;
-  const source = patch.expectedDelivery
-    ? patch.source
-    : order.expectedDeliverySource;
   return finalizeParsedOrder({
     ...order,
     trackingNumber: tracking,
     carrier,
     expectedDelivery,
-    expectedDeliverySource: source,
+    expectedDeliverySource: patch.expectedDelivery ? patch.source : order.expectedDeliverySource,
     expectedDeliveryAt: patch.stamp ? new Date().toISOString() : order.expectedDeliveryAt,
   });
 }
 
-async function fetchTrackingPage(url: string, init?: { method?: string; json?: unknown }): Promise<TrackingFetchResult> {
+async function fetchTrackingPage(url: string): Promise<TrackingFetchResult> {
   const parsed = new URL(url);
   if (!allowedTrackingHost(parsed.host)) {
     return { status: 0, text: "" };
   }
   if (isTauriRuntime()) {
     return invoke<TrackingFetchResult>("fetch_tracking_page", {
-      request: {
-        url,
-        method: init?.method ?? "GET",
-        body: init?.json != null ? JSON.stringify(init.json) : undefined,
-      },
+      request: { url, method: "GET" },
     });
   }
   const response = await fetch("/__track", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      url,
-      method: init?.method ?? "GET",
-      json: init?.json,
-    }),
+    body: JSON.stringify({ url, method: "GET" }),
   });
   const body = (await response.json().catch(() => null)) as TrackingFetchResult | null;
   return {
@@ -99,82 +71,23 @@ async function fetchTrackingPage(url: string, init?: { method?: string; json?: u
   };
 }
 
-async function lookupSeventeenTrack(tracking: string): Promise<TrackingEtaResult> {
-  const id = normalizeTracking(tracking);
-  try {
-    const page = await fetchTrackingPage(seventeenTrackUrl(id));
-    if (!page.text) return { tracking: id, carrier: detectCarrier(id) };
-    const parsed = parseSeventeenTrack(page.text, id);
-    return {
-      tracking: id,
-      carrier: parsed.carrier ?? detectCarrier(id),
-      eta: parsed.eta,
-      source: parsed.eta ? "17track" : undefined,
-    };
-  } catch {
-    return { tracking: id, carrier: detectCarrier(id) };
-  }
-}
-
-async function lookupCarrierEta(tracking: string): Promise<TrackingEtaResult> {
-  const id = normalizeTracking(tracking);
-  const from17 = await lookupSeventeenTrack(id);
-  if (from17.eta) return from17;
-  const detected = from17.carrier ?? detectCarrier(id);
-  if (!isUsableId(id)) return { tracking: id, carrier: detected };
-
-  for (const carrier of carrierCandidates(id)) {
-    if (carrier === "ups") {
-      const api = await fetchTrackingPage("https://www.ups.com/track/api/Track/GetStatus?loc=en_US", {
-        method: "POST",
-        json: { Locale: "en_US", TrackingNumber: [id] },
-      });
-      const eta = parseCarrierPage(api.text);
-      if (eta) return { tracking: id, carrier, eta, source: "carrier" };
-    }
-
-    const page = await fetchTrackingPage(trackingUrl(carrier, id));
-    if (!page.text || pageLooksInvalid(page.text)) continue;
-    const eta = parseCarrierPage(page.text);
-    if (eta || pageLooksTracked(page.text)) {
-      return { tracking: id, carrier, eta, source: eta ? "carrier" : undefined };
+async function lookupSeventeenTrackBatch(
+  trackings: string[],
+): Promise<Map<string, { eta?: string; carrier?: ShipmentCarrier }>> {
+  const results = new Map<string, { eta?: string; carrier?: ShipmentCarrier }>();
+  const ids = seventeenTrackNumbers(trackings);
+  for (let index = 0; index < ids.length; index += BATCH_SIZE) {
+    const chunk = ids.slice(index, index + BATCH_SIZE);
+    try {
+      const page = await fetchTrackingPage(seventeenTrackUrl(chunk));
+      for (const [tracking, parsed] of parseSeventeenTrackBatch(page.text)) {
+        results.set(tracking, parsed);
+      }
+    } catch {
+      // Keep any numbers already parsed from earlier chunks.
     }
   }
-
-  return { tracking: id, carrier: detected };
-}
-
-function isUsableId(id: string): boolean {
-  return id.length >= 8 && id !== "—";
-}
-
-async function enrichFromShippedEmail(order: ParsedOrder): Promise<ParsedOrder> {
-  const shipped = [...order.events].reverse().find((event) => event.kind === "shipped");
-  if (!shipped) return order;
-  const accounts = await listImapAccounts();
-  const account = accounts.find((item) => item.id === shipped.accountId);
-  if (!account) return order;
-  try {
-    const full = await fetchImapMessage(imapAccountToSettings(account), shipped.uid);
-    const hints = shipmentHintsFromText(
-      order.orderId,
-      full.htmlBody ?? "",
-      full.body ?? "",
-      full.subject ?? "",
-      full.snippet ?? "",
-    );
-    return applyShipmentFields(order, {
-      tracking: hints.tracking,
-      carrier: hints.carrier ?? detectCarrierFromText(
-        [full.htmlBody ?? "", full.body ?? "", full.subject ?? ""].join("\n"),
-        hints.tracking ?? order.trackingNumber,
-      ),
-      expectedDelivery: hints.expectedDelivery,
-      source: hints.expectedDelivery ? "email" : undefined,
-    });
-  } catch {
-    return order;
-  }
+  return results;
 }
 
 function orderChanged(previous: ParsedOrder, next: ParsedOrder): boolean {
@@ -191,13 +104,13 @@ let inflight: Promise<ParsedOrder[]> | null = null;
 let inflightKey = "";
 
 export async function refreshIncomingDeliveryDates(orders: ParsedOrder[]): Promise<ParsedOrder[]> {
-  const targets = orders.filter(isInTransitOrder);
-  if (targets.length === 0) return orders;
-  if (targets.every((order) => isFresh(order) && order.carrier)) return orders;
-  const key = targets.map((order) => `${order.id}:${order.trackingNumber ?? ""}`).join("|");
+  const missing = missingDateOrders(orders);
+  if (missing.length === 0) return orders;
+  const key = seventeenTrackNumbers(missing.map((order) => order.trackingNumber ?? "")).join(",");
+  if (!key) return orders;
   if (inflight && inflightKey === key) return inflight;
   inflightKey = key;
-  inflight = refreshIncomingDeliveryDatesInner(orders, targets).finally(() => {
+  inflight = refreshIncomingDeliveryDatesInner(orders, missing).finally(() => {
     if (inflightKey === key) inflight = null;
   });
   return inflight;
@@ -205,42 +118,23 @@ export async function refreshIncomingDeliveryDates(orders: ParsedOrder[]): Promi
 
 async function refreshIncomingDeliveryDatesInner(
   orders: ParsedOrder[],
-  targets: ParsedOrder[],
+  missing: ParsedOrder[],
 ): Promise<ParsedOrder[]> {
-
+  const lookups = await lookupSeventeenTrackBatch(missing.map((order) => order.trackingNumber ?? ""));
   let changed = false;
   const next = [...orders];
   const byId = new Map(next.map((order, index) => [order.id, index]));
 
-  for (const order of targets) {
-    if (isFresh(order)) continue;
-    let updated = order;
-    if (!isFresh(order) || !order.expectedDelivery || trackingStrengthNeeded(order)) {
-      updated = await enrichFromShippedEmail(updated);
-    }
-    const tracking = updated.trackingNumber;
-    if (tracking && isUsableId(normalizeTracking(tracking))) {
-      try {
-        const lookup = await lookupCarrierEta(tracking);
-        updated = applyShipmentFields(updated, {
-          tracking: lookup.tracking,
-          carrier: lookup.carrier,
-          expectedDelivery: lookup.eta,
-          source: lookup.eta ? "carrier" : updated.expectedDelivery ? updated.expectedDeliverySource : undefined,
-          stamp: true,
-        });
-      } catch {
-        updated = applyShipmentFields(updated, {
-          carrier: updated.carrier ?? detectCarrier(tracking),
-          stamp: true,
-        });
-      }
-    } else {
-      updated = applyShipmentFields(updated, {
-        carrier: updated.carrier,
-        stamp: true,
-      });
-    }
+  for (const order of missing) {
+    const tracking = normalizeTracking(order.trackingNumber ?? "");
+    const lookup = lookups.get(tracking);
+    const updated = applyShipmentFields(order, {
+      tracking,
+      carrier: lookup?.carrier ?? detectCarrier(tracking) ?? order.carrier,
+      expectedDelivery: lookup?.eta,
+      source: lookup?.eta ? "17track" : undefined,
+      stamp: true,
+    });
     if (!orderChanged(order, updated)) continue;
     const index = byId.get(order.id);
     if (index == null) continue;
@@ -251,9 +145,4 @@ async function refreshIncomingDeliveryDatesInner(
   if (!changed) return orders;
   await saveOrders(next);
   return next;
-}
-
-function trackingStrengthNeeded(order: ParsedOrder): boolean {
-  const id = normalizeTracking(order.trackingNumber ?? "");
-  return /^\d{12}$/.test(id);
 }

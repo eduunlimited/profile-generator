@@ -275,17 +275,31 @@ export function OrdersPanel({
       ),
     [siteOrders, spendPeriod, masterProfiles, profiles, poolEmails, query],
   );
+  const missingTileTrackings = useMemo(
+    () =>
+      listFilter === "in_transit"
+        ? incomingHouses
+            .flatMap((house) => house.shipments)
+            .filter((shipment) => !shipment.hasDate && shipment.tracking !== "—")
+            .map((shipment) => shipment.tracking)
+            .sort()
+            .join(",")
+        : "",
+    [incomingHouses, listFilter],
+  );
+  const ordersRef = useRef(orders);
+  ordersRef.current = orders;
 
   useEffect(() => {
-    if (listFilter !== "in_transit" || orders.length === 0) return;
+    if (!missingTileTrackings) return;
     let cancelled = false;
-    void refreshIncomingDeliveryDates(orders).then((next) => {
-      if (!cancelled && next !== orders) setOrders(next);
+    void refreshIncomingDeliveryDates(ordersRef.current).then((next) => {
+      if (!cancelled && next !== ordersRef.current) setOrders(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [listFilter, orders]);
+  }, [missingTileTrackings]);
 
   const active = filtered.find((order) => order.id === activeId) ?? null;
   const showTracking = listFilter !== "cancelled" && filtered.some((order) => order.status !== "cancelled");

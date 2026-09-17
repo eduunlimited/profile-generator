@@ -23,8 +23,11 @@ async function launchBrowser(): Promise<Browser | null> {
 }
 
 export async function crawlSeventeenTrack(tracking: string): Promise<{ status: number; text: string }> {
-  const id = tracking.replace(/[\s-]/g, "").toUpperCase();
-  if (!id) return EMPTY;
+  const ids = tracking
+    .split(/[,\s]+/)
+    .map((value) => value.replace(/[\s-]/g, "").toUpperCase())
+    .filter((id, index, all) => id.length >= 8 && all.indexOf(id) === index);
+  if (ids.length === 0) return EMPTY;
 
   const browser = await launchBrowser();
   if (!browser) return EMPTY;
@@ -51,11 +54,11 @@ export async function crawlSeventeenTrack(tracking: string): Promise<{ status: n
       });
     });
 
-    await page.goto(`https://t.17track.net/en#nums=${encodeURIComponent(id)}`, {
+    await page.goto(`https://t.17track.net/en#nums=${ids.map((id) => encodeURIComponent(id)).join(",")}`, {
       waitUntil: "domcontentloaded",
       timeout: 25000,
     });
-    await Promise.race([gotBody, new Promise((resolve) => setTimeout(resolve, 8000))]);
+    await Promise.race([gotBody, new Promise((resolve) => setTimeout(resolve, 12000))]);
     const text = await page.evaluate(() => document.body?.innerText ?? "");
     await page.close();
     return {

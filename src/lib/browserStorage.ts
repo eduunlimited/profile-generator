@@ -1314,7 +1314,9 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
     expectedDelivery: /^\d{4}-\d{2}-\d{2}$/.test(raw.expectedDelivery ?? "") ? raw.expectedDelivery : undefined,
     expectedDeliveryAt: raw.expectedDeliveryAt?.trim() || undefined,
     expectedDeliverySource:
-      raw.expectedDeliverySource === "carrier" || raw.expectedDeliverySource === "email"
+      raw.expectedDeliverySource === "carrier" ||
+      raw.expectedDeliverySource === "email" ||
+      raw.expectedDeliverySource === "17track"
         ? raw.expectedDeliverySource
         : undefined,
     items: (() => {

@@ -40,6 +40,7 @@ const CONTEXT_PATTERNS = [
   new RegExp(`(?:arriving|arrives|arrive)\\s+(?:by|on)\\s+(${DATE_TOKEN})`, "i"),
   new RegExp(`delivered(?:\\s+(?:on|by))?\\s*[:\\-–]?\\s*(${DATE_TOKEN})`, "i"),
   new RegExp(`delivery date\\s*[:\\-–]?\\s*(${DATE_TOKEN})`, "i"),
+  /estimated delivery time:\s*(\d{4}-\d{2}-\d{2})(?:\s*-\s*\d{4}-\d{2}-\d{2})?/i,
   new RegExp(
     `your package has been delivered[\\s\\S]{0,240}?(${DATE_TOKEN})`,
     "i",
@@ -142,7 +143,9 @@ export function allowedTrackingHost(host: string): boolean {
     host === "webapis.ups.com" ||
     host === "wwwapps.ups.com" ||
     host === "tools.usps.com" ||
-    host === "www.usps.com"
+    host === "www.usps.com" ||
+    host === "t.17track.net" ||
+    host === "www.17track.net"
   );
 }
 

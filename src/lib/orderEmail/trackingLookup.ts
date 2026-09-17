@@ -18,6 +18,7 @@ import {
 import { isInTransitOrder } from "./dashboard";
 import { finalizeParsedOrder } from "./merge";
 import { shipmentHintsFromText } from "./parse";
+import { parseSeventeenTrack, seventeenTrackUrl } from "./seventeenTrack";
 
 const CACHE_MS = 6 * 60 * 60 * 1000;
 const MAX_BODY = 250_000;
@@ -31,12 +32,15 @@ export interface TrackingEtaResult {
   tracking: string;
   carrier?: ShipmentCarrier;
   eta?: string;
-  source?: "carrier" | "email";
+  source?: "carrier" | "email" | "17track";
 }
 
 function isFresh(order: ParsedOrder): boolean {
   const stamped = Date.parse(order.expectedDeliveryAt ?? "");
-  return Number.isFinite(stamped) && Date.now() - stamped < CACHE_MS;
+  if (!Number.isFinite(stamped)) return false;
+  const age = Date.now() - stamped;
+  if (order.expectedDelivery) return age < CACHE_MS;
+  return age < 10 * 60 * 1000;
 }
 
 function applyShipmentFields(
@@ -45,7 +49,7 @@ function applyShipmentFields(
     tracking?: string;
     carrier?: ShipmentCarrier;
     expectedDelivery?: string;
-    source?: "carrier" | "email";
+    source?: "carrier" | "email" | "17track";
     stamp?: boolean;
   },
 ): ParsedOrder {
@@ -95,10 +99,29 @@ async function fetchTrackingPage(url: string, init?: { method?: string; json?: u
   };
 }
 
+async function lookupSeventeenTrack(tracking: string): Promise<TrackingEtaResult> {
+  const id = normalizeTracking(tracking);
+  try {
+    const page = await fetchTrackingPage(seventeenTrackUrl(id));
+    if (!page.text) return { tracking: id, carrier: detectCarrier(id) };
+    const parsed = parseSeventeenTrack(page.text, id);
+    return {
+      tracking: id,
+      carrier: parsed.carrier ?? detectCarrier(id),
+      eta: parsed.eta,
+      source: parsed.eta ? "17track" : undefined,
+    };
+  } catch {
+    return { tracking: id, carrier: detectCarrier(id) };
+  }
+}
+
 async function lookupCarrierEta(tracking: string): Promise<TrackingEtaResult> {
   const id = normalizeTracking(tracking);
-  const detected = detectCarrier(id);
-  if (!isUsableId(id)) return { tracking: id };
+  const from17 = await lookupSeventeenTrack(id);
+  if (from17.eta) return from17;
+  const detected = from17.carrier ?? detectCarrier(id);
+  if (!isUsableId(id)) return { tracking: id, carrier: detected };
 
   for (const carrier of carrierCandidates(id)) {
     if (carrier === "ups") {

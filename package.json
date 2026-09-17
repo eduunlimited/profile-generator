@@ -1,7 +1,7 @@
 {
   "name": "profile-generator",
   "private": true,
-  "version": "0.2.109",
+  "version": "0.2.110",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -34,6 +34,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.6.0",
     "imapflow": "^2.0.0",
+    "playwright-core": "^1.63.0",
     "typescript": "~5.8.3",
     "vite": "^7.0.4"
   }

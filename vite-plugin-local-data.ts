@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
+import { crawlSeventeenTrack } from "./vite-17track-crawl";
 
 const DATA_ROUTE = "/__data";
 
@@ -59,11 +60,29 @@ export function localDataPlugin(): Plugin {
                 host === "webapis.ups.com" ||
                 host === "wwwapps.ups.com" ||
                 host === "tools.usps.com" ||
-                host === "www.usps.com";
+                host === "www.usps.com" ||
+                host === "t.17track.net" ||
+                host === "www.17track.net";
               if (!allowed) {
                 res.statusCode = 400;
                 res.setHeader("Content-Type", "application/json");
                 res.end(JSON.stringify({ status: 0, text: "" }));
+                return;
+              }
+              const tracking =
+                target.hash.match(/nums=([^&]+)/i)?.[1] ??
+                target.searchParams.get("nums") ??
+                (payload.json && typeof payload.json === "object"
+                  ? String(
+                      (payload.json as { data?: Array<{ num?: string }> }).data?.[0]?.num ?? "",
+                    )
+                  : "");
+              if (host.endsWith("17track.net") && tracking) {
+                const crawled = await crawlSeventeenTrack(decodeURIComponent(tracking));
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.setHeader("Cache-Control", "no-store");
+                res.end(JSON.stringify(crawled));
                 return;
               }
               const response = await fetch(target.toString(), {

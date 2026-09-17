@@ -593,7 +593,7 @@ export interface ParsedOrder {
   carrier?: ShipmentCarrier;
   expectedDelivery?: string;
   expectedDeliveryAt?: string;
-  expectedDeliverySource?: "carrier" | "email";
+  expectedDeliverySource?: "carrier" | "email" | "17track";
   items?: OrderLineItem[];
   recipientEmail?: string;
   shippingAddress?: OrderAddress;

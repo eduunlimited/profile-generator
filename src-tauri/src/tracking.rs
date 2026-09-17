@@ -24,6 +24,8 @@ fn allowed_host(host: &str) -> bool {
             | "wwwapps.ups.com"
             | "tools.usps.com"
             | "www.usps.com"
+            | "t.17track.net"
+            | "www.17track.net"
     )
 }
 

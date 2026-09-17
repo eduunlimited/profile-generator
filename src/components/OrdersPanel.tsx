@@ -277,10 +277,10 @@ export function OrdersPanel({
       ),
     [siteOrders, masterProfiles, profiles, poolEmails, query],
   );
-  const missingTrackingsKey = useMemo(
+  const incomingTrackingsKey = useMemo(
     () =>
       orders
-        .filter((order) => isInTransitOrder(order) && !order.expectedDelivery && (order.trackingNumber?.trim() ?? "") !== "")
+        .filter((order) => isInTransitOrder(order) && (order.trackingNumber?.trim() ?? "") !== "")
         .map((order) => order.trackingNumber?.trim() ?? "")
         .sort()
         .join(","),
@@ -290,7 +290,7 @@ export function OrdersPanel({
   ordersRef.current = orders;
 
   useEffect(() => {
-    if (listFilter !== "in_transit" || !missingTrackingsKey) return;
+    if (listFilter !== "in_transit" || !incomingTrackingsKey) return;
     let cancelled = false;
     const run = () => {
       void refreshIncomingDeliveryDates(ordersRef.current).then((next) => {
@@ -303,7 +303,7 @@ export function OrdersPanel({
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [listFilter, missingTrackingsKey]);
+  }, [listFilter, incomingTrackingsKey]);
 
   const active = filtered.find((order) => order.id === activeId) ?? null;
   const showTracking = listFilter !== "cancelled" && filtered.some((order) => order.status !== "cancelled");

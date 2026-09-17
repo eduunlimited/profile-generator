@@ -10,6 +10,7 @@ import {
   seventeenTrackCarrierFcs,
   seventeenTrackNumbers,
   seventeenTrackUrl,
+  type SeventeenTrackParsed,
 } from "./seventeenTrack";
 
 const MAX_BODY = 250_000;
@@ -24,11 +25,17 @@ function isUsableId(id: string): boolean {
   return id.length >= 8 && id !== "—";
 }
 
-function missingDateOrders(orders: ParsedOrder[]): ParsedOrder[] {
+function incomingTrackOrders(orders: ParsedOrder[]): ParsedOrder[] {
   return orders.filter((order) => {
-    if (!isInTransitOrder(order) || order.expectedDelivery) return false;
+    if (!isInTransitOrder(order)) return false;
     return isUsableId(normalizeTracking(order.trackingNumber ?? ""));
   });
+}
+
+function syntheticUid(tracking: string): number {
+  let hash = 0;
+  for (const char of tracking) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return 1_700_000_000 + (hash % 99_000_000);
 }
 
 function applyShipmentFields(
@@ -39,11 +46,27 @@ function applyShipmentFields(
     expectedDelivery?: string;
     source?: "carrier" | "email" | "17track";
     stamp?: boolean;
+    delivered?: boolean;
+    deliveredAt?: string;
   },
 ): ParsedOrder {
   const tracking = patch.tracking ?? order.trackingNumber;
   const carrier = patch.carrier ?? detectCarrier(tracking) ?? order.carrier;
   const expectedDelivery = patch.expectedDelivery ?? order.expectedDelivery;
+  const events = [...order.events];
+  if (patch.delivered && !events.some((event) => event.kind === "delivered")) {
+    const base = events.find((event) => event.accountId) ?? events[0];
+    const when = patch.deliveredAt ? new Date(`${patch.deliveredAt}T12:00:00`) : new Date();
+    events.push({
+      kind: "delivered",
+      accountId: base?.accountId || "17track",
+      uid: syntheticUid(normalizeTracking(tracking ?? "")),
+      messageId: `17track:delivered:${normalizeTracking(tracking ?? "")}`,
+      subject: `Delivered · ${normalizeTracking(tracking ?? "")}`,
+      date: Number.isNaN(when.getTime()) ? new Date().toISOString() : when.toISOString(),
+      dateMs: Number.isNaN(when.getTime()) ? Date.now() : when.getTime(),
+    });
+  }
   return finalizeParsedOrder({
     ...order,
     trackingNumber: tracking,
@@ -51,6 +74,8 @@ function applyShipmentFields(
     expectedDelivery,
     expectedDeliverySource: patch.expectedDelivery ? patch.source : order.expectedDeliverySource,
     expectedDeliveryAt: patch.stamp ? new Date().toISOString() : order.expectedDeliveryAt,
+    updatedAt: patch.delivered ? new Date().toISOString() : order.updatedAt,
+    events,
   });
 }
 
@@ -76,34 +101,37 @@ async function fetchTrackingPage(url: string): Promise<TrackingFetchResult> {
   };
 }
 
-async function lookupSeventeenTrackBatch(
-  trackings: string[],
-): Promise<Map<string, { eta?: string; carrier?: ShipmentCarrier }>> {
-  const results = new Map<string, { eta?: string; carrier?: ShipmentCarrier }>();
+function mergeParsed(previous: SeventeenTrackParsed | undefined, parsed: SeventeenTrackParsed): SeventeenTrackParsed {
+  return {
+    eta: parsed.eta ?? previous?.eta,
+    carrier: parsed.carrier ?? previous?.carrier,
+    delivered: parsed.delivered || previous?.delivered,
+    deliveredAt: parsed.deliveredAt ?? previous?.deliveredAt,
+  };
+}
+
+async function lookupSeventeenTrackBatch(trackings: string[]): Promise<Map<string, SeventeenTrackParsed>> {
+  const results = new Map<string, SeventeenTrackParsed>();
   const ids = seventeenTrackNumbers(trackings);
   for (let index = 0; index < ids.length; index += BATCH_SIZE) {
     const chunk = ids.slice(index, index + BATCH_SIZE);
     try {
       const page = await fetchTrackingPage(seventeenTrackUrl(chunk));
       for (const [tracking, parsed] of parseSeventeenTrackBatch(page.text)) {
-        results.set(tracking, parsed);
+        results.set(tracking, mergeParsed(results.get(tracking), parsed));
       }
     } catch {
       // Keep any numbers already parsed from earlier chunks.
     }
-    const unresolved = chunk.filter((id) => !results.get(id)?.eta);
+    const unresolved = chunk.filter((id) => !results.get(id)?.eta && !results.get(id)?.delivered);
     for (const id of unresolved) {
       const fcs = seventeenTrackCarrierFcs(detectCarrier(id) ?? results.get(id)?.carrier);
       for (const fc of fcs) {
-        if (results.get(id)?.eta) break;
+        if (results.get(id)?.eta || results.get(id)?.delivered) break;
         try {
           const page = await fetchTrackingPage(seventeenTrackUrl(id, fc));
           for (const [tracking, parsed] of parseSeventeenTrackBatch(page.text)) {
-            const previous = results.get(tracking);
-            results.set(tracking, {
-              eta: parsed.eta ?? previous?.eta,
-              carrier: parsed.carrier ?? previous?.carrier,
-            });
+            results.set(tracking, mergeParsed(results.get(tracking), parsed));
           }
         } catch {
           // Leave this number for a later pass.
@@ -116,11 +144,13 @@ async function lookupSeventeenTrackBatch(
 
 function orderChanged(previous: ParsedOrder, next: ParsedOrder): boolean {
   return (
+    previous.status !== next.status ||
     previous.trackingNumber !== next.trackingNumber ||
     previous.carrier !== next.carrier ||
     previous.expectedDelivery !== next.expectedDelivery ||
     previous.expectedDeliveryAt !== next.expectedDeliveryAt ||
-    previous.expectedDeliverySource !== next.expectedDeliverySource
+    previous.expectedDeliverySource !== next.expectedDeliverySource ||
+    previous.events.length !== next.events.length
   );
 }
 
@@ -128,13 +158,13 @@ let inflight: Promise<ParsedOrder[]> | null = null;
 let inflightKey = "";
 
 export async function refreshIncomingDeliveryDates(orders: ParsedOrder[]): Promise<ParsedOrder[]> {
-  const missing = missingDateOrders(orders);
-  if (missing.length === 0) return orders;
-  const key = seventeenTrackNumbers(missing.map((order) => order.trackingNumber ?? "")).join(",");
+  const incoming = incomingTrackOrders(orders);
+  if (incoming.length === 0) return orders;
+  const key = seventeenTrackNumbers(incoming.map((order) => order.trackingNumber ?? "")).join(",");
   if (!key) return orders;
   if (inflight && inflightKey === key) return inflight;
   inflightKey = key;
-  inflight = refreshIncomingDeliveryDatesInner(orders, missing).finally(() => {
+  inflight = refreshIncomingDeliveryDatesInner(orders, incoming).finally(() => {
     if (inflightKey === key) inflight = null;
   });
   return inflight;
@@ -142,14 +172,14 @@ export async function refreshIncomingDeliveryDates(orders: ParsedOrder[]): Promi
 
 async function refreshIncomingDeliveryDatesInner(
   orders: ParsedOrder[],
-  missing: ParsedOrder[],
+  incoming: ParsedOrder[],
 ): Promise<ParsedOrder[]> {
-  const lookups = await lookupSeventeenTrackBatch(missing.map((order) => order.trackingNumber ?? ""));
+  const lookups = await lookupSeventeenTrackBatch(incoming.map((order) => order.trackingNumber ?? ""));
   let changed = false;
   const next = [...orders];
   const byId = new Map(next.map((order, index) => [order.id, index]));
 
-  for (const order of missing) {
+  for (const order of incoming) {
     const tracking = normalizeTracking(order.trackingNumber ?? "");
     const lookup = lookups.get(tracking);
     const updated = applyShipmentFields(order, {
@@ -158,6 +188,8 @@ async function refreshIncomingDeliveryDatesInner(
       expectedDelivery: lookup?.eta,
       source: lookup?.eta ? "17track" : undefined,
       stamp: Boolean(lookup?.eta),
+      delivered: lookup?.delivered,
+      deliveredAt: lookup?.deliveredAt,
     });
     if (!orderChanged(order, updated)) continue;
     const index = byId.get(order.id);

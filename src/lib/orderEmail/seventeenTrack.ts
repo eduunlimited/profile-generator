@@ -55,9 +55,16 @@ function isoFromUnknown(value: unknown): string | undefined {
   return value.match(/(\d{4}-\d{2}-\d{2})/)?.[1];
 }
 
+export interface SeventeenTrackParsed {
+  eta?: string;
+  carrier?: ShipmentCarrier;
+  delivered?: boolean;
+  deliveredAt?: string;
+}
+
 function walkSeventeenTrack(
   value: unknown,
-  found: { eta?: string; carrier?: ShipmentCarrier },
+  found: SeventeenTrackParsed,
   depth = 0,
 ) {
   if (!value || depth > 8) return;
@@ -75,6 +82,9 @@ function walkSeventeenTrack(
     }
     if (!found.eta && /est.*(deliv|arriva)|deliv.*(date|time)|time_from|time_to/.test(lower)) {
       found.eta = isoFromUnknown(nested);
+    }
+    if (!found.delivered && lower === "status" && typeof nested === "string" && /^delivered$/i.test(nested)) {
+      found.delivered = true;
     }
     if (!found.carrier && (lower === "carrier" || lower === "name" || lower === "alias")) {
       if (typeof nested === "number" || typeof nested === "string") {
@@ -109,16 +119,44 @@ function jsonObjects(text: string): unknown[] {
   return objects;
 }
 
-function etaFromShipment(value: unknown): string | undefined {
+function shipmentInner(value: unknown): Record<string, unknown> | undefined {
   if (!value || typeof value !== "object") return undefined;
   const record = value as Record<string, unknown>;
-  const inner = (record.shipment && typeof record.shipment === "object" ? record.shipment : record) as Record<string, unknown>;
-  const metrics = inner.time_metrics && typeof inner.time_metrics === "object" ? (inner.time_metrics as Record<string, unknown>) : undefined;
+  const inner = record.shipment && typeof record.shipment === "object" ? (record.shipment as Record<string, unknown>) : record;
+  return inner;
+}
+
+function etaFromShipment(value: unknown): string | undefined {
+  const inner = shipmentInner(value);
+  const metrics = inner?.time_metrics && typeof inner.time_metrics === "object" ? (inner.time_metrics as Record<string, unknown>) : undefined;
   const window =
     metrics?.estimated_delivery_date && typeof metrics.estimated_delivery_date === "object"
       ? (metrics.estimated_delivery_date as Record<string, unknown>)
       : undefined;
   return isoFromUnknown(window?.from) ?? isoFromUnknown(window?.to);
+}
+
+function deliveredFromShipment(value: unknown): { delivered?: boolean; deliveredAt?: string } {
+  const inner = shipmentInner(value);
+  if (!inner) return {};
+  const latest = inner.latest_status && typeof inner.latest_status === "object" ? (inner.latest_status as Record<string, unknown>) : undefined;
+  const latestEvent = inner.latest_event && typeof inner.latest_event === "object" ? (inner.latest_event as Record<string, unknown>) : undefined;
+  const milestones = Array.isArray(inner.milestone) ? inner.milestone : [];
+  const deliveredMilestone = milestones.find((item) => {
+    if (!item || typeof item !== "object") return false;
+    const row = item as Record<string, unknown>;
+    return String(row.key_stage ?? "") === "Delivered" && (row.time_iso || row.time_utc);
+  }) as Record<string, unknown> | undefined;
+  const delivered = /^delivered$/i.test(String(latest?.status ?? "")) || Boolean(deliveredMilestone);
+  if (!delivered) return {};
+  return {
+    delivered: true,
+    deliveredAt:
+      isoFromUnknown(deliveredMilestone?.time_iso) ??
+      isoFromUnknown(deliveredMilestone?.time_utc) ??
+      isoFromUnknown(latestEvent?.time_iso) ??
+      isoFromUnknown(latestEvent?.time_utc),
+  };
 }
 
 function shipmentNumber(value: unknown): string | undefined {
@@ -128,10 +166,8 @@ function shipmentNumber(value: unknown): string | undefined {
   return typeof raw === "string" || typeof raw === "number" ? String(raw).replace(/[\s-]/g, "").toUpperCase() : undefined;
 }
 
-export function parseSeventeenTrackBatch(
-  text: string,
-): Map<string, { eta?: string; carrier?: ShipmentCarrier }> {
-  const results = new Map<string, { eta?: string; carrier?: ShipmentCarrier }>();
+export function parseSeventeenTrackBatch(text: string): Map<string, SeventeenTrackParsed> {
+  const results = new Map<string, SeventeenTrackParsed>();
   for (const json of jsonObjects(text)) {
     if (!json || typeof json !== "object") continue;
     const record = json as Record<string, unknown>;
@@ -139,23 +175,22 @@ export function parseSeventeenTrackBatch(
     for (const shipment of shipments) {
       const number = shipmentNumber(shipment);
       if (!number) continue;
-      const found: { eta?: string; carrier?: ShipmentCarrier } = { eta: etaFromShipment(shipment) };
+      const found: SeventeenTrackParsed = { eta: etaFromShipment(shipment), ...deliveredFromShipment(shipment) };
       walkSeventeenTrack(shipment, found);
       if (!found.carrier) found.carrier = detectCarrier(number);
       const previous = results.get(number);
       results.set(number, {
         eta: found.eta ?? previous?.eta,
         carrier: found.carrier ?? previous?.carrier,
+        delivered: found.delivered || previous?.delivered,
+        deliveredAt: found.deliveredAt ?? previous?.deliveredAt,
       });
     }
   }
   return results;
 }
 
-export function parseSeventeenTrack(
-  text: string,
-  tracking: string,
-): { eta?: string; carrier?: ShipmentCarrier } {
+export function parseSeventeenTrack(text: string, tracking: string): SeventeenTrackParsed {
   const id = tracking.replace(/[\s-]/g, "").toUpperCase();
   return parseSeventeenTrackBatch(text).get(id) ?? { carrier: detectCarrier(id) };
 }

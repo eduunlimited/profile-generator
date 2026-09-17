@@ -42,7 +42,8 @@ export async function crawlSeventeenTrack(tracking: string, carrierFc?: string):
     const gotEta = new Promise<void>((resolve) => {
       const ready = (text: string) =>
         ids.some((id) => text.includes(id)) &&
-        /"estimated_delivery_date"\s*:\s*\{[\s\S]*?"(?:from|to)"\s*:\s*"\d{4}-\d{2}-\d{2}/.test(text);
+        (/"estimated_delivery_date"\s*:\s*\{[\s\S]*?"(?:from|to)"\s*:\s*"\d{4}-\d{2}-\d{2}/.test(text) ||
+          /"status"\s*:\s*"Delivered"/i.test(text));
       page.on("response", (response) => {
         if (!/\/track\/restapi|\/restapi\/track/i.test(response.url()) || response.status() !== 200) return;
         void response

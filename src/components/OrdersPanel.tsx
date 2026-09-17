@@ -9,6 +9,8 @@ import {
   formatOrderMoney,
   groupIncomingHouses,
   filterIncomingHouses,
+  isCancelledOrder,
+  isInTransitOrder,
   masterAddressForOrder,
   ORDER_REFRESH_MS,
   ORDER_SITES,
@@ -266,40 +268,42 @@ export function OrdersPanel({
     () =>
       filterIncomingHouses(
         groupIncomingHouses(
-          filterOrders(siteOrders, "in_transit", spendPeriod),
+          siteOrders.filter(isInTransitOrder),
           masterProfiles,
           profiles,
           poolEmails,
         ),
         query,
       ),
-    [siteOrders, spendPeriod, masterProfiles, profiles, poolEmails, query],
+    [siteOrders, masterProfiles, profiles, poolEmails, query],
   );
-  const missingTileTrackings = useMemo(
+  const missingTrackingsKey = useMemo(
     () =>
-      listFilter === "in_transit"
-        ? incomingHouses
-            .flatMap((house) => house.shipments)
-            .filter((shipment) => !shipment.hasDate && shipment.tracking !== "—")
-            .map((shipment) => shipment.tracking)
-            .sort()
-            .join(",")
-        : "",
-    [incomingHouses, listFilter],
+      orders
+        .filter((order) => isInTransitOrder(order) && !order.expectedDelivery && (order.trackingNumber?.trim() ?? "") !== "")
+        .map((order) => order.trackingNumber?.trim() ?? "")
+        .sort()
+        .join(","),
+    [orders],
   );
   const ordersRef = useRef(orders);
   ordersRef.current = orders;
 
   useEffect(() => {
-    if (!missingTileTrackings) return;
+    if (listFilter !== "in_transit" || !missingTrackingsKey) return;
     let cancelled = false;
-    void refreshIncomingDeliveryDates(ordersRef.current).then((next) => {
-      if (!cancelled && next !== ordersRef.current) setOrders(next);
-    });
+    const run = () => {
+      void refreshIncomingDeliveryDates(ordersRef.current).then((next) => {
+        if (!cancelled && next !== ordersRef.current) setOrders(next);
+      });
+    };
+    run();
+    const timer = window.setInterval(run, 45_000);
     return () => {
       cancelled = true;
+      window.clearInterval(timer);
     };
-  }, [missingTileTrackings]);
+  }, [listFilter, missingTrackingsKey]);
 
   const active = filtered.find((order) => order.id === activeId) ?? null;
   const showTracking = listFilter !== "cancelled" && filtered.some((order) => order.status !== "cancelled");
@@ -396,7 +400,7 @@ export function OrdersPanel({
           >
             <span className="order-tile-label">Total spent</span>
             <strong className="order-tile-value">{formatOrderMoney(stats.spent)}</strong>
-            <span className="order-tile-hint">{periodLabel}</span>
+            <span className="order-tile-hint">Not cancelled · {periodLabel}</span>
           </button>
           <button
             type="button"
@@ -535,7 +539,7 @@ export function OrdersPanel({
                       <td>{formatTotal(order)}</td>
                       {showTracking ? (
                         <td className="col-card">
-                          {order.status === "cancelled" ? "—" : order.trackingNumber || "—"}
+                          {isCancelledOrder(order) ? "—" : order.trackingNumber || "—"}
                         </td>
                       ) : null}
                       <td>{formatPlaced(order)}</td>

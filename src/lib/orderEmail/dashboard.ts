@@ -83,17 +83,21 @@ export function orderPlacedMs(order: ParsedOrder): number {
   return placed?.dateMs && placed.dateMs > 0 ? placed.dateMs : Date.parse(order.updatedAt) || 0;
 }
 
+export function isCancelledOrder(order: ParsedOrder): boolean {
+  return order.status === "cancelled" || order.events.some((event) => event.kind === "cancelled");
+}
+
 export function isSuccessfulOrder(order: ParsedOrder): boolean {
-  return order.status !== "cancelled";
+  return !isCancelledOrder(order);
 }
 
 export function isInTransitOrder(order: ParsedOrder): boolean {
-  if (order.fulfillment === "pickup" || order.status === "picked_up") return false;
+  if (isCancelledOrder(order) || order.fulfillment === "pickup" || order.status === "picked_up") return false;
   return order.status === "shipped";
 }
 
 export function isNotShippedOrder(order: ParsedOrder): boolean {
-  return order.status === "placed";
+  return !isCancelledOrder(order) && order.status === "placed";
 }
 
 export function orderInPeriod(order: ParsedOrder, period: SpendPeriod, now = new Date()): boolean {
@@ -120,7 +124,7 @@ export function summarizeOrders(orders: ParsedOrder[], period: SpendPeriod, now 
   let spent = 0;
   for (const order of orders) {
     if (!orderInPeriod(order, period, now)) continue;
-    if (order.status === "cancelled") cancelled += 1;
+    if (isCancelledOrder(order)) cancelled += 1;
     else successful += 1;
     if (isInTransitOrder(order)) inTransit += 1;
     if (isNotShippedOrder(order)) notShipped += 1;
@@ -148,7 +152,7 @@ export function summarizeOrdersByEmail(orders: ParsedOrder[]): EmailOrderSummary
     const email = orderEmailKey(order);
     const current = byEmail.get(email) ?? { email, cancelled: 0, successful: 0, total: 0 };
     current.total += 1;
-    if (order.status === "cancelled") current.cancelled += 1;
+    if (isCancelledOrder(order)) current.cancelled += 1;
     else current.successful += 1;
     byEmail.set(email, current);
   }
@@ -179,7 +183,7 @@ export function filterOrders(
     filter === "successful"
       ? inPeriod.filter(isSuccessfulOrder)
       : filter === "cancelled"
-        ? inPeriod.filter((order) => order.status === "cancelled")
+        ? inPeriod.filter(isCancelledOrder)
         : filter === "in_transit"
           ? inPeriod.filter(isInTransitOrder)
           : filter === "not_shipped"

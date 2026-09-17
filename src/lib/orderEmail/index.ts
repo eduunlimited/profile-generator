@@ -54,6 +54,8 @@ export {
   filterOrdersBySite,
   sortOrdersByPlaced,
   isSuccessfulOrder,
+  isCancelledOrder,
+  isInTransitOrder,
   retailerLabel,
   siteFilterLabel,
   SPEND_PERIODS,

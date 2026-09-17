@@ -77,8 +77,9 @@ export function localDataPlugin(): Plugin {
                       (payload.json as { data?: Array<{ num?: string }> }).data?.[0]?.num ?? "",
                     )
                   : "");
+              const carrierFc = target.hash.match(/[?&]fc=([^&]+)/i)?.[1] ?? target.searchParams.get("fc") ?? undefined;
               if (host.endsWith("17track.net") && tracking) {
-                const crawled = await crawlSeventeenTrack(decodeURIComponent(tracking));
+                const crawled = await crawlSeventeenTrack(decodeURIComponent(tracking), carrierFc ?? undefined);
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
                 res.setHeader("Cache-Control", "no-store");

@@ -5,7 +5,12 @@ import type { ParsedOrder, ShipmentCarrier } from "../types";
 import { allowedTrackingHost, detectCarrier, normalizeTracking } from "./carrier";
 import { isInTransitOrder } from "./dashboard";
 import { finalizeParsedOrder } from "./merge";
-import { parseSeventeenTrackBatch, seventeenTrackNumbers, seventeenTrackUrl } from "./seventeenTrack";
+import {
+  parseSeventeenTrackBatch,
+  seventeenTrackCarrierFcs,
+  seventeenTrackNumbers,
+  seventeenTrackUrl,
+} from "./seventeenTrack";
 
 const MAX_BODY = 250_000;
 const BATCH_SIZE = 40;
@@ -86,6 +91,25 @@ async function lookupSeventeenTrackBatch(
     } catch {
       // Keep any numbers already parsed from earlier chunks.
     }
+    const unresolved = chunk.filter((id) => !results.get(id)?.eta);
+    for (const id of unresolved) {
+      const fcs = seventeenTrackCarrierFcs(detectCarrier(id) ?? results.get(id)?.carrier);
+      for (const fc of fcs) {
+        if (results.get(id)?.eta) break;
+        try {
+          const page = await fetchTrackingPage(seventeenTrackUrl(id, fc));
+          for (const [tracking, parsed] of parseSeventeenTrackBatch(page.text)) {
+            const previous = results.get(tracking);
+            results.set(tracking, {
+              eta: parsed.eta ?? previous?.eta,
+              carrier: parsed.carrier ?? previous?.carrier,
+            });
+          }
+        } catch {
+          // Leave this number for a later pass.
+        }
+      }
+    }
   }
   return results;
 }
@@ -133,7 +157,7 @@ async function refreshIncomingDeliveryDatesInner(
       carrier: lookup?.carrier ?? detectCarrier(tracking) ?? order.carrier,
       expectedDelivery: lookup?.eta,
       source: lookup?.eta ? "17track" : undefined,
-      stamp: true,
+      stamp: Boolean(lookup?.eta),
     });
     if (!orderChanged(order, updated)) continue;
     const index = byId.get(order.id);

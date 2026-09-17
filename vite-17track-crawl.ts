@@ -22,7 +22,7 @@ async function launchBrowser(): Promise<Browser | null> {
   return null;
 }
 
-export async function crawlSeventeenTrack(tracking: string): Promise<{ status: number; text: string }> {
+export async function crawlSeventeenTrack(tracking: string, carrierFc?: string): Promise<{ status: number; text: string }> {
   const ids = tracking
     .split(/[,\s]+/)
     .map((value) => value.replace(/[\s-]/g, "").toUpperCase())
@@ -54,7 +54,8 @@ export async function crawlSeventeenTrack(tracking: string): Promise<{ status: n
       });
     });
 
-    await page.goto(`https://t.17track.net/en#nums=${ids.map((id) => encodeURIComponent(id)).join(",")}`, {
+    const fc = carrierFc?.trim() ? `&fc=${encodeURIComponent(carrierFc.trim())}` : "";
+    await page.goto(`https://t.17track.net/en#nums=${ids.map((id) => encodeURIComponent(id)).join(",")}${fc}`, {
       waitUntil: "domcontentloaded",
       timeout: 25000,
     });

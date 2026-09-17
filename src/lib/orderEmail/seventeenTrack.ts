@@ -21,9 +21,21 @@ export function seventeenTrackNumbers(values: string[]): string[] {
   return ids;
 }
 
-export function seventeenTrackUrl(trackings: string | string[]): string {
+export function seventeenTrackCarrierFcs(carrier?: ShipmentCarrier): string[] {
+  if (carrier === "fedex") return ["100003", "100021", "190008"];
+  if (carrier === "ups") return ["100002"];
+  if (carrier === "usps") return ["21051"];
+  return ["100003", "100002", "21051"];
+}
+
+export function seventeenTrackCarrierFc(carrier?: ShipmentCarrier): string | undefined {
+  return seventeenTrackCarrierFcs(carrier)[0];
+}
+
+export function seventeenTrackUrl(trackings: string | string[], carrierFc?: string): string {
   const ids = seventeenTrackNumbers(Array.isArray(trackings) ? trackings : [trackings]);
-  return `https://t.17track.net/en#nums=${ids.map((id) => encodeURIComponent(id)).join(",")}`;
+  const fc = carrierFc?.trim() ? `&fc=${encodeURIComponent(carrierFc.trim())}` : "";
+  return `https://t.17track.net/en#nums=${ids.map((id) => encodeURIComponent(id)).join(",")}${fc}`;
 }
 
 function carrierFromName(value: string): ShipmentCarrier | undefined {

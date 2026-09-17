@@ -4260,6 +4260,15 @@ textarea {
   background: var(--cyan-dim);
 }
 
+.orders-period-filter.is-disabled button,
+.orders-period-filter button:disabled,
+.orders-period-filter button:disabled:hover,
+.orders-period-filter button:disabled.is-active {
+  border-color: var(--border);
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+}
+
 .orders-tiles {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));

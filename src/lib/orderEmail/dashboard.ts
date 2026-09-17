@@ -123,10 +123,10 @@ export function summarizeOrders(orders: ParsedOrder[], period: SpendPeriod, now 
   let notShipped = 0;
   let spent = 0;
   for (const order of orders) {
+    if (isInTransitOrder(order)) inTransit += 1;
     if (!orderInPeriod(order, period, now)) continue;
     if (isCancelledOrder(order)) cancelled += 1;
     else successful += 1;
-    if (isInTransitOrder(order)) inTransit += 1;
     if (isNotShippedOrder(order)) notShipped += 1;
     if (isSuccessfulOrder(order) && order.total != null) spent += order.total;
   }
@@ -178,18 +178,17 @@ export function filterOrders(
   filter: OrderListFilter,
   period: SpendPeriod,
 ): ParsedOrder[] {
+  if (filter === "in_transit") return sortOrdersByPlaced(orders.filter(isInTransitOrder));
   const inPeriod = orders.filter((order) => orderInPeriod(order, period));
   const scoped =
     filter === "successful"
       ? inPeriod.filter(isSuccessfulOrder)
       : filter === "cancelled"
         ? inPeriod.filter(isCancelledOrder)
-        : filter === "in_transit"
-          ? inPeriod.filter(isInTransitOrder)
-          : filter === "not_shipped"
-            ? inPeriod.filter(isNotShippedOrder)
-            : filter === "spend"
-              ? inPeriod.filter((order) => isSuccessfulOrder(order) && order.total != null)
-              : inPeriod;
+        : filter === "not_shipped"
+          ? inPeriod.filter(isNotShippedOrder)
+          : filter === "spend"
+            ? inPeriod.filter((order) => isSuccessfulOrder(order) && order.total != null)
+            : inPeriod;
   return sortOrdersByPlaced(scoped);
 }

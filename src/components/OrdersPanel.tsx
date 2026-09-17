@@ -359,12 +359,19 @@ export function OrdersPanel({
       </div>
 
       <div className="orders-overview">
-        <div className="orders-period-filter" role="group" aria-label="Order timeframe">
+        <div
+          className={`orders-period-filter${listFilter === "in_transit" ? " is-disabled" : ""}`}
+          role="group"
+          aria-label="Order timeframe"
+          aria-disabled={listFilter === "in_transit"}
+        >
           {SPEND_PERIODS.map((period) => (
             <button
               key={period.id}
               type="button"
               className={spendPeriod === period.id ? "is-active" : undefined}
+              disabled={listFilter === "in_transit"}
+              title={listFilter === "in_transit" ? "Timeframe does not apply to In transit" : undefined}
               onClick={() => {
                 setSpendPeriod(period.id);
                 setActiveId(null);

@@ -71,6 +71,18 @@ export interface TargetCancelFetchRequest {
   allowLogin?: boolean;
 }
 
+export const TARGET_CANCEL_MANUAL_REASON = "Check reason manually";
+const CANCEL_STAGGER_MIN_MS = 15_000;
+const CANCEL_STAGGER_MAX_MS = 30_000;
+
+export interface FetchTargetCancelReasonsOptions {
+  /** When set (including `[]`), only these order numbers are fetched. Omit to backfill every missing reason. */
+  orderIds?: string[];
+  maxAccounts?: number;
+  /** When false, never open Camoufox login — cookies only. */
+  allowLogin?: boolean;
+}
+
 export interface FetchTargetCancelReasonsResult {
   orders: ParsedOrder[];
   fetched: number;
@@ -79,24 +91,43 @@ export interface FetchTargetCancelReasonsResult {
   tone: "ok" | "error";
 }
 
-export interface FetchTargetCancelReasonsOptions {
-  /** Only these order numbers. Used for the first manual test. */
-  orderIds?: string[];
-  maxAccounts?: number;
-  /** When false, never open Camoufox login — cookies only. */
-  allowLogin?: boolean;
-}
-
 /** Short Target copy for the timeline, e.g. "Policy - Item Demand" → "Item Demand". */
 export function shortTargetCancelReason(reason?: string | null): string {
   const text = reason?.trim() ?? "";
   if (!text) return "";
+  if (text === TARGET_CANCEL_MANUAL_REASON) return TARGET_CANCEL_MANUAL_REASON;
   return text.replace(/^policy\s*[-:]\s*/i, "").trim() || text;
 }
 
 export function formatCancelledStatus(order: Pick<ParsedOrder, "cancelReason">): string {
   const reason = shortTargetCancelReason(order.cancelReason);
   return reason ? `Cancelled - ${reason}` : "Cancelled";
+}
+
+export function isManualCancelReason(reason?: string | null): boolean {
+  return reason?.trim() === TARGET_CANCEL_MANUAL_REASON;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function staggerMs(): number {
+  return (
+    CANCEL_STAGGER_MIN_MS +
+    Math.floor(Math.random() * (CANCEL_STAGGER_MAX_MS - CANCEL_STAGGER_MIN_MS + 1))
+  );
+}
+
+function withManualReasons(orders: ParsedOrder[], orderIds: Iterable<string>): ParsedOrder[] {
+  const ids = new Set([...orderIds].map((id) => id.trim()).filter(Boolean));
+  if (ids.size === 0) return orders;
+  return orders.map((order) => {
+    if (order.retailer !== "target" || !ids.has(order.orderId) || order.cancelReason?.trim()) {
+      return order;
+    }
+    return { ...order, cancelReason: TARGET_CANCEL_MANUAL_REASON };
+  });
 }
 
 function isTargetCredential(credential: Credential): boolean {
@@ -244,21 +275,46 @@ async function fetchAccountCancelReasons(
   }
 }
 
-export async function fetchTargetCancelReasons(
+let cancelFetchChain: Promise<void> = Promise.resolve();
+
+async function fetchTargetCancelReasonsLocked(
   orders: ParsedOrder[],
-  onStatus?: (message: string) => void,
-  options: FetchTargetCancelReasonsOptions = {},
+  onStatus: ((message: string) => void) | undefined,
+  options: FetchTargetCancelReasonsOptions,
 ): Promise<FetchTargetCancelReasonsResult> {
-  const wantedIds = new Set((options.orderIds ?? []).map((id) => id.trim()).filter(Boolean));
-  const missing = cancelledTargetOrdersMissingReason(orders).filter(
-    (order) => wantedIds.size === 0 || wantedIds.has(order.orderId),
-  );
-  if (missing.length === 0) {
+  if (!isTauriRuntime()) {
     return {
       orders,
       fetched: 0,
       accounts: 0,
-      status: "Every cancelled Target order already has a cancel reason.",
+      status: "",
+      tone: "ok",
+    };
+  }
+
+  let next = upsertParsedOrders(await listOrders(), orders);
+
+  const scoped = options.orderIds !== undefined;
+  const wantedIds = new Set((options.orderIds ?? []).map((id) => id.trim()).filter(Boolean));
+  if (scoped && wantedIds.size === 0) {
+    return {
+      orders: next,
+      fetched: 0,
+      accounts: 0,
+      status: "",
+      tone: "ok",
+    };
+  }
+
+  const missing = cancelledTargetOrdersMissingReason(next).filter(
+    (order) => !scoped || wantedIds.has(order.orderId),
+  );
+  if (missing.length === 0) {
+    return {
+      orders: next,
+      fetched: 0,
+      accounts: 0,
+      status: scoped ? "" : "Every cancelled Target order already has a cancel reason.",
       tone: "ok",
     };
   }
@@ -282,34 +338,52 @@ export async function fetchTargetCancelReasons(
     grouped.set(normalizeMailboxEmail(email), list);
   }
 
-  let next = orders;
+  next = withManualReasons(next, unmatched);
+  if (unmatched.length > 0) {
+    next = await saveAndReload(next);
+  }
+
   let fetched = 0;
   let accounts = 0;
   const problems: string[] = [];
-
+  const emailsTouched: string[] = [];
   const maxAccounts = options.maxAccounts ?? Number.POSITIVE_INFINITY;
-  for (const [email, group] of grouped) {
+  const groups = [...grouped.entries()];
+
+  for (let index = 0; index < groups.length; index += 1) {
     if (accounts >= maxAccounts) break;
+    const [email, group] = groups[index];
     const credential = matchingTargetCredential(email, credentials);
+    const groupIds = group.map((order) => order.orderId);
     if (!credential) {
       problems.push(`No Target account for ${email}`);
+      next = withManualReasons(next, groupIds);
+      next = await saveAndReload(next);
       continue;
     }
+
+    if (accounts > 0) {
+      const wait = staggerMs();
+      onStatus?.(`Waiting ${Math.round(wait / 1000)}s before the next Target account…`);
+      await sleep(wait);
+    }
+
     const proxy = resolveProxyForAccount(proxies, credential.id, assignments);
     const allowLogin = (options.allowLogin ?? true) && !running.has(credential.id);
     onStatus?.(
-      allowLogin
-        ? `Checking ${group.length} cancelled Target order(s) for ${email}`
-        : `Using saved Target cookies for ${email}`,
+      `Checking ${group.length} cancelled Target order(s) for ${email}${
+        proxy ? "" : " (no proxy assigned)"
+      }`,
     );
     accounts += 1;
+    emailsTouched.push(email);
     try {
       const result = await fetchAccountCancelReasons(
         {
           accountId: credential.id,
           accountLabel: buildAccountSessionLabel(credential),
           email: credentialLoginEmail(credential) || email,
-          orderIds: group.map((order) => order.orderId),
+          orderIds: groupIds,
           proxyServer: proxy ? formatProxyServer(proxy) : undefined,
           timezone: resolveTimezoneForAccount(credential.id),
           locale: "en-US",
@@ -321,20 +395,19 @@ export async function fetchTargetCancelReasons(
       const applied = applyCancelReasons(next, result.orders ?? []);
       next = applied.orders;
       fetched += applied.fetched;
+      next = withManualReasons(next, groupIds);
+      next = await saveAndReload(next);
       if (!result.ok && result.error) problems.push(`${email}: ${result.error}`);
       else if (result.needsLogin) problems.push(`${email}: sign in required`);
     } catch (error) {
       problems.push(`${email}: ${error instanceof Error ? error.message : String(error)}`);
+      next = withManualReasons(next, groupIds);
+      next = await saveAndReload(next);
     }
   }
 
-  if (unmatched.length > 0) {
-    problems.push(`${unmatched.length} cancelled order(s) have no email`);
-  }
-
-  next = await saveAndReload(next);
   if (fetched > 0) {
-    await staleAnalysisForEmails([...grouped.keys()]);
+    await staleAnalysisForEmails(emailsTouched);
   }
 
   const status =
@@ -342,15 +415,50 @@ export async function fetchTargetCancelReasons(
       ? `Saved ${fetched} Target cancel reason(s) across ${accounts} account(s).${
           problems.length ? ` ${problems.slice(0, 3).join(" · ")}` : ""
         }`
-      : problems[0] || "Could not read Target cancel reasons. Sign in from Sessions and retry.";
+      : accounts > 0 || unmatched.length > 0
+        ? `Could not read Target cancel reasons. Showing "Check reason manually" where the lookup failed.${
+            problems[0] ? ` ${problems[0]}` : ""
+          }`
+        : problems[0] || "";
 
   return {
     orders: next,
     fetched,
     accounts,
     status,
-    tone: fetched > 0 ? "ok" : "error",
+    tone: "ok",
   };
+}
+
+export async function fetchTargetCancelReasons(
+  orders: ParsedOrder[],
+  onStatus?: (message: string) => void,
+  options: FetchTargetCancelReasonsOptions = {},
+): Promise<FetchTargetCancelReasonsResult> {
+  const run = cancelFetchChain.then(
+    () => fetchTargetCancelReasonsLocked(orders, onStatus, options),
+    () => fetchTargetCancelReasonsLocked(orders, onStatus, options),
+  );
+  cancelFetchChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+export async function applyTargetCancelReasonsAfterRefresh(
+  orders: ParsedOrder[],
+  source: "button" | "auto",
+  newCancelledOrderIds: string[] | undefined,
+  onStatus?: (message: string) => void,
+): Promise<FetchTargetCancelReasonsResult> {
+  if (source === "auto") {
+    return fetchTargetCancelReasons(orders, onStatus, {
+      orderIds: newCancelledOrderIds ?? [],
+      allowLogin: true,
+    });
+  }
+  return fetchTargetCancelReasons(orders, onStatus, { allowLogin: true });
 }
 
 async function saveAndReload(orders: ParsedOrder[]): Promise<ParsedOrder[]> {

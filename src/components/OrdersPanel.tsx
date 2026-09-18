@@ -21,6 +21,7 @@ import {
   PARSED_ORDER_SITES,
   refreshIncomingDeliveryDates,
   refreshTargetOrders,
+  applyTargetCancelReasonsAfterRefresh,
   repairUtf8Mojibake,
   retailerLabel,
   siteFilterLabel,
@@ -151,11 +152,11 @@ export function OrdersPanel({
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
 
-  const runRefresh = async (hourly = false) => {
+  const runRefresh = async (source: "button" | "auto" = "button") => {
     if (busyRef.current) return;
     busyRef.current = true;
     setBusy(true);
-    setStatus(hourly ? "Hourly order refresh…" : "Scanning confirmation emails…");
+    setStatus(source === "auto" ? "Refreshing orders…" : "Scanning confirmation emails…");
     setTone("ok");
     try {
       const result = await refreshTargetOrders();
@@ -167,9 +168,20 @@ export function OrdersPanel({
       if (currentId && !result.orders.some((order) => order.id === currentId)) {
         setActiveId(null);
       }
+      const cancel = await applyTargetCancelReasonsAfterRefresh(
+        withDates,
+        source,
+        result.newCancelledOrderIds,
+        (message) => setStatus(message),
+      );
+      setOrders(cancel.orders);
+      if (cancel.status) {
+        setStatus(cancel.status);
+        setTone(cancel.tone);
+      }
     } catch (error) {
       setTone("error");
-      setStatus(formatError(error, hourly ? "Hourly order refresh failed." : "Order scan failed."));
+      setStatus(formatError(error, source === "auto" ? "Order refresh failed." : "Order scan failed."));
     } finally {
       busyRef.current = false;
       setBusy(false);
@@ -194,10 +206,10 @@ export function OrdersPanel({
         }
       }
       if (cancelled) return;
-      await runRefreshRef.current();
+      await runRefreshRef.current("auto");
     })();
     const timer = window.setInterval(() => {
-      void runRefreshRef.current(true);
+      void runRefreshRef.current("auto");
     }, ORDER_REFRESH_MS);
     return () => {
       cancelled = true;
@@ -296,7 +308,7 @@ export function OrdersPanel({
       <div className="profiles-table-toolbar">
         <div className="profiles-toolbar-row">
           <div className="toolbar-group">
-            <button type="button" className="btn-primary" disabled={busy} onClick={() => void runRefresh()}>
+            <button type="button" className="btn-primary" disabled={busy} onClick={() => void runRefresh("button")}>
               {busy ? "Scanning…" : "Refresh orders"}
             </button>
             <span className="muted">{`${filtered.length} shown`}</span>

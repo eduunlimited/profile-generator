@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./env";
 import { isSuccessfulOrder, orderEmailKey } from "./orderEmail/dashboard";
+import { isManualCancelReason } from "./orderEmail/targetCancelReasons";
 import { formatOrderAddress } from "./orderEmail/parse";
 import { formatOrderCardDisplay } from "./orderEmail/payment";
 import { accountJigLines, accountPaymentLabel, accountPaymentLines, isWarmupOrder } from "./orderEmail/performance";
@@ -240,7 +241,7 @@ export function buildOrderAnalysisPayload(
       items: (order.items ?? []).map((item) => ({ name: item.name, qty: item.quantity })),
       placedAt: order.placedAt,
       cancelledAt: cancelledEvent?.date || (!isSuccessfulOrder(order) ? order.updatedAt : null),
-      cancelReason: order.cancelReason?.trim() || null,
+      cancelReason: isManualCancelReason(order.cancelReason) ? null : order.cancelReason?.trim() || null,
       pickup,
       succeeded: isSuccessfulOrder(order),
     };

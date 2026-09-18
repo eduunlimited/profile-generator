@@ -105,9 +105,12 @@ export { refreshTargetOrders } from "./refresh";
 export type { OrderRefreshResult } from "./refresh";
 export {
   fetchTargetCancelReasons,
+  applyTargetCancelReasonsAfterRefresh,
   cancelledTargetOrdersMissingReason,
   formatCancelledStatus,
   shortTargetCancelReason,
+  isManualCancelReason,
+  TARGET_CANCEL_MANUAL_REASON,
 } from "./targetCancelReasons";
 export type { FetchTargetCancelReasonsResult, FetchTargetCancelReasonsOptions } from "./targetCancelReasons";
 export { refreshIncomingDeliveryDates } from "./trackingLookup";

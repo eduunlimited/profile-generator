@@ -24,7 +24,7 @@ import {
   orderPlacedMs,
   PERFORMANCE_SITES,
   refreshTargetOrders,
-  fetchTargetCancelReasons,
+  applyTargetCancelReasonsAfterRefresh,
   formatCancelledStatus,
   repairUtf8Mojibake,
   retailerLabel,
@@ -127,7 +127,6 @@ function TimelineNode({
   fallbackPayment,
   fallbackAddress,
   fallbackProfile,
-  onFetchCancelReason,
 }: {
   order: ParsedOrder | null;
   previous: ParsedOrder | null;
@@ -139,35 +138,18 @@ function TimelineNode({
   fallbackPayment: string;
   fallbackAddress: string;
   fallbackProfile: string;
-  onFetchCancelReason?: (order: ParsedOrder) => void;
 }) {
   const succeeded = order ? isSuccessfulOrder(order) : null;
   const changes = timelineFieldChanges(previous, order, fallbackProfile, profiles, poolEmails);
   const address = order ? orderAddressLines(order, fallbackAddress) : null;
-  const canTestCancel =
-    Boolean(order && succeeded === false && !order.cancelReason?.trim() && onFetchCancelReason);
   return (
     <div className="performance-node">
       <TimelineRail slots={slots} index={index} />
       {order && succeeded != null && address ? (
         <div className="performance-node-body">
           <span
-            className={succeeded ? "order-metric-ok" : `order-metric-cxl${canTestCancel ? " is-cancel-test" : ""}`}
-            title={
-              succeeded
-                ? undefined
-                : order.cancelReason?.trim() || "Click to test this one Target cancel reason"
-            }
-            role={canTestCancel ? "button" : undefined}
-            onClick={
-              canTestCancel
-                ? (event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    onFetchCancelReason?.(order);
-                  }
-                : undefined
-            }
+            className={succeeded ? "order-metric-ok" : "order-metric-cxl"}
+            title={succeeded ? undefined : order.cancelReason?.trim() || undefined}
           >
             {succeeded ? "Succeeded" : formatCancelledStatus(order)}
           </span>
@@ -209,7 +191,6 @@ function PerformanceEmailCard({
   poolEmails,
   analysis,
   analyzing,
-  onFetchCancelReason,
 }: {
   account: AccountPerformance;
   orders: ParsedOrder[];
@@ -218,7 +199,6 @@ function PerformanceEmailCard({
   poolEmails: PoolEmail[];
   analysis?: OrderAnalysisRecord;
   analyzing: boolean;
-  onFetchCancelReason?: (order: ParsedOrder) => void;
 }) {
   const timeline = useMemo(
     () => accountOrderTimeline(orders, account.retailer, account.email),
@@ -284,7 +264,6 @@ function PerformanceEmailCard({
               fallbackPayment={fallbackPayment}
               fallbackAddress={fallbackAddress}
               fallbackProfile={profileName}
-              onFetchCancelReason={onFetchCancelReason}
             />
           </li>
         ))}
@@ -328,9 +307,21 @@ export function OrderPerformancePanel({
     setTone("ok");
     try {
       const result = await refreshTargetOrders();
-      setOrders(result.orders);
+      const withDates = result.orders;
+      setOrders(withDates);
       setStatus(result.status);
       setTone(result.tone);
+      const cancel = await applyTargetCancelReasonsAfterRefresh(
+        withDates,
+        "button",
+        result.newCancelledOrderIds,
+        (message) => setStatus(message),
+      );
+      if (cancel.orders !== withDates) setOrders(cancel.orders);
+      if (cancel.status) {
+        setStatus(cancel.fetched > 0 || cancel.accounts > 0 ? cancel.status : result.status);
+        setTone(cancel.tone);
+      }
     } catch (error) {
       setTone("error");
       setStatus(formatError(error, "Order scan failed."));
@@ -389,30 +380,6 @@ export function OrderPerformancePanel({
     if (!needle) return accounts;
     return accounts.filter((account) => accountSearchHaystack(account).includes(needle));
   }, [accounts, query]);
-
-  const testOneCancelReason = async (order: ParsedOrder) => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setBusy(true);
-    setTone("ok");
-    setStatus(`Testing Target cancel reason for ${order.orderId}…`);
-    try {
-      const result = await fetchTargetCancelReasons(orders, (message) => setStatus(message), {
-        orderIds: [order.orderId],
-        maxAccounts: 1,
-        allowLogin: false,
-      });
-      setOrders(result.orders);
-      setStatus(result.status);
-      setTone(result.tone);
-    } catch (error) {
-      setTone("error");
-      setStatus(formatError(error, "Could not fetch that Target cancel reason."));
-    } finally {
-      busyRef.current = false;
-      setBusy(false);
-    }
-  };
 
   const analysisDueKey = useMemo(
     () => accounts.map((account) => `${account.retailer}:${account.email}:${account.cancelled}`).join("|"),
@@ -557,7 +524,6 @@ export function OrderPerformancePanel({
                     poolEmails={poolEmails}
                     analysis={analysisByKey[analysisKey]}
                     analyzing={Boolean(pendingKeys[analysisKey])}
-                    onFetchCancelReason={busy ? undefined : testOneCancelReason}
                   />
                 );
               })}

@@ -4837,10 +4837,6 @@ textarea {
   font-weight: 600;
 }
 
-.order-metric-cxl.is-cancel-test {
-  cursor: pointer;
-}
-
 .performance-node-axis {
   font-size: 10px;
   color: var(--text-muted);

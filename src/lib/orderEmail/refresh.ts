@@ -29,6 +29,7 @@ import {
   orderRecipientEmail,
   upsertParsedOrders,
 } from "./merge";
+import { isCancelledOrder } from "./dashboard";
 import {
   detectCarrier,
   detectCarrierFromText,
@@ -49,6 +50,8 @@ export interface OrderRefreshResult {
   orders: ParsedOrder[];
   status: string;
   tone: "ok" | "error";
+  /** Target orders that became cancelled on this scan and still have no cancel reason. */
+  newCancelledOrderIds: string[];
 }
 
 async function headersForAccount(account: ImapAccount): Promise<StoredImapMessage[]> {
@@ -262,15 +265,32 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
   }
 }
 
+function emptyRefresh(orders: ParsedOrder[], status: string, tone: "ok" | "error"): OrderRefreshResult {
+  return { orders, status, tone, newCancelledOrderIds: [] };
+}
+
+function newlyCancelledTargetIds(before: ParsedOrder[], after: ParsedOrder[]): string[] {
+  const wasCancelled = new Set(
+    before
+      .filter((order) => order.retailer === "target" && isCancelledOrder(order))
+      .map((order) => order.id),
+  );
+  return after
+    .filter(
+      (order) =>
+        order.retailer === "target" &&
+        isCancelledOrder(order) &&
+        !wasCancelled.has(order.id) &&
+        !order.cancelReason?.trim(),
+    )
+    .map((order) => order.orderId);
+}
+
 export async function refreshTargetOrders(): Promise<OrderRefreshResult> {
   const existing = await listOrders();
   const accounts = await listImapAccounts();
   if (accounts.length === 0) {
-    return {
-      orders: existing,
-      status: "Add an IMAP key in Mail before scanning orders.",
-      tone: "error",
-    };
+    return emptyRefresh(existing, "Add an IMAP key in Mail before scanning orders.", "error");
   }
 
   const classified: ClassifiedOrderMessage[] = [];
@@ -461,5 +481,10 @@ export async function refreshTargetOrders(): Promise<OrderRefreshResult> {
     : scanned.length === 0
       ? "No Target or Pokemon Center confirmation emails found in the loaded mail."
       : `Loaded ${orders.length} order(s) that have a confirmation email.`;
-  return { orders, status, tone: errors.length ? "error" : "ok" };
+  return {
+    orders,
+    status,
+    tone: errors.length ? "error" : "ok",
+    newCancelledOrderIds: newlyCancelledTargetIds(existing, orders),
+  };
 }

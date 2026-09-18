@@ -3,7 +3,7 @@ import { saveOrders } from "../api";
 import { isTauriRuntime } from "../env";
 import type { ParsedOrder, ShipmentCarrier } from "../types";
 import { allowedTrackingHost, detectCarrier, normalizeTracking } from "./carrier";
-import { isInTransitOrder } from "./dashboard";
+import { isCancelledOrder, isInTransitOrder } from "./dashboard";
 import { finalizeParsedOrder } from "./merge";
 import {
   mergeSeventeenTrack,
@@ -27,10 +27,15 @@ function isUsableId(id: string): boolean {
   return id.length >= 8 && id !== "—";
 }
 
+function hasSeventeenTrackDelivered(order: ParsedOrder): boolean {
+  return order.events.some((event) => event.messageId?.startsWith("17track:delivered:"));
+}
+
 function incomingTrackOrders(orders: ParsedOrder[]): ParsedOrder[] {
   return orders.filter((order) => {
-    if (!isInTransitOrder(order)) return false;
-    return isUsableId(normalizeTracking(order.trackingNumber ?? ""));
+    if (isCancelledOrder(order) || order.fulfillment === "pickup" || order.status === "picked_up") return false;
+    if (!isUsableId(normalizeTracking(order.trackingNumber ?? ""))) return false;
+    return isInTransitOrder(order) || hasSeventeenTrackDelivered(order);
   });
 }
 
@@ -50,12 +55,16 @@ function applyShipmentFields(
     stamp?: boolean;
     delivered?: boolean;
     deliveredAt?: string;
+    clearSeventeenTrackDelivered?: boolean;
   },
 ): ParsedOrder {
   const tracking = patch.tracking ?? order.trackingNumber;
   const carrier = patch.carrier ?? detectCarrier(tracking) ?? order.carrier;
   const expectedDelivery = patch.expectedDelivery ?? order.expectedDelivery;
-  const events = [...order.events];
+  let events = [...order.events];
+  if (patch.clearSeventeenTrackDelivered) {
+    events = events.filter((event) => !event.messageId?.startsWith("17track:delivered:"));
+  }
   if (patch.delivered && !events.some((event) => event.kind === "delivered")) {
     const base = events.find((event) => event.accountId) ?? events[0];
     const when = patch.deliveredAt ? new Date(`${patch.deliveredAt}T12:00:00`) : new Date();
@@ -76,7 +85,7 @@ function applyShipmentFields(
     expectedDelivery,
     expectedDeliverySource: patch.expectedDelivery ? patch.source : order.expectedDeliverySource,
     expectedDeliveryAt: patch.stamp ? new Date().toISOString() : order.expectedDeliveryAt,
-    updatedAt: patch.delivered ? new Date().toISOString() : order.updatedAt,
+    updatedAt: patch.delivered || patch.clearSeventeenTrackDelivered ? new Date().toISOString() : order.updatedAt,
     events,
   });
 }
@@ -189,6 +198,7 @@ async function refreshIncomingDeliveryDatesInner(
       stamp: Boolean(expectedDelivery),
       delivered: lookup?.delivered,
       deliveredAt: lookup?.deliveredAt,
+      clearSeventeenTrackDelivered: Boolean(lookup?.latestStatus && !lookup.delivered),
     });
     if (!orderChanged(order, updated)) continue;
     const index = byId.get(order.id);

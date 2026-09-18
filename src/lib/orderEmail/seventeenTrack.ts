@@ -60,6 +60,7 @@ export interface SeventeenTrackParsed {
   carrier?: ShipmentCarrier;
   delivered?: boolean;
   deliveredAt?: string;
+  latestStatus?: string;
 }
 
 function walkSeventeenTrack(
@@ -82,9 +83,6 @@ function walkSeventeenTrack(
     }
     if (!found.eta && /est.*(deliv|arriva)|deliv.*(date|time)|time_from|time_to/.test(lower)) {
       found.eta = isoFromUnknown(nested);
-    }
-    if (!found.delivered && lower === "status" && typeof nested === "string" && /^delivered$/i.test(nested)) {
-      found.delivered = true;
     }
     if (!found.carrier && (lower === "carrier" || lower === "name" || lower === "alias")) {
       if (typeof nested === "number" || typeof nested === "string") {
@@ -136,19 +134,25 @@ function etaFromShipment(value: unknown): string | undefined {
   return isoFromUnknown(window?.from) ?? isoFromUnknown(window?.to);
 }
 
+function latestStatusFromShipment(value: unknown): string | undefined {
+  const inner = shipmentInner(value);
+  const latest = inner?.latest_status && typeof inner.latest_status === "object" ? (inner.latest_status as Record<string, unknown>) : undefined;
+  const status = String(latest?.status ?? "").trim();
+  return status || undefined;
+}
+
 function deliveredFromShipment(value: unknown): { delivered?: boolean; deliveredAt?: string } {
   const inner = shipmentInner(value);
   if (!inner) return {};
   const latest = inner.latest_status && typeof inner.latest_status === "object" ? (inner.latest_status as Record<string, unknown>) : undefined;
   const latestEvent = inner.latest_event && typeof inner.latest_event === "object" ? (inner.latest_event as Record<string, unknown>) : undefined;
+  if (!/^delivered$/i.test(String(latest?.status ?? ""))) return {};
   const milestones = Array.isArray(inner.milestone) ? inner.milestone : [];
   const deliveredMilestone = milestones.find((item) => {
     if (!item || typeof item !== "object") return false;
     const row = item as Record<string, unknown>;
-    return String(row.key_stage ?? "") === "Delivered";
+    return String(row.key_stage ?? "") === "Delivered" && (row.time_iso || row.time_utc);
   }) as Record<string, unknown> | undefined;
-  const delivered = /^delivered$/i.test(String(latest?.status ?? "")) || Boolean(deliveredMilestone);
-  if (!delivered) return {};
   return {
     delivered: true,
     deliveredAt:
@@ -170,11 +174,16 @@ export function mergeSeventeenTrack(
   previous: SeventeenTrackParsed | undefined,
   parsed: SeventeenTrackParsed,
 ): SeventeenTrackParsed {
+  const latestStatus = parsed.latestStatus ?? previous?.latestStatus;
+  const delivered = latestStatus && !/^delivered$/i.test(latestStatus)
+    ? false
+    : Boolean(parsed.delivered || previous?.delivered);
   return {
     eta: parsed.eta ?? previous?.eta,
     carrier: parsed.carrier ?? previous?.carrier,
-    delivered: parsed.delivered || previous?.delivered,
-    deliveredAt: parsed.deliveredAt ?? previous?.deliveredAt,
+    delivered: delivered || undefined,
+    deliveredAt: delivered ? parsed.deliveredAt ?? previous?.deliveredAt : undefined,
+    latestStatus,
   };
 }
 
@@ -185,7 +194,7 @@ function pageTextWithoutNumsPrefix(text: string): string {
 function parsePageText(text: string): Map<string, SeventeenTrackParsed> {
   const results = new Map<string, SeventeenTrackParsed>();
   const body = pageTextWithoutNumsPrefix(text);
-  const events: Array<{ pos: number; kind: "id" | "deliveredAt" | "eta" | "delivered"; value: string }> = [];
+  const events: Array<{ pos: number; kind: "id" | "deliveredAt" | "eta"; value: string }> = [];
   for (const match of body.matchAll(/\b([A-Z0-9]{10,34})\b/gi)) {
     const id = match[1].replace(/[\s-]/g, "").toUpperCase();
     if (id.length < 10) continue;
@@ -196,9 +205,6 @@ function parsePageText(text: string): Map<string, SeventeenTrackParsed> {
   }
   for (const match of body.matchAll(/estimated(?:\s+delivery)?(?:\s+date)?[:\s\-–]*(\d{4}-\d{2}-\d{2})/gi)) {
     events.push({ pos: match.index ?? 0, kind: "eta", value: match[1] });
-  }
-  for (const match of body.matchAll(/(?:latest status|status)\s*[:\-]?\s*delivered\b/gi)) {
-    events.push({ pos: match.index ?? 0, kind: "delivered", value: "1" });
   }
   events.sort((left, right) => left.pos - right.pos);
 
@@ -220,8 +226,6 @@ function parsePageText(text: string): Map<string, SeventeenTrackParsed> {
       });
     } else if (event.kind === "eta") {
       results.set(current, { ...previous, eta: previous.eta ?? event.value });
-    } else {
-      results.set(current, { ...previous, delivered: true });
     }
   }
   return results;
@@ -244,12 +248,11 @@ function parseWholePageForId(text: string, tracking: string): SeventeenTrackPars
   if (otherIds.length > 0) return {};
   const deliveredAt = body.match(/time of delivery[:\s\-–]*(\d{4}-\d{2}-\d{2})/i)?.[1];
   const eta = body.match(/estimated(?:\s+delivery)?(?:\s+date)?[:\s\-–]*(\d{4}-\d{2}-\d{2})/i)?.[1];
-  const delivered =
-    /time of delivery/i.test(body) || /(?:latest status|status)\s*[:\-]?\s*delivered\b/i.test(body);
-  if (!eta && !deliveredAt && !delivered) return {};
+  const delivered = Boolean(deliveredAt);
+  if (!eta && !deliveredAt) return {};
   return {
     eta: eta ?? deliveredAt,
-    delivered: delivered || Boolean(deliveredAt) || undefined,
+    delivered: delivered || undefined,
     deliveredAt,
     carrier: carrierFromName(body) ?? detectCarrier(id),
   };
@@ -264,7 +267,11 @@ export function parseSeventeenTrackBatch(text: string): Map<string, SeventeenTra
     for (const shipment of shipments) {
       const number = shipmentNumber(shipment);
       if (!number) continue;
-      const found: SeventeenTrackParsed = { eta: etaFromShipment(shipment), ...deliveredFromShipment(shipment) };
+      const found: SeventeenTrackParsed = {
+        eta: etaFromShipment(shipment),
+        latestStatus: latestStatusFromShipment(shipment),
+        ...deliveredFromShipment(shipment),
+      };
       walkSeventeenTrack(shipment, found);
       if (!found.carrier) found.carrier = detectCarrier(number);
       results.set(number, mergeSeventeenTrack(results.get(number), found));

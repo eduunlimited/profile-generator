@@ -20,6 +20,7 @@ import {
   orderCardSearchText,
   PARSED_ORDER_SITES,
   refreshIncomingDeliveryDates,
+  stripUnconfirmedSeventeenTrackDelivered,
   refreshTargetOrders,
   applyTargetCancelReasonsAfterRefresh,
   repairUtf8Mojibake,
@@ -198,7 +199,8 @@ export function OrdersPanel({
       await ensureDataKey("profile-generator:imap-settings");
       try {
         const stored = await listOrders();
-        if (!cancelled && stored.length > 0) setOrders(stored);
+        const repaired = stored.length > 0 ? await stripUnconfirmedSeventeenTrackDelivered(stored) : stored;
+        if (!cancelled && repaired.length > 0) setOrders(repaired);
       } catch (error) {
         if (!cancelled) {
           setTone("error");

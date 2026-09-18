@@ -164,14 +164,35 @@ function orderChanged(previous: ParsedOrder, next: ParsedOrder): boolean {
 let inflight: Promise<ParsedOrder[]> | null = null;
 let inflightKey = "";
 
+export async function stripUnconfirmedSeventeenTrackDelivered(orders: ParsedOrder[]): Promise<ParsedOrder[]> {
+  let changed = false;
+  const next = orders.map((order) => {
+    if (!hasSeventeenTrackDelivered(order)) return order;
+    const hasRetailerDelivered = order.events.some(
+      (event) => event.kind === "delivered" && !event.messageId?.startsWith("17track:delivered:"),
+    );
+    if (hasRetailerDelivered) return order;
+    changed = true;
+    return finalizeParsedOrder({
+      ...order,
+      events: order.events.filter((event) => !event.messageId?.startsWith("17track:delivered:")),
+      updatedAt: new Date().toISOString(),
+    });
+  });
+  if (!changed) return orders;
+  await saveOrders(next);
+  return next;
+}
+
 export async function refreshIncomingDeliveryDates(orders: ParsedOrder[]): Promise<ParsedOrder[]> {
-  const incoming = incomingTrackOrders(orders);
-  if (incoming.length === 0) return orders;
+  const repaired = await stripUnconfirmedSeventeenTrackDelivered(orders);
+  const incoming = incomingTrackOrders(repaired);
+  if (incoming.length === 0) return repaired;
   const key = seventeenTrackNumbers(incoming.map((order) => order.trackingNumber ?? "")).join(",");
-  if (!key) return orders;
+  if (!key) return repaired;
   if (inflight && inflightKey === key) return inflight;
   inflightKey = key;
-  inflight = refreshIncomingDeliveryDatesInner(orders, incoming).finally(() => {
+  inflight = refreshIncomingDeliveryDatesInner(repaired, incoming).finally(() => {
     if (inflightKey === key) inflight = null;
   });
   return inflight;
@@ -198,7 +219,7 @@ async function refreshIncomingDeliveryDatesInner(
       stamp: Boolean(expectedDelivery),
       delivered: lookup?.delivered,
       deliveredAt: lookup?.deliveredAt,
-      clearSeventeenTrackDelivered: Boolean(lookup?.latestStatus && !lookup.delivered),
+      clearSeventeenTrackDelivered: Boolean(lookup && !lookup.delivered && (lookup.latestStatus || lookup.eta)),
     });
     if (!orderChanged(order, updated)) continue;
     const index = byId.get(order.id);

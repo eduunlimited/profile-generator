@@ -26,6 +26,8 @@ import {
   refreshTargetOrders,
   applyTargetCancelReasonsAfterRefresh,
   formatCancelledStatus,
+  refreshIncomingDeliveryDates,
+  stripUnconfirmedSeventeenTrackDelivered,
   repairUtf8Mojibake,
   retailerLabel,
   summarizeOrderAccounts,
@@ -308,7 +310,7 @@ export function OrderPerformancePanel({
     setTone("ok");
     try {
       const result = await refreshTargetOrders();
-      const withDates = result.orders;
+      const withDates = await refreshIncomingDeliveryDates(result.orders);
       setOrders(withDates);
       setStatus(result.status);
       setTone(result.tone);
@@ -341,7 +343,8 @@ export function OrderPerformancePanel({
       try {
         const [stored, storedAnalysis] = await Promise.all([listOrders(), listOrderAnalysis()]);
         if (cancelled) return;
-        setOrders(stored);
+        const repaired = stored.length > 0 ? await stripUnconfirmedSeventeenTrackDelivered(stored) : stored;
+        setOrders(repaired);
         setAnalysisByKey(
           Object.fromEntries(storedAnalysis.map((record) => [orderAnalysisKey(record.site, record.email), record])),
         );

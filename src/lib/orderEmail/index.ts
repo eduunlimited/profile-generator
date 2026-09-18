@@ -113,7 +113,7 @@ export {
   TARGET_CANCEL_MANUAL_REASON,
 } from "./targetCancelReasons";
 export type { FetchTargetCancelReasonsResult, FetchTargetCancelReasonsOptions } from "./targetCancelReasons";
-export { refreshIncomingDeliveryDates } from "./trackingLookup";
+export { refreshIncomingDeliveryDates, stripUnconfirmedSeventeenTrackDelivered } from "./trackingLookup";
 export { carrierLabel, detectCarrier, formatEtaLabel } from "./carrier";
 export {
   groupIncomingHouses,

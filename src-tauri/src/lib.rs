@@ -263,7 +263,11 @@ pub fn run() {
                     }
                 }
                 RunEvent::ExitRequested { .. } => {
+                    browser::stop_bundled_python_runtime(app_handle);
                     app_handle.exit(0);
+                }
+                RunEvent::Exit => {
+                    browser::stop_bundled_python_runtime(app_handle);
                 }
                 _ => {}
             }

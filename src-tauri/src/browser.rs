@@ -104,6 +104,21 @@ impl BrowserSessionRegistry {
         self.0.lock().unwrap().remove(account_id);
     }
 
+    pub fn kill_all(&self) {
+        #[cfg(windows)]
+        {
+            let pids: Vec<u32> = self.0.lock().unwrap().values().copied().collect();
+            for pid in pids {
+                if pid == 0 {
+                    continue;
+                }
+                let _ = hidden_command("taskkill")
+                    .args(["/F", "/T", "/PID", &pid.to_string()])
+                    .status();
+            }
+        }
+    }
+
     fn registered_ids(&self) -> Vec<String> {
         self.0.lock().unwrap().keys().cloned().collect()
     }
@@ -308,6 +323,47 @@ fn bundled_python_path(resource_dir: &Path) -> PathBuf {
     #[cfg(not(windows))]
     {
         resource_dir.join("python").join("bin").join("python3")
+    }
+}
+
+fn powershell_literal(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+pub fn stop_bundled_python_runtime(app: &AppHandle) {
+    app.state::<BrowserSessionRegistry>().kill_all();
+    let Some(resource_dir) = bundled_resource_dir(app) else {
+        return;
+    };
+    let python = bundled_python_path(&resource_dir);
+    let pythonw = python.with_file_name("pythonw.exe");
+    let mut paths: Vec<String> = Vec::new();
+    if let Some(path) = python.to_str() {
+        paths.push(format!("'{}'", powershell_literal(path)));
+    }
+    if let Some(path) = pythonw.to_str() {
+        paths.push(format!("'{}'", powershell_literal(path)));
+    }
+    if paths.is_empty() {
+        return;
+    }
+    #[cfg(windows)]
+    {
+        let command = format!(
+            "$paths = @({}); Get-CimInstance Win32_Process | Where-Object {{ $_.ExecutablePath -and ($paths -contains $_.ExecutablePath) }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+            paths.join(", ")
+        );
+        let _ = hidden_command("powershell")
+            .args([
+                "-NoProfile",
+                "-WindowStyle",
+                "Hidden",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &command,
+            ])
+            .status();
     }
 }
 

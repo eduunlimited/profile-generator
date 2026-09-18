@@ -145,7 +145,7 @@ function deliveredFromShipment(value: unknown): { delivered?: boolean; delivered
   const deliveredMilestone = milestones.find((item) => {
     if (!item || typeof item !== "object") return false;
     const row = item as Record<string, unknown>;
-    return String(row.key_stage ?? "") === "Delivered" && (row.time_iso || row.time_utc);
+    return String(row.key_stage ?? "") === "Delivered";
   }) as Record<string, unknown> | undefined;
   const delivered = /^delivered$/i.test(String(latest?.status ?? "")) || Boolean(deliveredMilestone);
   if (!delivered) return {};
@@ -166,6 +166,95 @@ function shipmentNumber(value: unknown): string | undefined {
   return typeof raw === "string" || typeof raw === "number" ? String(raw).replace(/[\s-]/g, "").toUpperCase() : undefined;
 }
 
+export function mergeSeventeenTrack(
+  previous: SeventeenTrackParsed | undefined,
+  parsed: SeventeenTrackParsed,
+): SeventeenTrackParsed {
+  return {
+    eta: parsed.eta ?? previous?.eta,
+    carrier: parsed.carrier ?? previous?.carrier,
+    delivered: parsed.delivered || previous?.delivered,
+    deliveredAt: parsed.deliveredAt ?? previous?.deliveredAt,
+  };
+}
+
+function pageTextWithoutNumsPrefix(text: string): string {
+  return text.replace(/^\s*NUMS:[^\n]*\n/i, "");
+}
+
+function parsePageText(text: string): Map<string, SeventeenTrackParsed> {
+  const results = new Map<string, SeventeenTrackParsed>();
+  const body = pageTextWithoutNumsPrefix(text);
+  const events: Array<{ pos: number; kind: "id" | "deliveredAt" | "eta" | "delivered"; value: string }> = [];
+  for (const match of body.matchAll(/\b([A-Z0-9]{10,34})\b/gi)) {
+    const id = match[1].replace(/[\s-]/g, "").toUpperCase();
+    if (id.length < 10) continue;
+    events.push({ pos: match.index ?? 0, kind: "id", value: id });
+  }
+  for (const match of body.matchAll(/time of delivery[:\s\-–]*(\d{4}-\d{2}-\d{2})/gi)) {
+    events.push({ pos: match.index ?? 0, kind: "deliveredAt", value: match[1] });
+  }
+  for (const match of body.matchAll(/estimated(?:\s+delivery)?(?:\s+date)?[:\s\-–]*(\d{4}-\d{2}-\d{2})/gi)) {
+    events.push({ pos: match.index ?? 0, kind: "eta", value: match[1] });
+  }
+  for (const match of body.matchAll(/(?:latest status|status)\s*[:\-]?\s*delivered\b/gi)) {
+    events.push({ pos: match.index ?? 0, kind: "delivered", value: "1" });
+  }
+  events.sort((left, right) => left.pos - right.pos);
+
+  let current: string | undefined;
+  for (const event of events) {
+    if (event.kind === "id") {
+      current = event.value;
+      if (!results.has(current)) results.set(current, { carrier: detectCarrier(current) });
+      continue;
+    }
+    if (!current) continue;
+    const previous = results.get(current) ?? { carrier: detectCarrier(current) };
+    if (event.kind === "deliveredAt") {
+      results.set(current, {
+        ...previous,
+        delivered: true,
+        deliveredAt: previous.deliveredAt ?? event.value,
+        eta: previous.eta ?? event.value,
+      });
+    } else if (event.kind === "eta") {
+      results.set(current, { ...previous, eta: previous.eta ?? event.value });
+    } else {
+      results.set(current, { ...previous, delivered: true });
+    }
+  }
+  return results;
+}
+
+function numsPrefixIds(text: string): string[] {
+  const line = text.match(/^\s*NUMS:\s*([^\n]+)/i)?.[1];
+  if (!line) return [];
+  return seventeenTrackNumbers(line.split(/[,\s]+/));
+}
+
+function parseWholePageForId(text: string, tracking: string): SeventeenTrackParsed {
+  const id = tracking.replace(/[\s-]/g, "").toUpperCase();
+  const prefixIds = numsPrefixIds(text);
+  if (prefixIds.length > 1) return {};
+  const body = pageTextWithoutNumsPrefix(text);
+  const otherIds = [...body.matchAll(/\b([A-Z0-9]{10,34})\b/gi)]
+    .map((match) => match[1].replace(/[\s-]/g, "").toUpperCase())
+    .filter((value) => value !== id && value.length >= 10);
+  if (otherIds.length > 0) return {};
+  const deliveredAt = body.match(/time of delivery[:\s\-–]*(\d{4}-\d{2}-\d{2})/i)?.[1];
+  const eta = body.match(/estimated(?:\s+delivery)?(?:\s+date)?[:\s\-–]*(\d{4}-\d{2}-\d{2})/i)?.[1];
+  const delivered =
+    /time of delivery/i.test(body) || /(?:latest status|status)\s*[:\-]?\s*delivered\b/i.test(body);
+  if (!eta && !deliveredAt && !delivered) return {};
+  return {
+    eta: eta ?? deliveredAt,
+    delivered: delivered || Boolean(deliveredAt) || undefined,
+    deliveredAt,
+    carrier: carrierFromName(body) ?? detectCarrier(id),
+  };
+}
+
 export function parseSeventeenTrackBatch(text: string): Map<string, SeventeenTrackParsed> {
   const results = new Map<string, SeventeenTrackParsed>();
   for (const json of jsonObjects(text)) {
@@ -178,19 +267,17 @@ export function parseSeventeenTrackBatch(text: string): Map<string, SeventeenTra
       const found: SeventeenTrackParsed = { eta: etaFromShipment(shipment), ...deliveredFromShipment(shipment) };
       walkSeventeenTrack(shipment, found);
       if (!found.carrier) found.carrier = detectCarrier(number);
-      const previous = results.get(number);
-      results.set(number, {
-        eta: found.eta ?? previous?.eta,
-        carrier: found.carrier ?? previous?.carrier,
-        delivered: found.delivered || previous?.delivered,
-        deliveredAt: found.deliveredAt ?? previous?.deliveredAt,
-      });
+      results.set(number, mergeSeventeenTrack(results.get(number), found));
     }
+  }
+  for (const [tracking, parsed] of parsePageText(text)) {
+    results.set(tracking, mergeSeventeenTrack(results.get(tracking), parsed));
   }
   return results;
 }
 
 export function parseSeventeenTrack(text: string, tracking: string): SeventeenTrackParsed {
   const id = tracking.replace(/[\s-]/g, "").toUpperCase();
-  return parseSeventeenTrackBatch(text).get(id) ?? { carrier: detectCarrier(id) };
+  const found = mergeSeventeenTrack(parseSeventeenTrackBatch(text).get(id), parseWholePageForId(text, id));
+  return { ...found, carrier: found.carrier ?? detectCarrier(id) };
 }

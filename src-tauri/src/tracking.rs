@@ -1,6 +1,7 @@
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
+use tauri::AppHandle;
 
 #[derive(Debug, Deserialize)]
 pub struct TrackingFetchRequest {
@@ -29,7 +30,30 @@ fn allowed_host(host: &str) -> bool {
     )
 }
 
-pub async fn fetch_tracking_page(request: TrackingFetchRequest) -> Result<TrackingFetchResult, String> {
+fn is_seventeen_track_url(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    lower.contains("t.17track.net") || lower.contains("www.17track.net")
+}
+
+pub async fn fetch_tracking_page(
+    app: AppHandle,
+    request: TrackingFetchRequest,
+) -> Result<TrackingFetchResult, String> {
+    if is_seventeen_track_url(&request.url) {
+        let url = request.url.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            match crate::browser::crawl_seventeen_track(&app, &url) {
+                Ok((status, text)) => Ok(TrackingFetchResult { status, text }),
+                Err(_) => Ok(TrackingFetchResult {
+                    status: 0,
+                    text: String::new(),
+                }),
+            }
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+
     let url = reqwest::Url::parse(request.url.trim()).map_err(|error| error.to_string())?;
     let host = url.host_str().unwrap_or("");
     if !allowed_host(host) {

@@ -279,6 +279,27 @@ fn cancel_script_path(app: &AppHandle) -> PathBuf {
     dev_cancel_script_path()
 }
 
+fn dev_track_script_path() -> PathBuf {
+    project_root()
+        .join("scripts")
+        .join("camoufox")
+        .join("crawl_17track.py")
+}
+
+fn bundled_track_script_path(resource_dir: &Path) -> PathBuf {
+    resource_dir.join("camoufox").join("crawl_17track.py")
+}
+
+fn track_script_path(app: &AppHandle) -> PathBuf {
+    if let Some(resource_dir) = bundled_resource_dir(app) {
+        let bundled = bundled_track_script_path(&resource_dir);
+        if bundled.exists() {
+            return bundled;
+        }
+    }
+    dev_track_script_path()
+}
+
 fn bundled_python_path(resource_dir: &Path) -> PathBuf {
     #[cfg(windows)]
     {
@@ -930,4 +951,84 @@ pub fn fetch_target_cancel_reasons(
 
     let _ = child.wait();
     last_result.ok_or_else(|| "Target cancel fetch exited without a result.".to_string())
+}
+
+pub fn crawl_seventeen_track(app: &AppHandle, url: &str) -> Result<(u16, String), String> {
+    let python = resolve_python_executable(app, None);
+    let script = track_script_path(app);
+    if !script.exists() {
+        return Err(format!(
+            "17track crawl script not found at {}.",
+            script.display()
+        ));
+    }
+
+    let payload_json = serde_json::json!({ "url": url }).to_string();
+    let mut child = hidden_command(&python)
+        .arg(&script)
+        .arg("--request")
+        .arg(&payload_json)
+        .envs(python_env(app, &python))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "Failed to start 17track crawl with {}: {error}",
+                python.display()
+            )
+        })?;
+
+    if let Some(stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut buffer = Vec::new();
+            let _ = Read::read_to_end(&mut reader, &mut buffer);
+        });
+    }
+
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture 17track crawl output.".to_string())?;
+    let mut output = Vec::new();
+    let deadline = std::time::Instant::now() + Duration::from_secs(90);
+    loop {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            return Err("Timed out waiting for 17track crawl.".to_string());
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                let _ = stdout.read_to_end(&mut output);
+                break;
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(80)),
+            Err(error) => return Err(error.to_string()),
+        }
+    }
+
+    let raw = String::from_utf8_lossy(&output);
+    let parsed = serde_json::from_str::<serde_json::Value>(raw.trim())
+        .ok()
+        .or_else(|| {
+            raw.lines()
+                .rev()
+                .find_map(|line| serde_json::from_str(line.trim()).ok())
+        })
+        .ok_or_else(|| "17track crawl returned invalid JSON.".to_string())?;
+    let status = parsed
+        .get("status")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0) as u16;
+    let mut text = parsed
+        .get("text")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+        .to_string();
+    if text.len() > 250_000 {
+        text.truncate(250_000);
+    }
+    Ok((status, text))
 }

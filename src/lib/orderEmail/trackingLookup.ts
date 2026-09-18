@@ -6,6 +6,8 @@ import { allowedTrackingHost, detectCarrier, normalizeTracking } from "./carrier
 import { isInTransitOrder } from "./dashboard";
 import { finalizeParsedOrder } from "./merge";
 import {
+  mergeSeventeenTrack,
+  parseSeventeenTrack,
   parseSeventeenTrackBatch,
   seventeenTrackCarrierFcs,
   seventeenTrackNumbers,
@@ -101,13 +103,13 @@ async function fetchTrackingPage(url: string): Promise<TrackingFetchResult> {
   };
 }
 
-function mergeParsed(previous: SeventeenTrackParsed | undefined, parsed: SeventeenTrackParsed): SeventeenTrackParsed {
-  return {
-    eta: parsed.eta ?? previous?.eta,
-    carrier: parsed.carrier ?? previous?.carrier,
-    delivered: parsed.delivered || previous?.delivered,
-    deliveredAt: parsed.deliveredAt ?? previous?.deliveredAt,
-  };
+function absorbPage(results: Map<string, SeventeenTrackParsed>, ids: string[], text: string) {
+  for (const [tracking, parsed] of parseSeventeenTrackBatch(text)) {
+    results.set(tracking, mergeSeventeenTrack(results.get(tracking), parsed));
+  }
+  for (const id of ids) {
+    results.set(id, mergeSeventeenTrack(results.get(id), parseSeventeenTrack(text, id)));
+  }
 }
 
 async function lookupSeventeenTrackBatch(trackings: string[]): Promise<Map<string, SeventeenTrackParsed>> {
@@ -117,9 +119,7 @@ async function lookupSeventeenTrackBatch(trackings: string[]): Promise<Map<strin
     const chunk = ids.slice(index, index + BATCH_SIZE);
     try {
       const page = await fetchTrackingPage(seventeenTrackUrl(chunk));
-      for (const [tracking, parsed] of parseSeventeenTrackBatch(page.text)) {
-        results.set(tracking, mergeParsed(results.get(tracking), parsed));
-      }
+      absorbPage(results, chunk, page.text);
     } catch {
       // Keep any numbers already parsed from earlier chunks.
     }
@@ -130,9 +130,7 @@ async function lookupSeventeenTrackBatch(trackings: string[]): Promise<Map<strin
         if (results.get(id)?.eta || results.get(id)?.delivered) break;
         try {
           const page = await fetchTrackingPage(seventeenTrackUrl(id, fc));
-          for (const [tracking, parsed] of parseSeventeenTrackBatch(page.text)) {
-            results.set(tracking, mergeParsed(results.get(tracking), parsed));
-          }
+          absorbPage(results, [id], page.text);
         } catch {
           // Leave this number for a later pass.
         }
@@ -182,12 +180,13 @@ async function refreshIncomingDeliveryDatesInner(
   for (const order of incoming) {
     const tracking = normalizeTracking(order.trackingNumber ?? "");
     const lookup = lookups.get(tracking);
+    const expectedDelivery = lookup?.eta ?? lookup?.deliveredAt;
     const updated = applyShipmentFields(order, {
       tracking,
       carrier: lookup?.carrier ?? detectCarrier(tracking) ?? order.carrier,
-      expectedDelivery: lookup?.eta,
-      source: lookup?.eta ? "17track" : undefined,
-      stamp: Boolean(lookup?.eta),
+      expectedDelivery,
+      source: expectedDelivery ? "17track" : undefined,
+      stamp: Boolean(expectedDelivery),
       delivered: lookup?.delivered,
       deliveredAt: lookup?.deliveredAt,
     });

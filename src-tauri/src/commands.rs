@@ -407,9 +407,10 @@ pub async fn geocodio_lookup(
 
 #[tauri::command]
 pub async fn fetch_tracking_page(
+    app: AppHandle,
     request: crate::tracking::TrackingFetchRequest,
 ) -> Result<crate::tracking::TrackingFetchResult, String> {
-    crate::tracking::fetch_tracking_page(request).await
+    crate::tracking::fetch_tracking_page(app, request).await
 }
 
 #[tauri::command]

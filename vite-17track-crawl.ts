@@ -39,11 +39,11 @@ export async function crawlSeventeenTrack(tracking: string, carrierFc?: string):
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
     });
     const bodies: string[] = [];
+    const ready = (text: string) =>
+      /"estimated_delivery_date"\s*:\s*\{[\s\S]*?"(?:from|to)"\s*:\s*"\d{4}-\d{2}-\d{2}/.test(text) ||
+      /"status"\s*:\s*"Delivered"/i.test(text) ||
+      /time of delivery[:\s\-–]*\d{4}-\d{2}-\d{2}/i.test(text);
     const gotEta = new Promise<void>((resolve) => {
-      const ready = (text: string) =>
-        ids.some((id) => text.includes(id)) &&
-        (/"estimated_delivery_date"\s*:\s*\{[\s\S]*?"(?:from|to)"\s*:\s*"\d{4}-\d{2}-\d{2}/.test(text) ||
-          /"status"\s*:\s*"Delivered"/i.test(text));
       page.on("response", (response) => {
         if (!/\/track\/restapi|\/restapi\/track/i.test(response.url()) || response.status() !== 200) return;
         void response
@@ -62,12 +62,19 @@ export async function crawlSeventeenTrack(tracking: string, carrierFc?: string):
       waitUntil: "domcontentloaded",
       timeout: 25000,
     });
-    await Promise.race([gotEta, new Promise((resolve) => setTimeout(resolve, 14000))]);
+    const gotPage = (async () => {
+      for (let attempt = 0; attempt < 14; attempt += 1) {
+        const visible = await page.evaluate(() => document.body?.innerText ?? "");
+        if (ready(visible)) return;
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    })();
+    await Promise.race([gotEta, gotPage, new Promise((resolve) => setTimeout(resolve, 14000))]);
     const text = await page.evaluate(() => document.body?.innerText ?? "");
     await page.close();
     return {
       status: 200,
-      text: [bodies.join("\n"), text].filter(Boolean).join("\n").slice(0, 250_000),
+      text: [`NUMS: ${ids.join(",")}`, bodies.join("\n"), text].filter(Boolean).join("\n").slice(0, 250_000),
     };
   } catch {
     return EMPTY;

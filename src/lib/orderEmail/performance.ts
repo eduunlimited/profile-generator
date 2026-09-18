@@ -411,6 +411,7 @@ export interface TimelineFieldChanges {
 
 export interface OrderAddressLines {
   street: string;
+  line2: string;
   cityLine: string;
   pickup: boolean;
   shipName: string;
@@ -454,7 +455,7 @@ export function orderAddressFingerprint(order: ParsedOrder): string {
   if (isWarmupOrder(order) || order.shippingAddress?.source === "pickup") return "pickup";
   const address = order.shippingAddress;
   if (!address) return "";
-  const key = [address.line1, address.city, address.state, address.postalCode]
+  const key = [address.line1, address.line2, address.city, address.state, address.postalCode]
     .map((part) => (part ?? "").trim().toLowerCase())
     .join("|");
   if (key.replace(/\|/g, "")) return key;
@@ -544,15 +545,16 @@ export function timelineRailTone(
 export function orderAddressLines(order: ParsedOrder, fallback = ""): OrderAddressLines {
   if (isWarmupOrder(order) || order.shippingAddress?.source === "pickup") {
     const store = [order.shippingAddress?.name, order.shippingAddress?.city].filter(Boolean).join(" · ");
-    return { street: "Pickup order", cityLine: store, pickup: true, shipName: "" };
+    return { street: "Pickup order", cityLine: store, line2: "", pickup: true, shipName: "" };
   }
   const address = order.shippingAddress;
   const shipName = address?.name?.trim() || "";
   const street = address?.line1?.trim() || "";
+  const line2 = address?.line2?.trim() || "";
   const cityLine = formatUspsLastLine(address?.city ?? "", address?.state ?? "", address?.postalCode ?? "");
-  if (street || cityLine) return { street, cityLine, pickup: false, shipName };
+  if (street || line2 || cityLine) return { street, line2, cityLine, pickup: false, shipName };
   const raw = (formatOrderAddress(address) || fallback).replace(/\n+/g, ", ").trim();
-  return { street: raw, cityLine: "", pickup: false, shipName };
+  return { street: raw, line2: "", cityLine: "", pickup: false, shipName };
 }
 
 export function accountOrderTimeline(

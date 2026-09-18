@@ -374,7 +374,7 @@ export function mergeOrderAddress(incoming?: OrderAddress, current?: OrderAddres
   if (!incoming) return current;
   if (!current) return incoming;
   const score = (value?: OrderAddress) =>
-    [value?.line1, value?.city, value?.postalCode, value?.name].filter((part) => part?.trim()).length;
+    [value?.line1, value?.line2, value?.city, value?.postalCode, value?.name].filter((part) => part?.trim()).length;
   return score(incoming) >= score(current) ? incoming : current;
 }
 

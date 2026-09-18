@@ -169,6 +169,7 @@ function TimelineNode({
           />
           {address.shipName ? <FieldLine value={address.shipName} changed={changes.shipName} /> : null}
           <FieldLine value={address.street} changed={changes.address} />
+          {address.line2 ? <FieldLine value={address.line2} changed={changes.address} /> : null}
           {address.cityLine ? (
             <FieldLine value={address.cityLine} changed={!address.pickup && changes.address} />
           ) : null}

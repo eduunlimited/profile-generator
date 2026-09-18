@@ -1,4 +1,5 @@
 import type { OrderRetailer, ParsedOrder } from "../types";
+import { isUsableTracking } from "./carrier";
 
 export const ORDER_REFRESH_MS = 60 * 60 * 1000;
 export type SpendPeriod = "this_week" | "last_week" | "1m" | "3m" | "6m" | "ytd" | "1y";
@@ -92,12 +93,15 @@ export function isSuccessfulOrder(order: ParsedOrder): boolean {
 }
 
 export function isInTransitOrder(order: ParsedOrder): boolean {
-  if (isCancelledOrder(order) || order.fulfillment === "pickup" || order.status === "picked_up") return false;
-  return order.status === "shipped";
+  if (isCancelledOrder(order) || order.fulfillment === "pickup" || order.status === "picked_up" || order.status === "delivered") {
+    return false;
+  }
+  if (order.status === "shipped") return true;
+  return isUsableTracking(order.trackingNumber);
 }
 
 export function isNotShippedOrder(order: ParsedOrder): boolean {
-  return !isCancelledOrder(order) && order.status === "placed";
+  return !isCancelledOrder(order) && order.status === "placed" && !isInTransitOrder(order);
 }
 
 export function orderInPeriod(order: ParsedOrder, period: SpendPeriod, now = new Date()): boolean {

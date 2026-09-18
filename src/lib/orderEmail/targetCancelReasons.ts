@@ -147,11 +147,16 @@ export function matchingTargetCredential(
   );
 }
 
-export function cancelledTargetOrdersMissingReason(orders: ParsedOrder[]): ParsedOrder[] {
-  return orders.filter(
-    (order) =>
-      order.retailer === "target" && isCancelledOrder(order) && !order.cancelReason?.trim(),
-  );
+export function cancelledTargetOrdersMissingReason(
+  orders: ParsedOrder[],
+  options: { includeManual?: boolean } = {},
+): ParsedOrder[] {
+  return orders.filter((order) => {
+    if (order.retailer !== "target" || !isCancelledOrder(order)) return false;
+    const reason = order.cancelReason?.trim() ?? "";
+    if (!reason) return true;
+    return Boolean(options.includeManual) && isManualCancelReason(reason);
+  });
 }
 
 function applyCancelReasons(
@@ -306,7 +311,8 @@ async function fetchTargetCancelReasonsLocked(
     };
   }
 
-  const missing = cancelledTargetOrdersMissingReason(next).filter(
+  const includeManual = options.orderIds === undefined;
+  const missing = cancelledTargetOrdersMissingReason(next, { includeManual }).filter(
     (order) => !scoped || wantedIds.has(order.orderId),
   );
   if (missing.length === 0) {
@@ -356,7 +362,7 @@ async function fetchTargetCancelReasonsLocked(
     const credential = matchingTargetCredential(email, credentials);
     const groupIds = group.map((order) => order.orderId);
     if (!credential) {
-      problems.push(`No Target account for ${email}`);
+      problems.push(`No Target login saved for ${email}`);
       next = withManualReasons(next, groupIds);
       next = await saveAndReload(next);
       continue;
@@ -369,11 +375,12 @@ async function fetchTargetCancelReasonsLocked(
     }
 
     const proxy = resolveProxyForAccount(proxies, credential.id, assignments);
-    const allowLogin = (options.allowLogin ?? true) && !running.has(credential.id);
+    const sessionOpen = running.has(credential.id);
+    const allowLogin = (options.allowLogin ?? true) && !sessionOpen;
     onStatus?.(
       `Checking ${group.length} cancelled Target order(s) for ${email}${
         proxy ? "" : " (no proxy assigned)"
-      }`,
+      }${sessionOpen ? " (session already open — cookies only)" : ""}`,
     );
     accounts += 1;
     emailsTouched.push(email);
@@ -410,13 +417,14 @@ async function fetchTargetCancelReasonsLocked(
     await staleAnalysisForEmails(emailsTouched);
   }
 
+  const leftover = cancelledTargetOrdersMissingReason(next, { includeManual: true }).length;
   const status =
     fetched > 0
       ? `Saved ${fetched} Target cancel reason(s) across ${accounts} account(s).${
-          problems.length ? ` ${problems.slice(0, 3).join(" · ")}` : ""
-        }`
+          leftover ? ` ${leftover} still need a sign-in retry.` : ""
+        }${problems.length ? ` ${problems.slice(0, 3).join(" · ")}` : ""}`
       : accounts > 0 || unmatched.length > 0
-        ? `Could not read Target cancel reasons. Showing "Check reason manually" where the lookup failed.${
+        ? `Could not read Target cancel reasons. Showing "Check reason manually" until a Target sign-in succeeds.${
             problems[0] ? ` ${problems[0]}` : ""
           }`
         : problems[0] || "";

@@ -5,6 +5,10 @@ export const TARGET_SEARCH_SUBJECTS = [
   "Here's your order #",
   "Here\u2019s your order #",
   "are about to ship",
+  "have shipped",
+  "has shipped",
+  "on the way",
+  "on its way",
   "have arrived from order",
   "had to cancel order",
   "Your order arrives",
@@ -38,7 +42,21 @@ const TARGET_SUBJECT_RULES: { kind: OrderEventKind; pattern: RegExp }[] = [
   },
   {
     kind: "shipped",
-    pattern: new RegExp(String.raw`items from order\s*#:?\s*${ORDER_ID}\s*are about to ship`, "i"),
+    pattern: new RegExp(String.raw`items from order\s*#:?\s*${ORDER_ID}\s*(?:are about to ship|have(?: now)? shipped|has shipped)`, "i"),
+  },
+  {
+    kind: "shipped",
+    pattern: new RegExp(
+      String.raw`(?:your )?order\s*#:?\s*${ORDER_ID}\s*(?:has shipped|have shipped|is on (?:its|the) way|was shipped)`,
+      "i",
+    ),
+  },
+  {
+    kind: "shipped",
+    pattern: new RegExp(
+      String.raw`(?:shipped|shipping confirmation|on (?:its|the) way).{0,48}order\s*#:?\s*${ORDER_ID}`,
+      "i",
+    ),
   },
   {
     kind: "delivered",

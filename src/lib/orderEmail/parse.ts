@@ -558,12 +558,13 @@ export function shipmentHintsFromText(
   };
 
   for (const match of joined.matchAll(/https?:\/\/[^\s"'<>]+/gi)) {
-    add(match[0].match(/(?:trknbr|tracking(?:_?number)?|tracknum|tLabels)=([A-Z0-9-]+)/i)?.[1]);
+    add(match[0].match(/(?:trknbr|tracknumbers?|tracking(?:_?number)?|tracknum|tLabels)=([A-Z0-9-]+)/i)?.[1]);
   }
   add(text.match(/\b(1Z[A-Z0-9]{16})\b/i)?.[1]);
   for (const match of text.matchAll(/\b(9[1-5]\d{19,32})\b/g)) add(match[1]);
   for (const match of text.matchAll(/\b(96\d{18,22})\b/g)) add(match[1]);
   add(text.match(/\b(\d{15})\b/)?.[1]);
+  add(text.match(/\b(\d{12})\b/)?.[1]);
   add(text.match(/tracking(?:\s*(?:number|#))?[:\s]*([A-Z0-9]{8,34})/i)?.[1]);
   add(text.match(/(?:trknbr|tracknum)=([A-Z0-9]{8,34})/i)?.[1]);
 

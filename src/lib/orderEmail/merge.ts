@@ -9,7 +9,7 @@ import {
   type ClassifiedOrderMessage,
 } from "./classify";
 import { sortOrdersByPlaced } from "./dashboard";
-import { detectCarrier, preferTracking } from "./carrier";
+import { detectCarrier, isUsableTracking, preferTracking } from "./carrier";
 import {
   extractOrderItems,
   extractOrderTotal,
@@ -149,6 +149,9 @@ export function finalizeParsedOrder(order: ParsedOrder): ParsedOrder {
   const events = dedupeOrderEvents(remapPickupEvents(order.events, fulfillment));
   let status: OrderStatus = "placed";
   for (const event of events) status = strongerStatus(status, eventStatus(event.kind));
+  if (status === "placed" && fulfillment !== "pickup" && isUsableTracking(order.trackingNumber)) {
+    status = "shipped";
+  }
   return { ...order, fulfillment, events, status };
 }
 
@@ -239,22 +242,31 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
       .map(toEvent),
   );
   const confirmation = placed[placed.length - 1];
-  const shipped = group.filter((item) => item.kind === "shipped").sort((a, b) => b.dateMs - a.dateMs)[0];
+  const shipmentMessages = group
+    .filter((item) => item.kind === "shipped" || item.kind === "in_transit" || item.kind === "delivered")
+    .sort((a, b) => b.dateMs - a.dateMs);
   const total = extractOrderTotal(
     confirmation.message.subject,
     confirmation.message.snippet ?? "",
     confirmation.message.body ?? "",
     confirmation.message.htmlBody ?? "",
   );
-  const shipmentHints = shipped
-    ? shipmentHintsFromText(
-        orderId,
-        shipped.message.subject,
-        shipped.message.snippet ?? "",
-        shipped.message.body ?? "",
-        shipped.message.htmlBody ?? "",
-      )
-    : undefined;
+  let shipmentHints: ReturnType<typeof shipmentHintsFromText> | undefined;
+  for (const item of shipmentMessages) {
+    const hints = shipmentHintsFromText(
+      orderId,
+      item.message.subject,
+      item.message.snippet ?? "",
+      item.message.body ?? "",
+      item.message.htmlBody ?? "",
+    );
+    shipmentHints = {
+      tracking: hints.tracking ?? shipmentHints?.tracking,
+      carrier: hints.carrier ?? shipmentHints?.carrier,
+      expectedDelivery: hints.expectedDelivery ?? shipmentHints?.expectedDelivery,
+    };
+    if (shipmentHints.tracking) break;
+  }
   const trackingNumber = shipmentHints?.tracking;
   const items = group.reduce(
     (current, item) =>
@@ -378,7 +390,7 @@ export function attachClassifiedEvents(
     const events = dedupeOrderEvents([...previous.events, toEvent(item)]);
     const updatedMs = Math.max(Date.parse(previous.updatedAt) || 0, item.dateMs);
     const hints =
-      item.kind === "shipped" || item.kind === "delivered"
+      item.kind === "shipped" || item.kind === "in_transit" || item.kind === "delivered"
         ? shipmentHintsFromText(
             item.orderId,
             item.message.subject,

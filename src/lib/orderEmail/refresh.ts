@@ -187,7 +187,10 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
     const pickedUp = order.events.find((event) => event.kind === "picked_up" && event.accountId === account.id);
     const shipped = [...order.events]
       .reverse()
-      .find((event) => event.kind === "shipped" && event.accountId === account.id);
+      .find(
+        (event) =>
+          (event.kind === "shipped" || event.kind === "in_transit") && event.accountId === account.id,
+      );
     Object.assign(order, finalizeParsedOrder(order));
     const fetches: { eventUid: number; kind: "placed" | "picked_up" | "shipped" }[] = [];
     const missingAddress = !order.shippingAddress?.line1 && !order.shippingAddress?.raw;
@@ -207,7 +210,7 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
     const needsShipmentHints =
       order.status !== "cancelled" &&
       order.fulfillment !== "pickup" &&
-      order.status === "shipped" &&
+      (order.status === "shipped" || Boolean(shipped)) &&
       (!order.trackingNumber || !order.expectedDelivery || !order.carrier);
     if (shipped && needsShipmentHints) {
       fetches.push({ eventUid: shipped.uid, kind: "shipped" });

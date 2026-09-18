@@ -56,7 +56,20 @@ USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:142.0) Gecko/20100101 Firefox/142.0"
 )
 
-REASON_KEYS = ("cancel_reason_text", "cancelReasonText", "cancel_reason", "cancelReason")
+REASON_KEYS = (
+    "cancel_reason_text",
+    "cancelReasonText",
+    "cancel_reason",
+    "cancelReason",
+    "cancellation_reason",
+    "cancellationReason",
+    "reason_description",
+    "reasonDescription",
+    "reason_text",
+    "reasonText",
+    "policy_reason_text",
+    "policyReasonText",
+)
 
 
 def _emit(payload: dict[str, Any]) -> None:
@@ -82,7 +95,10 @@ def _extract_reasons(value: Any) -> list[str]:
     def walk(node: Any) -> None:
         if isinstance(node, dict):
             for key, child in node.items():
-                if key in REASON_KEYS and isinstance(child, str) and child.strip():
+                lower = str(key).lower()
+                if isinstance(child, str) and child.strip() and (
+                    key in REASON_KEYS or ("cancel" in lower and "reason" in lower)
+                ):
                     found.append(child.strip())
                 else:
                     walk(child)
@@ -159,6 +175,18 @@ def _request_headers(cookie_header: str) -> dict[str, str]:
     return headers
 
 
+def _auth_required(parsed: Any, http_status: int) -> bool:
+    if http_status in {401, 403}:
+        return True
+    if not isinstance(parsed, dict):
+        return False
+    code = parsed.get("code") or parsed.get("status") or parsed.get("error_code")
+    if code in {401, 403, "401", "403", "UNAUTHORIZED", "UNAUTHENTICATED"}:
+        return True
+    message = str(parsed.get("message") or parsed.get("error") or "").lower()
+    return "sign in" in message or "unauthorized" in message or "unauthenticated" in message
+
+
 def _parse_api_body(body: str, http_status: int) -> dict[str, Any]:
     text = body.strip()
     if not text:
@@ -173,8 +201,45 @@ def _parse_api_body(body: str, http_status: int) -> dict[str, Any]:
     return {
         "httpStatus": http_status,
         "cancelReason": reasons[0] if reasons else None,
-        "needsLogin": False,
+        "needsLogin": _auth_required(parsed, http_status),
     }
+
+
+def _item_reason(item: dict[str, Any] | None) -> str:
+    return str((item or {}).get("cancelReason") or "").strip()
+
+
+def _index_results(results: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    indexed: dict[str, dict[str, Any]] = {}
+    for item in results:
+        order_id = str(item.get("orderId") or "").strip()
+        if order_id:
+            indexed[order_id] = item
+    return indexed
+
+
+def _results_have_reasons(results: list[dict[str, Any]], order_ids: list[str]) -> bool:
+    indexed = _index_results(results)
+    return all(_item_reason(indexed.get(order_id)) for order_id in order_ids)
+
+
+def _merge_results(
+    previous: list[dict[str, Any]],
+    incoming: list[dict[str, Any]],
+    order_ids: list[str],
+) -> list[dict[str, Any]]:
+    indexed = _index_results(previous)
+    for item in incoming:
+        order_id = str(item.get("orderId") or "").strip()
+        if not order_id:
+            continue
+        existing = indexed.get(order_id, {})
+        if _item_reason(item) or not _item_reason(existing):
+            indexed[order_id] = item
+    return [
+        indexed.get(order_id, {"orderId": order_id, "error": "No Target response."})
+        for order_id in order_ids
+    ]
 
 
 def fetch_order_http(order_id: str, cookie_header: str, proxy_server: str | None) -> dict[str, Any]:
@@ -461,7 +526,7 @@ async def run(request: dict[str, Any]) -> None:
     if cookie_header:
         _status("Trying saved Target cookies")
         results = fetch_orders_http(order_ids, cookie_header, proxy_server)
-        if not any(item.get("needsLogin") for item in results):
+        if _results_have_reasons(results, order_ids):
             _emit(
                 {
                     "event": "result",
@@ -472,6 +537,7 @@ async def run(request: dict[str, Any]) -> None:
                 }
             )
             return
+        _status("Saved cookies did not include cancel reasons; signing in")
 
     if not allow_login:
         _emit(
@@ -480,7 +546,10 @@ async def run(request: dict[str, Any]) -> None:
                 "ok": False,
                 "needsLogin": True,
                 "loggedIn": False,
-                "error": "Saved Target cookies expired. Close the open session or allow auto sign-in.",
+                "error": (
+                    "Target cookies did not include cancel reasons. Close the open "
+                    "session for this account, then click Refresh so it can sign in."
+                ),
                 "orders": results,
             }
         )
@@ -514,7 +583,8 @@ async def run(request: dict[str, Any]) -> None:
         await _login_with_otp(page, context, email, session_dir)
         used_login = True
         await context.storage_state(path=str(storage_state_path))
-        results = await fetch_orders_in_browser(context, order_ids)
+        logged_in_results = await fetch_orders_in_browser(context, order_ids)
+        results = _merge_results(results, logged_in_results, order_ids)
         await context.storage_state(path=str(storage_state_path))
         await _shutdown_camoufox(cm, browser, context)
         shutdown_done = True
@@ -526,12 +596,18 @@ async def run(request: dict[str, Any]) -> None:
             with suppress(Exception):
                 await _shutdown_camoufox(cm, browser, context)
 
+    missing = [order_id for order_id in order_ids if not _item_reason(_index_results(results).get(order_id))]
     _emit(
         {
             "event": "result",
-            "ok": not any(item.get("needsLogin") for item in results),
+            "ok": not missing and not any(item.get("needsLogin") for item in results),
             "loggedIn": True,
             "usedLogin": used_login,
+            "error": (
+                f"Target did not return a cancel reason for {len(missing)} order(s) after sign-in."
+                if missing
+                else None
+            ),
             "orders": results,
         }
     )

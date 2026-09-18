@@ -66,7 +66,7 @@ const TAB_CONTEXT: Record<AppTab, { title: string; hint: string }> = {
   credentials: { title: "Accounts", hint: "Credentials · site links" },
   mail: { title: "Mail", hint: "Stored inbox" },
   orders: { title: "Orders", hint: "Confirmations · shipment · cancel" },
-  performance: { title: "Order Performance", hint: "Cancelled emails · per site · jigs · payment" },
+  performance: { title: "Order Performance", hint: "Last 5 orders · per email" },
   jigs: { title: "Jig Presets", hint: "Name · address · export rules" },
   sessions: { title: "Browser Sessions", hint: "Account pool · Camoufox · cookies" },
   settings: { title: "Settings", hint: "API keys · app settings" },

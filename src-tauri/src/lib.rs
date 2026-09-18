@@ -225,6 +225,8 @@ pub fn run() {
             commands::list_running_browser_sessions,
             commands::check_camoufox,
             commands::bundled_runtime_info,
+            commands::fetch_target_cancel_reasons,
+            commands::submit_target_cancel_otp,
             commands::test_proxy,
             commands::test_imap,
             commands::fetch_imap_inbox,

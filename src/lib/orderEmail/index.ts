@@ -64,6 +64,7 @@ export {
   PARSED_ORDER_SITES,
   UNKNOWN_ORDER_EMAIL,
   formatOrderMoney,
+  orderPlacedMs,
   ORDER_REFRESH_MS,
 } from "./dashboard";
 export type { SpendPeriod, OrderListFilter, OrderSiteFilter, EmailOrderSummary } from "./dashboard";
@@ -79,12 +80,36 @@ export {
   accountSearchHaystack,
   summarizeSitePerformance,
   toAccountPerformanceSnapshot,
+  LAST_ORDERS_PER_EMAIL,
+  lastOrdersForEmail,
+  padTimelineSlots,
+  orderPaymentFingerprint,
+  orderAddressFingerprint,
+  orderProfileFingerprint,
+  timelineFieldChanges,
+  timelineRailTone,
+  orderAddressLines,
+  accountOrderTimeline,
+  resolveOrderProfileName,
 } from "./performance";
-export type { AccountPerformance, AccountPerformanceSnapshot } from "./performance";
-export { formatOrderCardDisplay, matchOrderCardName, orderCardSearchText } from "./payment";
+export type {
+  AccountPerformance,
+  AccountPerformanceSnapshot,
+  AccountOrderTimeline,
+  TimelineFieldChanges,
+  TimelineRailTone,
+} from "./performance";
+export { formatOrderCardDisplay, formatOrderCardCompact, matchOrderCardName, orderCardSearchText } from "./payment";
 export type { OrderCardDisplay } from "./payment";
 export { refreshTargetOrders } from "./refresh";
 export type { OrderRefreshResult } from "./refresh";
+export {
+  fetchTargetCancelReasons,
+  cancelledTargetOrdersMissingReason,
+  formatCancelledStatus,
+  shortTargetCancelReason,
+} from "./targetCancelReasons";
+export type { FetchTargetCancelReasonsResult, FetchTargetCancelReasonsOptions } from "./targetCancelReasons";
 export { refreshIncomingDeliveryDates } from "./trackingLookup";
 export { carrierLabel, detectCarrier, formatEtaLabel } from "./carrier";
 export {

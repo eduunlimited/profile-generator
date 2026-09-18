@@ -354,6 +354,7 @@ export function upsertParsedOrders(existing: ParsedOrder[], incoming: ParsedOrde
         recipientEmail: next.recipientEmail ?? previous.recipientEmail,
         shippingAddress: mergeOrderAddress(next.shippingAddress, previous.shippingAddress),
         payment: mergeOrderPayment(next.payment, previous.payment),
+        cancelReason: next.cancelReason ?? previous.cancelReason,
         events: mergedEvents,
         placedAt: previous.placedAt || next.placedAt,
         updatedAt: new Date(updatedMs || Date.now()).toISOString(),

@@ -118,9 +118,12 @@ fn now_secs() -> u64 {
 pub fn machine_id() -> String {
     #[cfg(windows)]
     {
+        use std::os::windows::process::CommandExt;
         use std::process::Command;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         let output = Command::new("reg")
             .args(["query", r"HKLM\SOFTWARE\Microsoft\Cryptography", "/v", "MachineGuid"])
+            .creation_flags(CREATE_NO_WINDOW)
             .output();
         if let Ok(result) = output {
             let text = String::from_utf8_lossy(&result.stdout);

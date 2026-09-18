@@ -490,6 +490,28 @@ pub fn bundled_runtime_info(
 }
 
 #[tauri::command]
+pub async fn fetch_target_cancel_reasons(
+    app: AppHandle,
+    request: crate::browser::TargetCancelFetchRequest,
+) -> Result<crate::browser::TargetCancelFetchResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::browser::fetch_target_cancel_reasons(&app, request)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub fn submit_target_cancel_otp(
+    app: AppHandle,
+    account_id: String,
+    account_label: String,
+    code: String,
+) -> Result<(), String> {
+    crate::browser::submit_target_cancel_otp(&app, account_id, account_label, code)
+}
+
+#[tauri::command]
 pub async fn activate_license(
     app: AppHandle,
     license_key: String,

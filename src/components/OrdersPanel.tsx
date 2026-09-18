@@ -256,6 +256,7 @@ export function OrdersPanel({
           masterAddressForOrder(order, masterProfiles, profiles, poolEmails) ?? "",
           order.total != null ? formatTotal(order) : "",
           retailerLabel(order.retailer),
+          order.cancelReason ?? "",
         ]
           .join(" ")
           .toLowerCase();
@@ -569,6 +570,12 @@ export function OrdersPanel({
                     )}
                   </dd>
                 </div>
+                {active.status === "cancelled" ? (
+                  <div>
+                    <dt>Cancel reason</dt>
+                    <dd>{active.cancelReason || "Not fetched yet"}</dd>
+                  </div>
+                ) : null}
                 {active.fulfillment === "pickup" ? (
                   <div>
                     <dt>Fulfillment</dt>

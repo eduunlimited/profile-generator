@@ -1,5 +1,6 @@
 import { normalizeCardBrand, parseCardNumberDigits } from "../creditCardUtils";
 import type { CreditCard, OrderPayment, ParsedOrder, ProfileSummary } from "../types";
+import { profileMatchesRetailer } from "./performance";
 
 export interface OrderCardDisplay {
   primary: string;
@@ -61,6 +62,21 @@ export function formatOrderCardDisplay(
     return { primary: matched || emailLabel };
   }
   return { primary: fallback.trim() };
+}
+
+export function formatOrderCardCompact(
+  order: ParsedOrder,
+  cards: CreditCard[],
+  profiles: ProfileSummary[] = [],
+  fallback = "",
+): string {
+  const siteProfiles = profiles.filter((profile) => profileMatchesRetailer(profile, order.retailer));
+  const cardName = matchOrderCardName(order.payment, cards, siteProfiles)?.trim() || "";
+  const brand = order.payment?.brand?.trim() || "";
+  const last4 = order.payment?.last4?.trim() || "";
+  const parts = [cardName, brand, last4].filter(Boolean);
+  if (parts.length > 0) return parts.join(" · ");
+  return formatOrderCardDisplay(order, cards, siteProfiles, fallback).primary || fallback.trim() || "—";
 }
 
 export function orderCardSearchText(

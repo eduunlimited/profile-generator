@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -8,6 +9,19 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+fn hidden_command(program: impl AsRef<OsStr>) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -101,15 +115,17 @@ fn is_pid_running(pid: u32) -> bool {
     }
     #[cfg(windows)]
     {
-        let output = Command::new("tasklist")
-            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
-            .output();
-        output
-            .map(|result| {
-                let text = String::from_utf8_lossy(&result.stdout);
-                text.contains(&pid.to_string())
-            })
-            .unwrap_or(false)
+        use windows::Win32::Foundation::{CloseHandle, WAIT_TIMEOUT};
+        use windows::Win32::System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE};
+
+        unsafe {
+            let Ok(handle) = OpenProcess(PROCESS_SYNCHRONIZE, false, pid) else {
+                return false;
+            };
+            let running = WaitForSingleObject(handle, 0) == WAIT_TIMEOUT;
+            let _ = CloseHandle(handle);
+            running
+        }
     }
     #[cfg(not(windows))]
     {
@@ -238,6 +254,29 @@ fn bundled_launcher_script_path(resource_dir: &Path) -> PathBuf {
 
 fn bundled_check_script_path(resource_dir: &Path) -> PathBuf {
     resource_dir.join("camoufox").join("check_camoufox.py")
+}
+
+fn dev_cancel_script_path() -> PathBuf {
+    project_root()
+        .join("scripts")
+        .join("camoufox")
+        .join("fetch_target_cancel_reasons.py")
+}
+
+fn bundled_cancel_script_path(resource_dir: &Path) -> PathBuf {
+    resource_dir
+        .join("camoufox")
+        .join("fetch_target_cancel_reasons.py")
+}
+
+fn cancel_script_path(app: &AppHandle) -> PathBuf {
+    if let Some(resource_dir) = bundled_resource_dir(app) {
+        let bundled = bundled_cancel_script_path(&resource_dir);
+        if bundled.exists() {
+            return bundled;
+        }
+    }
+    dev_cancel_script_path()
 }
 
 fn bundled_python_path(resource_dir: &Path) -> PathBuf {
@@ -456,7 +495,7 @@ pub fn check_camoufox(
         ));
     }
 
-    let output = Command::new(&python)
+    let output = hidden_command(&python)
         .arg(&script)
         .envs(python_env(app, &python))
         .stdout(Stdio::piped())
@@ -579,7 +618,7 @@ pub fn launch_browser_session(
     let payload_json =
         serde_json::to_string(&payload).map_err(|error| format!("Invalid launch payload: {error}"))?;
 
-    let mut child = Command::new(&python)
+    let mut child = hidden_command(&python)
         .arg(&script)
         .arg("--request")
         .arg(&payload_json)
@@ -633,4 +672,262 @@ pub fn launch_browser_session(
         "Camoufox launcher returned invalid JSON: {}",
         line.trim()
     ))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetCancelFetchRequest {
+    pub account_id: String,
+    pub account_label: String,
+    pub email: String,
+    pub order_ids: Vec<String>,
+    pub proxy_server: Option<String>,
+    pub timezone: Option<String>,
+    pub locale: Option<String>,
+    pub python_path: Option<String>,
+    pub allow_login: Option<bool>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetCancelOrderResult {
+    pub order_id: String,
+    pub cancel_reason: Option<String>,
+    pub http_status: Option<u16>,
+    pub needs_login: Option<bool>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetCancelFetchResult {
+    pub ok: bool,
+    pub needs_login: Option<bool>,
+    pub logged_in: Option<bool>,
+    pub used_login: Option<bool>,
+    pub error: Option<String>,
+    pub message: Option<String>,
+    pub orders: Vec<TargetCancelOrderResult>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct TargetCancelProgress {
+    pub account_id: String,
+    pub event: String,
+    pub message: Option<String>,
+    pub email: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PythonCancelPayload {
+    email: String,
+    session_dir: String,
+    order_ids: Vec<String>,
+    proxy_server: Option<String>,
+    timezone: Option<String>,
+    locale: Option<String>,
+    allow_login: bool,
+}
+
+fn emit_cancel_progress(app: &AppHandle, progress: TargetCancelProgress) {
+    let _ = app.emit("target-cancel-progress", progress);
+}
+
+fn parse_cancel_order(value: &serde_json::Value) -> Option<TargetCancelOrderResult> {
+    let order_id = value
+        .get("orderId")
+        .and_then(|item| item.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    Some(TargetCancelOrderResult {
+        order_id: order_id.to_string(),
+        cancel_reason: value
+            .get("cancelReason")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        http_status: value.get("httpStatus").and_then(|item| item.as_u64()).map(|value| value as u16),
+        needs_login: value.get("needsLogin").and_then(|item| item.as_bool()),
+        error: value
+            .get("error")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+    })
+}
+
+fn parse_cancel_result(value: &serde_json::Value) -> TargetCancelFetchResult {
+    let orders = value
+        .get("orders")
+        .and_then(|item| item.as_array())
+        .map(|items| items.iter().filter_map(parse_cancel_order).collect())
+        .unwrap_or_default();
+    TargetCancelFetchResult {
+        ok: value.get("ok").and_then(|item| item.as_bool()).unwrap_or(false),
+        needs_login: value.get("needsLogin").and_then(|item| item.as_bool()),
+        logged_in: value.get("loggedIn").and_then(|item| item.as_bool()),
+        used_login: value.get("usedLogin").and_then(|item| item.as_bool()),
+        error: value
+            .get("error")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        message: value
+            .get("message")
+            .and_then(|item| item.as_str())
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string),
+        orders,
+    }
+}
+
+pub fn submit_target_cancel_otp(
+    app: &AppHandle,
+    account_id: String,
+    account_label: String,
+    code: String,
+) -> Result<(), String> {
+    let trimmed = code.trim();
+    if trimmed.is_empty() {
+        return Err("Sign-in code is empty.".to_string());
+    }
+    let dir = session_dir(app, &account_id, &account_label)?;
+    fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    fs::write(dir.join("otp-code.txt"), trimmed).map_err(|error| error.to_string())
+}
+
+pub fn fetch_target_cancel_reasons(
+    app: &AppHandle,
+    request: TargetCancelFetchRequest,
+) -> Result<TargetCancelFetchResult, String> {
+    let session_dir = session_dir(app, &request.account_id, &request.account_label)?;
+    fs::create_dir_all(&session_dir).map_err(|error| error.to_string())?;
+
+    let python = resolve_python_executable(app, request.python_path.as_deref());
+    let script = cancel_script_path(app);
+    if !script.exists() {
+        return Err(format!(
+            "Target cancel script not found at {}.",
+            script.display()
+        ));
+    }
+
+    let order_ids: Vec<String> = request
+        .order_ids
+        .iter()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .collect();
+    if order_ids.is_empty() {
+        return Err("No Target order numbers were provided.".to_string());
+    }
+
+    let payload = PythonCancelPayload {
+        email: request.email.clone(),
+        session_dir: session_dir.display().to_string(),
+        order_ids,
+        proxy_server: request.proxy_server.clone(),
+        timezone: request.timezone.clone(),
+        locale: request.locale.clone().or(Some("en-US".to_string())),
+        allow_login: request.allow_login.unwrap_or(true),
+    };
+    let payload_json =
+        serde_json::to_string(&payload).map_err(|error| format!("Invalid fetch payload: {error}"))?;
+
+    let mut child = hidden_command(&python)
+        .arg(&script)
+        .arg("--request")
+        .arg(&payload_json)
+        .envs(python_env(app, &python))
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            format!(
+                "Failed to start Target cancel fetch with {}: {error}",
+                python.display()
+            )
+        })?;
+
+    if let Some(stderr) = child.stderr.take() {
+        thread::spawn(move || {
+            let mut reader = BufReader::new(stderr);
+            let mut buffer = Vec::new();
+            let _ = Read::read_to_end(&mut reader, &mut buffer);
+        });
+    }
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "Failed to capture Target cancel fetch output.".to_string())?;
+    let reader = BufReader::new(stdout);
+    let mut last_result: Option<TargetCancelFetchResult> = None;
+    let deadline = std::time::Instant::now() + Duration::from_secs(360);
+
+    for line in reader.lines() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            return Err("Timed out waiting for Target cancel reasons.".to_string());
+        }
+        let Ok(line) = line else {
+            break;
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+            continue;
+        };
+        let event = value
+            .get("event")
+            .and_then(|item| item.as_str())
+            .unwrap_or("");
+        match event {
+            "status" => {
+                emit_cancel_progress(
+                    app,
+                    TargetCancelProgress {
+                        account_id: request.account_id.clone(),
+                        event: "status".to_string(),
+                        message: value
+                            .get("message")
+                            .and_then(|item| item.as_str())
+                            .map(str::to_string),
+                        email: Some(request.email.clone()),
+                    },
+                );
+            }
+            "need_otp" => {
+                emit_cancel_progress(
+                    app,
+                    TargetCancelProgress {
+                        account_id: request.account_id.clone(),
+                        event: "need_otp".to_string(),
+                        message: Some("Waiting for the Target email sign-in code.".to_string()),
+                        email: value
+                            .get("email")
+                            .and_then(|item| item.as_str())
+                            .map(str::to_string)
+                            .or_else(|| Some(request.email.clone())),
+                    },
+                );
+            }
+            "result" => {
+                last_result = Some(parse_cancel_result(&value));
+            }
+            _ => {}
+        }
+    }
+
+    let _ = child.wait();
+    last_result.ok_or_else(|| "Target cancel fetch exited without a result.".to_string())
 }

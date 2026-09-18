@@ -1339,6 +1339,7 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
     payment: normalizeOrderPayment(raw.payment),
     profileId: raw.profileId?.trim() || undefined,
     profileName: raw.profileName?.trim() || undefined,
+    cancelReason: raw.cancelReason?.trim() || undefined,
     events,
     placedAt: raw.placedAt || new Date().toISOString(),
     updatedAt: raw.updatedAt || new Date().toISOString(),

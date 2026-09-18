@@ -19,7 +19,7 @@ import type {
 
 const DEFAULT_MODEL = import.meta.env.VITE_OPENAI_MODEL || "gpt-4o-mini";
 const DISPLAY_MAX = 72;
-export const ANALYSIS_PROMPT_VERSION = 3;
+export const ANALYSIS_PROMPT_VERSION = 4;
 
 export const ORDER_ANALYSIS_CAUSES: readonly OrderAnalysisCause[] = [
   "street_too_aggressive",
@@ -51,7 +51,8 @@ FACTS YOU MUST ACCEPT
 - City/state/ZIP (last line) are never jigged. Never blame last-line jigging. Never suggest changing city, state, or ZIP.
 - Pickup / warm-up orders are ONLY a positive account-warm-up credit. They never explain cancellations. Do not mention mixed fulfillment or cancelled pickups.
 - orders[] is the full succeeded+cancelled history for this email. Rows with fulfillment "pickup" or address "pickup" are warm-ups. warmupPickups is the pickup count — a good sign, not a cancel pattern.
-- We do not have Target's cancel-reason body. Never claim a specific Target reason (fraud, OOS, address, payment). Prefer "likely" + evidence.
+- When an order includes cancelReason, that is Target's own cancel_reason_text. Treat it as ground truth. Cite it. Do not invent a different Target policy.
+- If cancelReason is missing, do not claim a specific Target reason (fraud, OOS, address, payment). Prefer "likely" + evidence.
 - One fat-finger name typo and light street variation are expected and usually fine.
 - Aggressive line-1 noise (random letter blocks), odd line-2 unit labels (Room/Door/1K), suffix/direction expansion, Geocodio fail, or master mismatch are higher risk.
 - Card/value history beats jig blame. Same ship-to on a success and a cancel → do not blame street and do not pick a re-jig address action.
@@ -158,6 +159,7 @@ export interface OrderAnalysisPayload {
     items: Array<{ name: string; qty: number }>;
     placedAt: string;
     cancelledAt: string | null;
+    cancelReason: string | null;
   }>;
 }
 
@@ -238,6 +240,7 @@ export function buildOrderAnalysisPayload(
       items: (order.items ?? []).map((item) => ({ name: item.name, qty: item.quantity })),
       placedAt: order.placedAt,
       cancelledAt: cancelledEvent?.date || (!isSuccessfulOrder(order) ? order.updatedAt : null),
+      cancelReason: order.cancelReason?.trim() || null,
       pickup,
       succeeded: isSuccessfulOrder(order),
     };

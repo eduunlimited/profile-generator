@@ -600,6 +600,8 @@ export interface ParsedOrder {
   payment?: OrderPayment;
   profileId?: string;
   profileName?: string;
+  /** Target guest_order_aggregations cancel_reason_text when a logged-in session can read it. */
+  cancelReason?: string;
   events: OrderEvent[];
   placedAt: string;
   updatedAt: string;

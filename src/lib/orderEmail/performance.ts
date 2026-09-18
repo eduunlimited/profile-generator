@@ -1,4 +1,5 @@
 import type { OrderRetailer, OrderStatus, ParsedOrder, PoolEmail, ProfileSummary } from "../types";
+import { parseCardNumberDigits } from "../creditCardUtils";
 import {
   filterOrdersBySite,
   isInTransitOrder,
@@ -6,8 +7,10 @@ import {
   isSuccessfulOrder,
   orderEmailKey,
   retailerLabel,
+  sortOrdersByPlaced,
   UNKNOWN_ORDER_EMAIL,
 } from "./dashboard";
+import { formatOrderAddress } from "./parse";
 
 export interface AccountProfileContext {
   profileId?: string;
@@ -392,5 +395,183 @@ export function toAccountPerformanceSnapshot(
     generatedAt: now.toISOString(),
     site: account.retailer,
     account,
+  };
+}
+
+export const LAST_ORDERS_PER_EMAIL = 5;
+
+export type TimelineRailTone = "ok" | "cxl";
+
+export interface TimelineFieldChanges {
+  payment: boolean;
+  address: boolean;
+  profile: boolean;
+  shipName: boolean;
+}
+
+export interface OrderAddressLines {
+  street: string;
+  cityLine: string;
+  pickup: boolean;
+  shipName: string;
+}
+
+export interface AccountOrderTimeline {
+  orders: ParsedOrder[];
+  slots: Array<ParsedOrder | null>;
+  cancelledInLast: number;
+  succeededInLast: number;
+  hint: string;
+  recovered: boolean;
+}
+
+export function lastOrdersForEmail(
+  orders: ParsedOrder[],
+  retailer: OrderRetailer,
+  email: string,
+  limit = LAST_ORDERS_PER_EMAIL,
+): ParsedOrder[] {
+  return sortOrdersByPlaced(
+    orders.filter((order) => order.retailer === retailer && orderEmailKey(order) === email),
+  )
+    .slice(0, limit)
+    .reverse();
+}
+
+export function padTimelineSlots<T>(items: T[], limit = LAST_ORDERS_PER_EMAIL): Array<T | null> {
+  const missing = Math.max(0, limit - items.length);
+  return [...items, ...Array.from({ length: missing }, () => null)];
+}
+
+export function orderPaymentFingerprint(order: ParsedOrder): string {
+  const last4 = order.payment?.last4?.trim() ?? "";
+  const brand = (order.payment?.brand ?? "").trim().toLowerCase();
+  if (brand || last4) return `${brand}|${last4}`;
+  return (order.payment?.raw ?? "").trim().toLowerCase();
+}
+
+export function orderAddressFingerprint(order: ParsedOrder): string {
+  if (isWarmupOrder(order) || order.shippingAddress?.source === "pickup") return "pickup";
+  const address = order.shippingAddress;
+  if (!address) return "";
+  const key = [address.line1, address.city, address.state, address.postalCode]
+    .map((part) => (part ?? "").trim().toLowerCase())
+    .join("|");
+  if (key.replace(/\|/g, "")) return key;
+  return (address.raw ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export function orderProfileFingerprint(
+  order: ParsedOrder,
+  fallback = "",
+  profiles: ProfileSummary[] = [],
+  poolEmails: PoolEmail[] = [],
+): string {
+  return resolveOrderProfileName(order, profiles, poolEmails, fallback).toLowerCase();
+}
+
+export function resolveOrderProfileName(
+  order: ParsedOrder,
+  profiles: ProfileSummary[],
+  poolEmails: PoolEmail[],
+  fallback = "",
+): string {
+  const siteProfiles = profilesMatchingOrderEmail(
+    orderEmailKey(order),
+    profiles,
+    poolEmails,
+    order.retailer,
+  );
+  if (order.profileId) {
+    const byId = siteProfiles.find((profile) => profile.id === order.profileId);
+    if (byId?.name.trim()) return byId.name.trim();
+  }
+  const stored = order.profileName?.trim() ?? "";
+  if (stored) {
+    const byName = siteProfiles.find((profile) => profile.name.trim().toLowerCase() === stored.toLowerCase());
+    if (byName?.name.trim()) return byName.name.trim();
+  }
+  const last4 = order.payment?.last4?.trim() ?? "";
+  if (/^\d{4}$/.test(last4)) {
+    const byCard = siteProfiles.filter((profile) => {
+      const digits = parseCardNumberDigits(profile.paymentNumber ?? profile.cardNumberMasked ?? "");
+      return digits.length >= 4 && digits.slice(-4) === last4;
+    });
+    if (byCard.length === 1 && byCard[0].name.trim()) return byCard[0].name.trim();
+  }
+  if (fallback.trim()) {
+    const byFallback = siteProfiles.find(
+      (profile) => profile.name.trim().toLowerCase() === fallback.trim().toLowerCase(),
+    );
+    if (byFallback?.name.trim()) return byFallback.name.trim();
+  }
+  return siteProfiles[0]?.name.trim() || fallback.trim();
+}
+
+export function orderShipNameFingerprint(order: ParsedOrder): string {
+  if (isWarmupOrder(order) || order.shippingAddress?.source === "pickup") return "";
+  return (order.shippingAddress?.name ?? "").trim().toLowerCase();
+}
+
+export function timelineFieldChanges(
+  previous: ParsedOrder | null | undefined,
+  current: ParsedOrder | null | undefined,
+  fallbackProfile = "",
+  profiles: ProfileSummary[] = [],
+  poolEmails: PoolEmail[] = [],
+): TimelineFieldChanges {
+  if (!previous || !current) {
+    return { payment: false, address: false, profile: false, shipName: false };
+  }
+  return {
+    payment: orderPaymentFingerprint(previous) !== orderPaymentFingerprint(current),
+    address: orderAddressFingerprint(previous) !== orderAddressFingerprint(current),
+    profile:
+      orderProfileFingerprint(previous, fallbackProfile, profiles, poolEmails) !==
+      orderProfileFingerprint(current, fallbackProfile, profiles, poolEmails),
+    shipName: orderShipNameFingerprint(previous) !== orderShipNameFingerprint(current),
+  };
+}
+
+export function timelineRailTone(
+  left: ParsedOrder | null | undefined,
+  right: ParsedOrder | null | undefined,
+): TimelineRailTone | null {
+  if (!left || !right) return null;
+  return isSuccessfulOrder(right) ? "ok" : "cxl";
+}
+
+export function orderAddressLines(order: ParsedOrder, fallback = ""): OrderAddressLines {
+  if (isWarmupOrder(order) || order.shippingAddress?.source === "pickup") {
+    const store = [order.shippingAddress?.name, order.shippingAddress?.city].filter(Boolean).join(" · ");
+    return { street: "Pickup order", cityLine: store, pickup: true, shipName: "" };
+  }
+  const address = order.shippingAddress;
+  const shipName = address?.name?.trim() || "";
+  const street = address?.line1?.trim() || "";
+  const cityLine = formatUspsLastLine(address?.city ?? "", address?.state ?? "", address?.postalCode ?? "");
+  if (street || cityLine) return { street, cityLine, pickup: false, shipName };
+  const raw = (formatOrderAddress(address) || fallback).replace(/\n+/g, ", ").trim();
+  return { street: raw, cityLine: "", pickup: false, shipName };
+}
+
+export function accountOrderTimeline(
+  orders: ParsedOrder[],
+  retailer: OrderRetailer,
+  email: string,
+): AccountOrderTimeline {
+  const last = lastOrdersForEmail(orders, retailer, email);
+  const cancelledInLast = last.filter((order) => !isSuccessfulOrder(order)).length;
+  const succeededInLast = last.length - cancelledInLast;
+  const newest = last[last.length - 1];
+  const recovered = Boolean(newest && isSuccessfulOrder(newest));
+  const windowLabel = last.length >= LAST_ORDERS_PER_EMAIL ? "last 5" : `last ${last.length}`;
+  return {
+    orders: last,
+    slots: last,
+    cancelledInLast,
+    succeededInLast,
+    recovered,
+    hint: recovered ? "recovered" : `${cancelledInLast} cancelled in ${windowLabel}`,
   };
 }

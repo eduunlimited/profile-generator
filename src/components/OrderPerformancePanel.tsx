@@ -1,7 +1,6 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { listOrderAnalysis, listOrders, upsertOrderAnalysis } from "../lib/api";
 import { formatError } from "../lib/errorUtils";
-import { useResizableTableColumns } from "../hooks/useResizableTableColumns";
 import { ensureDataKey, releaseDataKey } from "../lib/localDataStore";
 import {
   analysisNeedsRun,
@@ -14,23 +13,26 @@ import {
 import {
   accountDisplayName,
   accountJigLines,
+  accountOrderTimeline,
   accountPaymentLabel,
-  accountPaymentLines,
   accountSearchHaystack,
   filterOrdersBySite,
-  formatOrderAddress,
+  formatOrderCardCompact,
   formatOrderMoney,
   isSuccessfulOrder,
-  isWarmupOrder,
-  orderCardSearchText,
-  orderEmailKey,
+  orderAddressLines,
+  orderPlacedMs,
   PERFORMANCE_SITES,
   refreshTargetOrders,
+  fetchTargetCancelReasons,
+  formatCancelledStatus,
   repairUtf8Mojibake,
   retailerLabel,
-  sortOrdersByPlaced,
   summarizeOrderAccounts,
   summarizeSitePerformance,
+  timelineFieldChanges,
+  timelineRailTone,
+  type AccountPerformance,
 } from "../lib/orderEmail";
 import type {
   CreditCard,
@@ -41,66 +43,20 @@ import type {
   PoolEmail,
   ProfileSummary,
 } from "../lib/types";
-import { OrderCardLabel } from "./OrderCardLabel";
-import { ResizableTh, TableColGroup } from "./ResizableTable";
-
-function joinedOrDash(value: string): string {
-  return value.trim() || "—";
-}
 
 function formatStickRate(value: number | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
   return `${Math.round(value * 1000) / 10}%`;
 }
 
-const PERFORMANCE_TABLE_COLUMNS = [
-  "email",
-  "profile",
-  "card",
-  "spend",
-  "count",
-  "warmup",
-  "stick",
-  "analysis",
-] as const;
-
-const PERFORMANCE_TABLE_FLEX = ["analysis"] as const;
-
-const PERFORMANCE_TABLE_MIN_WIDTHS: Partial<Record<(typeof PERFORMANCE_TABLE_COLUMNS)[number], number>> = {
-  email: 168,
-  profile: 120,
-  card: 140,
-  spend: 112,
-  count: 88,
-  warmup: 64,
-  stick: 58,
-  analysis: 160,
-};
-
-const PERFORMANCE_TABLE_MAX_WIDTHS: Partial<Record<(typeof PERFORMANCE_TABLE_COLUMNS)[number], number>> = {
-  email: 240,
-  profile: 160,
-  card: 200,
-  spend: 128,
-  count: 108,
-  warmup: 80,
-  stick: 68,
-  analysis: 220,
-};
-
 function formatPlaced(order: ParsedOrder): string {
-  const placed = order.events.find((event) => event.kind === "placed");
-  const parsed = placed?.dateMs && placed.dateMs > 0 ? placed.dateMs : Date.parse(order.placedAt);
+  const parsed = orderPlacedMs(order);
   if (!Number.isFinite(parsed) || parsed <= 0) return "—";
-  return new Date(parsed).toLocaleDateString();
+  return new Date(parsed).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function formatAddressOneLine(order: ParsedOrder, fallback: string): string {
-  if (isWarmupOrder(order) || order.shippingAddress?.source === "pickup") {
-    return "Pickup order";
-  }
-  const raw = formatOrderAddress(order.shippingAddress) || fallback;
-  return raw.replace(/\n+/g, ", ").trim();
+function formatOrderTotal(order: ParsedOrder): string {
+  return order.total != null ? formatOrderMoney(order.total, order.currency) : "—";
 }
 
 function orderItems(order: ParsedOrder): OrderLineItem[] {
@@ -110,33 +66,230 @@ function orderItems(order: ParsedOrder): OrderLineItem[] {
   }));
 }
 
-function formatOrderTotal(order: ParsedOrder): string {
-  return order.total != null ? formatOrderMoney(order.total, order.currency) : "—";
-}
-
 function formatItemNames(order: ParsedOrder): string {
   const items = orderItems(order);
   if (items.length === 0) return "—";
   return items.map((item) => (item.quantity > 1 ? `${item.name} ×${item.quantity}` : item.name)).join(", ");
 }
 
-function accountOrderKey(retailer: OrderRetailer, email: string): string {
-  return `${retailer}:${email}`;
+function formatPaymentCompact(
+  order: ParsedOrder,
+  cards: CreditCard[],
+  profiles: ProfileSummary[],
+  fallback: string,
+): string {
+  return formatOrderCardCompact(order, cards, profiles, fallback);
 }
 
-function ordersForAccount(orders: ParsedOrder[], retailer: OrderRetailer, email: string): ParsedOrder[] {
-  return sortOrdersByPlaced(
-    orders.filter((order) => order.retailer === retailer && orderEmailKey(order) === email),
+function FieldLine({ value, changed }: { value: string; changed?: boolean }) {
+  if (!value) return null;
+  return (
+    <span className={`performance-node-field${changed ? " is-changed" : ""}`} title={value}>
+      {value}
+    </span>
   );
 }
 
-function HeaderStack({ lines }: { lines: [string, string] }) {
+function TimelineRail({
+  slots,
+  index,
+}: {
+  slots: Array<ParsedOrder | null>;
+  index: number;
+}) {
+  const order = slots[index];
+  const prev = index > 0 ? slots[index - 1] : null;
+  const next = index < slots.length - 1 ? slots[index + 1] : null;
+  const leftTone = index === 0 ? null : timelineRailTone(prev, order);
+  const rightTone = index === slots.length - 1 ? null : timelineRailTone(order, next);
+  const succeeded = order ? isSuccessfulOrder(order) : null;
   return (
-    <span className="th-stack">
-      {lines.map((line) => (
-        <span key={line}>{line}</span>
-      ))}
-    </span>
+    <div className="performance-node-rail" aria-hidden="true">
+      <span className={`performance-node-rail-seg${leftTone ? ` is-${leftTone}` : ""}`} />
+      <span
+        className={`performance-node-dot${
+          succeeded == null ? " is-empty" : succeeded ? " is-ok" : " is-cxl"
+        }`}
+      />
+      <span className={`performance-node-rail-seg${rightTone ? ` is-${rightTone}` : ""}`} />
+    </div>
+  );
+}
+
+function TimelineNode({
+  order,
+  previous,
+  slots,
+  index,
+  cards,
+  profiles,
+  poolEmails,
+  fallbackPayment,
+  fallbackAddress,
+  fallbackProfile,
+  onFetchCancelReason,
+}: {
+  order: ParsedOrder | null;
+  previous: ParsedOrder | null;
+  slots: Array<ParsedOrder | null>;
+  index: number;
+  cards: CreditCard[];
+  profiles: ProfileSummary[];
+  poolEmails: PoolEmail[];
+  fallbackPayment: string;
+  fallbackAddress: string;
+  fallbackProfile: string;
+  onFetchCancelReason?: (order: ParsedOrder) => void;
+}) {
+  const succeeded = order ? isSuccessfulOrder(order) : null;
+  const changes = timelineFieldChanges(previous, order, fallbackProfile, profiles, poolEmails);
+  const address = order ? orderAddressLines(order, fallbackAddress) : null;
+  const canTestCancel =
+    Boolean(order && succeeded === false && !order.cancelReason?.trim() && onFetchCancelReason);
+  return (
+    <div className="performance-node">
+      <TimelineRail slots={slots} index={index} />
+      {order && succeeded != null && address ? (
+        <div className="performance-node-body">
+          <span
+            className={succeeded ? "order-metric-ok" : `order-metric-cxl${canTestCancel ? " is-cancel-test" : ""}`}
+            title={
+              succeeded
+                ? undefined
+                : order.cancelReason?.trim() || "Click to test this one Target cancel reason"
+            }
+            role={canTestCancel ? "button" : undefined}
+            onClick={
+              canTestCancel
+                ? (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onFetchCancelReason?.(order);
+                  }
+                : undefined
+            }
+          >
+            {succeeded ? "Succeeded" : formatCancelledStatus(order)}
+          </span>
+          <span className="performance-node-meta">
+            <span className="muted">{formatPlaced(order)}</span>
+            <span className="performance-node-value">{formatOrderTotal(order)}</span>
+          </span>
+          <span className="performance-node-id" title={order.orderId}>
+            {order.orderId}
+          </span>
+          <span className="performance-node-item" title={formatItemNames(order)}>
+            {formatItemNames(order)}
+          </span>
+          <FieldLine
+            value={formatPaymentCompact(order, cards, profiles, fallbackPayment)}
+            changed={changes.payment}
+          />
+          {address.shipName ? <FieldLine value={address.shipName} changed={changes.shipName} /> : null}
+          <FieldLine value={address.street} changed={changes.address} />
+          {address.cityLine ? (
+            <FieldLine value={address.cityLine} changed={!address.pickup && changes.address} />
+          ) : null}
+        </div>
+      ) : null}
+      {index === 0 ? (
+        <span className="performance-node-axis">Oldest</span>
+      ) : index === slots.length - 1 ? (
+        <span className="performance-node-axis is-end">Newest</span>
+      ) : null}
+    </div>
+  );
+}
+
+function PerformanceEmailCard({
+  account,
+  orders,
+  cards,
+  profiles,
+  poolEmails,
+  analysis,
+  analyzing,
+  onFetchCancelReason,
+}: {
+  account: AccountPerformance;
+  orders: ParsedOrder[];
+  cards: CreditCard[];
+  profiles: ProfileSummary[];
+  poolEmails: PoolEmail[];
+  analysis?: OrderAnalysisRecord;
+  analyzing: boolean;
+  onFetchCancelReason?: (order: ParsedOrder) => void;
+}) {
+  const timeline = useMemo(
+    () => accountOrderTimeline(orders, account.retailer, account.email),
+    [orders, account.retailer, account.email],
+  );
+  const profileName = accountDisplayName(account);
+  const fallbackPayment = accountPaymentLabel(account);
+  const fallbackAddress = accountJigLines(account).join("\n");
+  const successMoney = formatOrderMoney(account.successTotal);
+  const cancelMoney = formatOrderMoney(account.cancelledTotal);
+  return (
+    <article className="performance-email-card">
+      <header className="performance-email-head">
+        <div className="performance-email-title">
+          <h3 title={account.email}>{account.email}</h3>
+          {profileName ? <span className="muted">{profileName}</span> : null}
+        </div>
+        <span className={`performance-email-hint${timeline.recovered ? " is-ok" : " is-cxl"}`}>
+          {timeline.hint}
+        </span>
+      </header>
+      <div className="performance-email-meta">
+        <span>
+          <span className="order-metric-ok">{timeline.succeededInLast}</span>
+          <span className="order-metric-sep">/</span>
+          <span className="order-metric-cxl">{timeline.cancelledInLast}</span>
+          <span className="muted"> last {timeline.orders.length}</span>
+        </span>
+        <span>
+          <span className="order-metric-ok">{account.successful}</span>
+          <span className="order-metric-sep">/</span>
+          <span className="order-metric-cxl">{account.cancelled}</span>
+          <span className="muted"> overall</span>
+        </span>
+        <span className={account.successRate != null && account.successRate < 0.5 ? "order-metric-cxl" : "order-metric-ok"}>
+          Stick {formatStickRate(account.successRate)}
+        </span>
+        <span>
+          <span className="order-metric-ok">{successMoney}</span>
+          <span className="order-metric-sep"> / </span>
+          <span className="order-metric-cxl">{cancelMoney}</span>
+        </span>
+      </div>
+      {analyzing ? (
+        <p className="performance-email-analysis muted">Analyzing…</p>
+      ) : isValidAnalysisRecord(analysis) ? (
+        <p className="performance-email-analysis" title={analysisTooltip(analysis)}>
+          <span className={`analysis-verdict is-${analysis.result.severity}`}>{analysis.result.display}</span>
+          {analysis.result.action ? <span className="analysis-suggestion">{analysis.result.action}</span> : null}
+        </p>
+      ) : null}
+      <ol className="performance-timeline">
+        {timeline.slots.map((order, index) => (
+          <li key={order?.id ?? `empty-${account.email}-${index}`}>
+            <TimelineNode
+              order={order}
+              previous={index > 0 ? timeline.slots[index - 1] : null}
+              slots={timeline.slots}
+              index={index}
+              cards={cards}
+              profiles={profiles}
+              poolEmails={poolEmails}
+              fallbackPayment={fallbackPayment}
+              fallbackAddress={fallbackAddress}
+              fallbackProfile={profileName}
+              onFetchCancelReason={onFetchCancelReason}
+            />
+          </li>
+        ))}
+      </ol>
+    </article>
   );
 }
 
@@ -161,7 +314,6 @@ export function OrderPerformancePanel({
   const [tone, setTone] = useState<"ok" | "error">("ok");
   const [analysisByKey, setAnalysisByKey] = useState<Record<string, OrderAnalysisRecord>>({});
   const [pendingKeys, setPendingKeys] = useState<Record<string, true>>({});
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
   const busyRef = useRef(false);
   const analysisByKeyRef = useRef(analysisByKey);
   const inflightRef = useRef(new Set<string>());
@@ -238,6 +390,30 @@ export function OrderPerformancePanel({
     return accounts.filter((account) => accountSearchHaystack(account).includes(needle));
   }, [accounts, query]);
 
+  const testOneCancelReason = async (order: ParsedOrder) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setBusy(true);
+    setTone("ok");
+    setStatus(`Testing Target cancel reason for ${order.orderId}…`);
+    try {
+      const result = await fetchTargetCancelReasons(orders, (message) => setStatus(message), {
+        orderIds: [order.orderId],
+        maxAccounts: 1,
+        allowLogin: false,
+      });
+      setOrders(result.orders);
+      setStatus(result.status);
+      setTone(result.tone);
+    } catch (error) {
+      setTone("error");
+      setStatus(formatError(error, "Could not fetch that Target cancel reason."));
+    } finally {
+      busyRef.current = false;
+      setBusy(false);
+    }
+  };
+
   const analysisDueKey = useMemo(
     () => accounts.map((account) => `${account.retailer}:${account.email}:${account.cancelled}`).join("|"),
     [accounts],
@@ -294,31 +470,6 @@ export function OrderPerformancePanel({
     };
   }, [active, analysisDueKey, accounts, orders, cards, profiles]);
 
-  const tableColumns = useResizableTableColumns({
-    columnIds: PERFORMANCE_TABLE_COLUMNS,
-    flexIds: PERFORMANCE_TABLE_FLEX,
-    minWidths: PERFORMANCE_TABLE_MIN_WIDTHS,
-    maxWidths: PERFORMANCE_TABLE_MAX_WIDTHS,
-    storageKey: "order-performance-v2",
-    fitKey: filtered
-      .map((account) =>
-        [
-          account.email,
-          accountDisplayName(account),
-          accountPaymentLabel(account),
-          account.successTotal,
-          account.cancelledTotal,
-          account.successful,
-          account.cancelled,
-          account.warmup,
-          account.successRate,
-          analysisByKey[orderAnalysisKey(account.retailer, account.email)]?.result.display ?? "",
-          analysisByKey[orderAnalysisKey(account.retailer, account.email)]?.result.action ?? "",
-        ].join("\t"),
-      )
-      .join("\n"),
-  });
-
   return (
     <div className="orders-layout">
       <div className="profiles-table-toolbar">
@@ -348,10 +499,7 @@ export function OrderPerformancePanel({
               role="tab"
               aria-selected={siteFilter === site.id}
               className={siteFilter === site.id ? "is-active" : undefined}
-              onClick={() => {
-                setSiteFilter(site.id);
-                setExpandedKey(null);
-              }}
+              onClick={() => setSiteFilter(site.id)}
             >
               {site.label}
             </button>
@@ -396,172 +544,24 @@ export function OrderPerformancePanel({
                 : `No ${siteLabel} emails with cancelled orders.`}
             </p>
           ) : (
-            <table
-              ref={tableColumns.tableRef}
-              className={`profiles-table accounts-table ${tableColumns.tableClassName}`.trim()}
-            >
-              <TableColGroup columns={tableColumns} />
-              <thead>
-                <tr>
-                  <ResizableTh columns={tableColumns} id="email">
-                    Email
-                  </ResizableTh>
-                  <ResizableTh columns={tableColumns} id="profile">
-                    Profile
-                  </ResizableTh>
-                  <ResizableTh columns={tableColumns} id="card">
-                    Card
-                  </ResizableTh>
-                  <ResizableTh columns={tableColumns} id="spend">
-                    <HeaderStack lines={["Succeeded $", "Cancelled $"]} />
-                  </ResizableTh>
-                  <ResizableTh columns={tableColumns} id="count">
-                    <HeaderStack lines={["Succeeded", "Cancelled"]} />
-                  </ResizableTh>
-                  <ResizableTh columns={tableColumns} id="warmup">
-                    <HeaderStack lines={["Warm up", "orders"]} />
-                  </ResizableTh>
-                  <ResizableTh columns={tableColumns} id="stick">
-                    Stick %
-                  </ResizableTh>
-                  <ResizableTh columns={tableColumns} id="analysis">
-                    Analysis
-                  </ResizableTh>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((account) => {
-                  const card = accountPaymentLines(account);
-                  const successMoney = formatOrderMoney(account.successTotal);
-                  const cancelMoney = formatOrderMoney(account.cancelledTotal);
-                  const analysisKey = orderAnalysisKey(account.retailer, account.email);
-                  const analysis = analysisByKey[analysisKey];
-                  const analyzing = Boolean(pendingKeys[analysisKey]);
-                  const rowKey = accountOrderKey(account.retailer, account.email);
-                  const expanded = expandedKey === rowKey;
-                  const timelineOrders = expanded
-                    ? ordersForAccount(orders, account.retailer, account.email)
-                    : [];
-                  const fallbackAddress = accountJigLines(account).join("\n");
-                  return (
-                    <Fragment key={rowKey}>
-                    <tr
-                      className={expanded ? "row-focused" : undefined}
-                      onClick={() => setExpandedKey(expanded ? null : rowKey)}
-                    >
-                      <td className="col-email" title={account.email}>
-                        {account.email}
-                      </td>
-                      <td className="col-name" title={accountDisplayName(account) || undefined}>
-                        {joinedOrDash(accountDisplayName(account))}
-                      </td>
-                      <td className="col-card-profile" title={accountPaymentLabel(account) || undefined}>
-                        {!card.name && !card.brand ? (
-                          "—"
-                        ) : (
-                          <div className="address-cell">
-                            {card.name ? <span className="address-cell-line">{card.name}</span> : null}
-                            {card.brand ? (
-                              <span className="address-cell-line is-card-brand">{card.brand}</span>
-                            ) : null}
-                          </div>
-                        )}
-                      </td>
-                      <td className="col-spend" title={`${successMoney}/${cancelMoney}`}>
-                        <span className="order-metric-ok">{successMoney}</span>
-                        <span className="order-metric-sep">/</span>
-                        <span className="order-metric-cxl">{cancelMoney}</span>
-                      </td>
-                      <td className="col-count">
-                        <span className="order-metric-ok">{account.successful}</span>
-                        <span className="order-metric-sep">/</span>
-                        <span className="order-metric-cxl">{account.cancelled}</span>
-                      </td>
-                      <td className="col-warmup" title="Pickup orders used to warm up the account">
-                        {account.warmup}
-                      </td>
-                      <td className="col-stick">
-                        <span className={account.successRate != null && account.successRate < 0.5 ? "order-metric-cxl" : "order-metric-ok"}>
-                          {formatStickRate(account.successRate)}
-                        </span>
-                      </td>
-                      <td
-                        className="col-analysis"
-                        title={analyzing ? "Analyzing…" : analysisTooltip(analysis)}
-                      >
-                        {analyzing ? (
-                          "Analyzing…"
-                        ) : isValidAnalysisRecord(analysis) ? (
-                          <div className="address-cell">
-                            <span className={`analysis-verdict is-${analysis.result.severity}`}>
-                              {analysis.result.display}
-                            </span>
-                            {analysis.result.action ? (
-                              <span className="analysis-suggestion">{analysis.result.action}</span>
-                            ) : null}
-                          </div>
-                        ) : (
-                          "—"
-                        )}
-                      </td>
-                    </tr>
-                    {expanded ? (
-                      <tr className="performance-expand-row">
-                        <td colSpan={PERFORMANCE_TABLE_COLUMNS.length}>
-                          {timelineOrders.length === 0 ? (
-                            <p className="muted">No succeeded or cancelled orders for this email yet.</p>
-                          ) : (
-                            <ol className="performance-order-timeline">
-                              <li className="performance-order-row is-header" aria-hidden="true">
-                                <span>Date</span>
-                                <span>Order #</span>
-                                <span>Item</span>
-                                <span>Value</span>
-                                <span>Card</span>
-                                <span>Shipping address</span>
-                                <span>Status</span>
-                              </li>
-                              {timelineOrders.map((order) => {
-                                const succeeded = isSuccessfulOrder(order);
-                                return (
-                                <li key={order.id} className="performance-order-row">
-                                  <span className="muted">{formatPlaced(order)}</span>
-                                  <span className="performance-order-id">{order.orderId}</span>
-                                  <span className="performance-order-item">{formatItemNames(order)}</span>
-                                  <span className="performance-order-value">{formatOrderTotal(order)}</span>
-                                  <span
-                                    className="performance-order-card"
-                                    title={
-                                      orderCardSearchText(order, cards, profiles, accountPaymentLabel(account)) ||
-                                      undefined
-                                    }
-                                  >
-                                    <OrderCardLabel
-                                      order={order}
-                                      cards={cards}
-                                      profiles={profiles}
-                                      fallback={accountPaymentLabel(account)}
-                                    />
-                                  </span>
-                                  <span className="performance-order-address">
-                                    {formatAddressOneLine(order, fallbackAddress) || "—"}
-                                  </span>
-                                  <span className={succeeded ? "order-metric-ok" : "order-metric-cxl"}>
-                                    {succeeded ? "Succeeded" : "Cancelled"}
-                                  </span>
-                                </li>
-                                );
-                              })}
-                            </ol>
-                          )}
-                        </td>
-                      </tr>
-                    ) : null}
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+            <div className="performance-cards">
+              {filtered.map((account) => {
+                const analysisKey = orderAnalysisKey(account.retailer, account.email);
+                return (
+                  <PerformanceEmailCard
+                    key={`${account.retailer}:${account.email}`}
+                    account={account}
+                    orders={orders}
+                    cards={cards}
+                    profiles={profiles}
+                    poolEmails={poolEmails}
+                    analysis={analysisByKey[analysisKey]}
+                    analyzing={Boolean(pendingKeys[analysisKey])}
+                    onFetchCancelReason={busy ? undefined : testOneCancelReason}
+                  />
+                );
+              })}
+            </div>
           )}
         </div>
       </div>

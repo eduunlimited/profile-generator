@@ -1,4 +1,9 @@
-import { decryptStore, encryptStore, SECRET_STORAGE_KEYS } from "./cardSecrets";
+import {
+  decryptStore,
+  encryptStore,
+  SECRET_STORAGE_KEYS,
+  secretStoreLocked,
+} from "./cardSecrets";
 import { isBrowserUiMode } from "./env";
 
 export const STORAGE_KEY_TO_FILE: Record<string, string> = {
@@ -144,6 +149,7 @@ async function hydrateKey(key: string): Promise<void> {
   }
 
   if (SECRET_STORAGE_KEYS.has(key)) {
+    cache.set(key, data);
     data = await decryptStore(key, data);
   }
 
@@ -157,7 +163,7 @@ async function hydrateKeySafe(key: string): Promise<void> {
   } catch (error) {
     console.error(`Failed to load ${STORAGE_KEY_TO_FILE[key] ?? key}:`, error);
     if (!cache.has(key)) {
-      cache.set(key, SECRET_STORAGE_KEYS.has(key) ? {} : readLocalStorageMap(key));
+      cache.set(key, readLocalStorageMap(key));
     }
   }
 }
@@ -166,13 +172,13 @@ async function hydratePackagedSecretKeys(): Promise<void> {
   await Promise.all(
     [...SECRET_STORAGE_KEYS].map(async (key) => {
       if (cache.has(key)) return;
+      const raw = readLocalStorageMap(key);
       try {
-        const decrypted = await decryptStore(key, readLocalStorageMap(key));
-        cache.set(key, decrypted);
+        cache.set(key, await decryptStore(key, raw));
       } catch (error) {
         console.error(`Failed to decrypt ${STORAGE_KEY_TO_FILE[key] ?? key}:`, error);
         if (!cache.has(key)) {
-          cache.set(key, {});
+          cache.set(key, raw);
         }
       }
     }),
@@ -231,12 +237,22 @@ export function readCachedMap<T>(key: string): Record<string, T> {
 
 export function writeCachedMap<T>(key: string, value: Record<string, T>): Promise<void> {
   const snapshot = cloneMap(value as Record<string, unknown>);
-  cache.set(key, snapshot);
   if (SECRET_STORAGE_KEYS.has(key)) {
+    const existing = cache.get(key) ?? readLocalStorageMap(key);
+    if (secretStoreLocked(key)) {
+      console.error(`Skipping save for ${key}: card secrets are locked.`);
+      return Promise.resolve();
+    }
+    if (Object.keys(snapshot).length === 0 && Object.keys(existing).length > 0) {
+      console.error(`Refusing to persist empty ${key} over existing records.`);
+      return Promise.resolve();
+    }
+    cache.set(key, snapshot);
     return enqueueSecretPersist(key, snapshot).catch((error) => {
       console.error(`Encrypted save failed for ${STORAGE_KEY_TO_FILE[key] ?? key}:`, error);
     });
   }
+  cache.set(key, snapshot);
   writeLocalStorageMap(key, snapshot);
   if (usesProjectDataFiles()) {
     const fileName = STORAGE_KEY_TO_FILE[key];

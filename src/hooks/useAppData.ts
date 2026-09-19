@@ -50,6 +50,11 @@ import {
   getGeocodioSettings,
   getOpenAiSettings,
 } from "../lib/api";
+import {
+  anySecretStoreLocked,
+  PROFILES_STORAGE_KEY,
+  secretStoreLocked,
+} from "../lib/cardSecrets";
 import { formatError } from "../lib/errorUtils";
 import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
 import {
@@ -210,12 +215,12 @@ export function useAppData() {
         }
       };
       const [fullProfiles, creds, initialCards, initialEmails] = await Promise.all([
-        loadList("profiles", loadAllProfiles),
+        loadAllProfiles(),
         loadList("credentials", listCredentials),
-        loadList("credit cards", listCreditCards),
+        listCreditCards(),
         loadList("emails", listPoolEmails),
       ]);
-      if (fullProfiles.length > 0) {
+      if (fullProfiles.length > 0 && !secretStoreLocked(PROFILES_STORAGE_KEY)) {
         let linked = fullProfiles;
         if (creds.length > 0) {
           linked = syncAllProfileCredentialLinks(linked, creds);
@@ -253,11 +258,11 @@ export function useAppData() {
         emailCats,
         profileCats,
       ] = await Promise.all([
-        loadList("profile summaries", listProfiles),
+        listProfiles(),
         loadList("jig presets", listJigPresets),
         loadList("export templates", listExportTemplates),
         loadList("master profiles", listMasterProfiles),
-        loadList("credit cards", listCreditCards),
+        listCreditCards(),
         loadList("emails", listPoolEmails),
         loadList("credentials", listCredentials),
         loadList("account categories", listAccountCategories),
@@ -277,6 +282,9 @@ export function useAppData() {
       setCardCategories(cardCats);
       setEmailCategories(emailCats);
       setProfileCategories(profileCats);
+      if (anySecretStoreLocked()) {
+        setError("Could not unlock card numbers. Profiles and cards are still listed.");
+      }
       try {
         const [geocodio, openai] = await Promise.all([getGeocodioSettings(), getOpenAiSettings()]);
         setGeocodioConfigured(Boolean(geocodio.apiKey.trim()));

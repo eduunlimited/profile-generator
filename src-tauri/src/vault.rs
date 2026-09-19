@@ -112,7 +112,16 @@ pub fn unprotect_secret(value: Value) -> Result<String, String> {
 
 #[tauri::command]
 pub fn unprotect_secrets(values: Vec<Value>) -> Result<Vec<String>, String> {
-    values.into_iter().map(unprotect_value).collect()
+    Ok(values
+        .into_iter()
+        .map(|value| match unprotect_value(value) {
+            Ok(text) => text,
+            Err(error) => {
+                eprintln!("unprotect_secrets skipped a value: {error}");
+                String::new()
+            }
+        })
+        .collect())
 }
 
 #[tauri::command]

@@ -7,6 +7,20 @@ export const CREDIT_CARDS_STORAGE_KEY = "profile-generator:credit-cards";
 
 export const SECRET_STORAGE_KEYS = new Set([PROFILES_STORAGE_KEY, CREDIT_CARDS_STORAGE_KEY]);
 
+const lockedSecretKeys = new Set<string>();
+
+export function secretStoreLocked(key: string): boolean {
+  return lockedSecretKeys.has(key);
+}
+
+export function anySecretStoreLocked(): boolean {
+  return lockedSecretKeys.size > 0;
+}
+
+function markSecretDecryptFailure(key: string): void {
+  lockedSecretKeys.add(key);
+}
+
 export type SecretEnvelope = {
   v: 1;
   alg: "aes-256-gcm";
@@ -112,12 +126,49 @@ async function encryptSlots(slots: SecretSlot[]): Promise<void> {
   });
 }
 
-async function decryptSlots(slots: SecretSlot[]): Promise<void> {
-  const values = slots.map((slot) => slot.record[slot.field]);
-  const plaintexts = await unprotectValues(values);
+function redactedSecret(slot: SecretSlot): string {
+  if (slot.field !== "number") return "";
+  const last4 =
+    (typeof slot.record.numberLast4 === "string" && slot.record.numberLast4.trim()) ||
+    last4FromNumber(slot.record.number);
+  return last4 ? `••••${last4}` : "";
+}
+
+function applyPlaintexts(slots: SecretSlot[], storeKey: string, plaintexts: string[]): void {
   slots.forEach((slot, index) => {
-    slot.record[slot.field] = plaintexts[index] ?? "";
+    const current = slot.record[slot.field];
+    const text = plaintexts[index] ?? "";
+    if (isSecretEnvelope(current) && !text) {
+      markSecretDecryptFailure(storeKey);
+      slot.record[slot.field] = redactedSecret(slot);
+      return;
+    }
+    slot.record[slot.field] = text;
   });
+}
+
+async function decryptSlots(slots: SecretSlot[], storeKey: string): Promise<void> {
+  if (slots.length === 0) return;
+  const values = slots.map((slot) => slot.record[slot.field]);
+  try {
+    applyPlaintexts(slots, storeKey, await unprotectValues(values));
+    return;
+  } catch (error) {
+    console.error(`Could not decrypt ${storeKey} in one pass.`, error);
+  }
+  for (const slot of slots) {
+    const current = slot.record[slot.field];
+    try {
+      const [text] = await unprotectValues([current]);
+      applyPlaintexts([slot], storeKey, [text ?? ""]);
+    } catch (error) {
+      console.error(`Could not decrypt ${storeKey} field ${slot.field}.`, error);
+      if (isSecretEnvelope(current)) {
+        markSecretDecryptFailure(storeKey);
+        slot.record[slot.field] = redactedSecret(slot);
+      }
+    }
+  }
 }
 
 export async function encryptProfilesMap(
@@ -132,7 +183,7 @@ export async function decryptProfilesMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  await decryptSlots(collectPaymentSlots(next));
+  await decryptSlots(collectPaymentSlots(next), PROFILES_STORAGE_KEY);
   return next;
 }
 
@@ -154,7 +205,7 @@ export async function decryptCreditCardsMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  await decryptSlots(collectCardSlots(next));
+  await decryptSlots(collectCardSlots(next), CREDIT_CARDS_STORAGE_KEY);
   return next;
 }
 

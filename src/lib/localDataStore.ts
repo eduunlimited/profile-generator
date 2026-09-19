@@ -1,9 +1,4 @@
-import {
-  decryptStore,
-  encryptStore,
-  SECRET_STORAGE_KEYS,
-  secretStoreLocked,
-} from "./cardSecrets";
+import { decryptStore, encryptStore, SECRET_STORAGE_KEYS } from "./cardSecrets";
 import { isBrowserUiMode } from "./env";
 
 export const STORAGE_KEY_TO_FILE: Record<string, string> = {
@@ -239,10 +234,6 @@ export function writeCachedMap<T>(key: string, value: Record<string, T>): Promis
   const snapshot = cloneMap(value as Record<string, unknown>);
   if (SECRET_STORAGE_KEYS.has(key)) {
     const existing = cache.get(key) ?? readLocalStorageMap(key);
-    if (secretStoreLocked(key)) {
-      console.error(`Skipping save for ${key}: card secrets are locked.`);
-      return Promise.resolve();
-    }
     if (Object.keys(snapshot).length === 0 && Object.keys(existing).length > 0) {
       console.error(`Refusing to persist empty ${key} over existing records.`);
       return Promise.resolve();

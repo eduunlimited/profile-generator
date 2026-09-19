@@ -7,19 +7,8 @@ export const CREDIT_CARDS_STORAGE_KEY = "profile-generator:credit-cards";
 
 export const SECRET_STORAGE_KEYS = new Set([PROFILES_STORAGE_KEY, CREDIT_CARDS_STORAGE_KEY]);
 
-const lockedSecretKeys = new Set<string>();
-
-export function secretStoreLocked(key: string): boolean {
-  return lockedSecretKeys.has(key);
-}
-
-export function anySecretStoreLocked(): boolean {
-  return lockedSecretKeys.size > 0;
-}
-
-function markSecretDecryptFailure(key: string): void {
-  lockedSecretKeys.add(key);
-}
+/** Card/profile PAN+CVV vault encryption is off. Values stay plaintext. */
+const CARD_FIELD_ENCRYPTION_ENABLED = false;
 
 export type SecretEnvelope = {
   v: 1;
@@ -44,9 +33,11 @@ function cloneJson<T>(value: T): T {
 }
 
 function last4FromNumber(value: unknown): string {
-  if (typeof value !== "string") return "";
-  const digits = value.replace(/\D/g, "");
-  return digits.length >= 4 ? digits.slice(-4) : digits;
+  if (typeof value === "string") {
+    const digits = value.replace(/\D/g, "");
+    return digits.length >= 4 ? digits.slice(-4) : digits;
+  }
+  return "";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -54,38 +45,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-async function protectPlaintexts(plaintexts: string[]): Promise<(string | SecretEnvelope)[]> {
-  if (!isTauriRuntime() || plaintexts.length === 0) return plaintexts;
-  const indexes: number[] = [];
-  const payload: string[] = [];
-  const result: (string | SecretEnvelope)[] = plaintexts.map((text, index) => {
-    if (!text) return text;
-    indexes.push(index);
-    payload.push(text);
-    return text;
-  });
-  if (payload.length === 0) return result;
-  const envelopes = await invoke<SecretEnvelope[]>("protect_secrets", { plaintexts: payload });
-  indexes.forEach((index, i) => {
-    result[index] = envelopes[i];
-  });
-  return result;
-}
-
-async function unprotectValues(values: unknown[]): Promise<string[]> {
-  if (values.length === 0) return [];
-  const hasEnvelope = values.some((value) => isSecretEnvelope(value));
-  if (!hasEnvelope) {
-    return values.map((value) => {
-      if (typeof value === "string") return value;
-      if (value == null) return "";
-      return String(value);
-    });
-  }
-  if (!isTauriRuntime()) {
-    throw new Error("Encrypted card data can only be read in the desktop app.");
-  }
-  return invoke<string[]>("unprotect_secrets", { values });
+function plaintextFromValue(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value == null || isSecretEnvelope(value)) return "";
+  return "";
 }
 
 type SecretSlot = { record: Record<string, unknown>; field: string };
@@ -113,61 +76,9 @@ function collectCardSlots(store: Record<string, unknown>): SecretSlot[] {
   return slots;
 }
 
-async function encryptSlots(slots: SecretSlot[]): Promise<void> {
-  const pending: { slot: SecretSlot; text: string }[] = [];
+function stripSecretSlots(slots: SecretSlot[]): void {
   for (const slot of slots) {
-    const current = slot.record[slot.field];
-    if (isSecretEnvelope(current) || typeof current !== "string" || !current) continue;
-    pending.push({ slot, text: current });
-  }
-  const protectedValues = await protectPlaintexts(pending.map((item) => item.text));
-  pending.forEach((item, index) => {
-    item.slot.record[item.slot.field] = protectedValues[index];
-  });
-}
-
-function redactedSecret(slot: SecretSlot): string {
-  if (slot.field !== "number") return "";
-  const last4 =
-    (typeof slot.record.numberLast4 === "string" && slot.record.numberLast4.trim()) ||
-    last4FromNumber(slot.record.number);
-  return last4 ? `••••${last4}` : "";
-}
-
-function applyPlaintexts(slots: SecretSlot[], storeKey: string, plaintexts: string[]): void {
-  slots.forEach((slot, index) => {
-    const current = slot.record[slot.field];
-    const text = plaintexts[index] ?? "";
-    if (isSecretEnvelope(current) && !text) {
-      markSecretDecryptFailure(storeKey);
-      slot.record[slot.field] = redactedSecret(slot);
-      return;
-    }
-    slot.record[slot.field] = text;
-  });
-}
-
-async function decryptSlots(slots: SecretSlot[], storeKey: string): Promise<void> {
-  if (slots.length === 0) return;
-  const values = slots.map((slot) => slot.record[slot.field]);
-  try {
-    applyPlaintexts(slots, storeKey, await unprotectValues(values));
-    return;
-  } catch (error) {
-    console.error(`Could not decrypt ${storeKey} in one pass.`, error);
-  }
-  for (const slot of slots) {
-    const current = slot.record[slot.field];
-    try {
-      const [text] = await unprotectValues([current]);
-      applyPlaintexts([slot], storeKey, [text ?? ""]);
-    } catch (error) {
-      console.error(`Could not decrypt ${storeKey} field ${slot.field}.`, error);
-      if (isSecretEnvelope(current)) {
-        markSecretDecryptFailure(storeKey);
-        slot.record[slot.field] = redactedSecret(slot);
-      }
-    }
+    slot.record[slot.field] = plaintextFromValue(slot.record[slot.field]);
   }
 }
 
@@ -175,7 +86,10 @@ export async function encryptProfilesMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  await encryptSlots(collectPaymentSlots(next));
+  if (!CARD_FIELD_ENCRYPTION_ENABLED) {
+    stripSecretSlots(collectPaymentSlots(next));
+    return next;
+  }
   return next;
 }
 
@@ -183,7 +97,7 @@ export async function decryptProfilesMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  await decryptSlots(collectPaymentSlots(next), PROFILES_STORAGE_KEY);
+  stripSecretSlots(collectPaymentSlots(next));
   return next;
 }
 
@@ -197,7 +111,10 @@ export async function encryptCreditCardsMap(
     const existingLast4 = typeof card.numberLast4 === "string" ? card.numberLast4.trim() : "";
     card.numberLast4 = existingLast4 || last4FromNumber(card.number);
   }
-  await encryptSlots(collectCardSlots(next));
+  if (!CARD_FIELD_ENCRYPTION_ENABLED) {
+    stripSecretSlots(collectCardSlots(next));
+    return next;
+  }
   return next;
 }
 
@@ -205,7 +122,7 @@ export async function decryptCreditCardsMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  await decryptSlots(collectCardSlots(next), CREDIT_CARDS_STORAGE_KEY);
+  stripSecretSlots(collectCardSlots(next));
   return next;
 }
 

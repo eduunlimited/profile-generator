@@ -50,11 +50,6 @@ import {
   getGeocodioSettings,
   getOpenAiSettings,
 } from "../lib/api";
-import {
-  anySecretStoreLocked,
-  PROFILES_STORAGE_KEY,
-  secretStoreLocked,
-} from "../lib/cardSecrets";
 import { formatError } from "../lib/errorUtils";
 import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
 import {
@@ -220,7 +215,7 @@ export function useAppData() {
         listCreditCards(),
         loadList("emails", listPoolEmails),
       ]);
-      if (fullProfiles.length > 0 && !secretStoreLocked(PROFILES_STORAGE_KEY)) {
+      if (fullProfiles.length > 0) {
         let linked = fullProfiles;
         if (creds.length > 0) {
           linked = syncAllProfileCredentialLinks(linked, creds);
@@ -282,9 +277,6 @@ export function useAppData() {
       setCardCategories(cardCats);
       setEmailCategories(emailCats);
       setProfileCategories(profileCats);
-      if (anySecretStoreLocked()) {
-        setError("Could not unlock card numbers. Profiles and cards are still listed.");
-      }
       try {
         const [geocodio, openai] = await Promise.all([getGeocodioSettings(), getOpenAiSettings()]);
         setGeocodioConfigured(Boolean(geocodio.apiKey.trim()));

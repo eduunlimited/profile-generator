@@ -20,6 +20,7 @@ import {
   orderCardSearchText,
   PARSED_ORDER_SITES,
   refreshIncomingDeliveryDates,
+  resolveOrderProfileName,
   stripUnconfirmedSeventeenTrackDelivered,
   refreshTargetOrders,
   applyTargetCancelReasonsAfterRefresh,
@@ -239,6 +240,9 @@ export function OrdersPanel({
   const cardTitleFor = (order: ParsedOrder): string =>
     orderCardSearchText(order, cards, profiles, cardFallbackFor(order));
 
+  const profileNameFor = (order: ParsedOrder): string =>
+    resolveOrderProfileName(order, profiles, poolEmails);
+
   useEffect(() => {
     if (listFilter !== "cancelled") return;
     if (emailFilter && !cancelledByEmail.some((row) => row.email === emailFilter)) {
@@ -266,6 +270,7 @@ export function OrdersPanel({
           itemSearchText(order),
           formatItemQty(order),
           cardTitleFor(order),
+          profileNameFor(order),
           formatOrderAddress(order.shippingAddress),
           masterAddressForOrder(order, masterProfiles, profiles, poolEmails) ?? "",
           order.total != null ? formatTotal(order) : "",
@@ -317,7 +322,7 @@ export function OrdersPanel({
           </div>
           <input
             className="table-search profiles-table-search"
-            placeholder="Search order #, card, email, item, tracking"
+            placeholder="Search order #, profile, card, email, item, tracking"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
           />
@@ -475,6 +480,7 @@ export function OrdersPanel({
               <colgroup>
                 <col className="orders-col-site" />
                 <col className="orders-col-id" />
+                <col className="orders-col-profile" />
                 <col className="orders-col-card" />
                 <col className="orders-col-email" />
                 <col className="orders-col-item" />
@@ -489,6 +495,7 @@ export function OrdersPanel({
                 <tr>
                   <th>Site</th>
                   <th>Order #</th>
+                  <th>Profile</th>
                   <th>Card</th>
                   <th>Email</th>
                   <th className="orders-item-col">Item</th>
@@ -511,6 +518,9 @@ export function OrdersPanel({
                     >
                       <td>{retailerLabel(order.retailer)}</td>
                       <td className="col-card">{order.orderId}</td>
+                      <td className="orders-profile-cell" title={profileNameFor(order) || undefined}>
+                        {profileNameFor(order) || "—"}
+                      </td>
                       <td className="orders-card-cell" title={cardTitleFor(order) || undefined}>
                         <OrderCardLabel
                           order={order}
@@ -555,6 +565,10 @@ export function OrdersPanel({
                 {active.fulfillment === "pickup" ? " · Store pickup" : ""}
               </p>
               <dl className="orders-detail-meta">
+                <div>
+                  <dt>Profile</dt>
+                  <dd>{profileNameFor(active) || "—"}</dd>
+                </div>
                 <div>
                   <dt>Card</dt>
                   <dd>

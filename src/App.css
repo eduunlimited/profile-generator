@@ -4861,7 +4861,8 @@ textarea {
 
 .orders-col-site { width: 52px; }
 .orders-col-id { width: 112px; }
-.orders-col-card { width: 240px; }
+.orders-col-profile { width: 140px; }
+.orders-col-card { width: 200px; }
 .orders-col-email { width: 160px; }
 .orders-col-qty { width: 40px; }
 .orders-col-status { width: 108px; }
@@ -4937,7 +4938,8 @@ textarea {
   white-space: pre-line;
 }
 
-.orders-email-cell {
+.orders-email-cell,
+.orders-profile-cell {
   max-width: 220px;
   overflow: hidden;
   text-overflow: ellipsis;

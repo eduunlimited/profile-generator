@@ -192,19 +192,24 @@ export async function ensureDataKey(key: string): Promise<void> {
 
 export async function initLocalDataStore(): Promise<void> {
   if (!hydratePromise) {
-    hydratePromise = usesProjectDataFiles()
-      ? (async () => {
-          await Promise.all(
-            Object.keys(STORAGE_KEY_TO_FILE)
-              .filter((key) => !SKIP_EAGER_HYDRATE.has(key))
-              .map((key) => hydrateKeySafe(key)),
-          );
-          // Drop leftover mirrors even for keys that are not eager-loaded (mail).
-          for (const key of Object.keys(STORAGE_KEY_TO_FILE)) {
-            localStorage.removeItem(key);
-          }
-        })()
-      : hydratePackagedSecretKeys();
+    hydratePromise = (
+      usesProjectDataFiles()
+        ? (async () => {
+            await Promise.all(
+              Object.keys(STORAGE_KEY_TO_FILE)
+                .filter((key) => !SKIP_EAGER_HYDRATE.has(key))
+                .map((key) => hydrateKeySafe(key)),
+            );
+            // Drop leftover mirrors even for keys that are not eager-loaded (mail).
+            for (const key of Object.keys(STORAGE_KEY_TO_FILE)) {
+              localStorage.removeItem(key);
+            }
+          })()
+        : hydratePackagedSecretKeys()
+    ).catch((error) => {
+      hydratePromise = null;
+      throw error;
+    });
   }
   await hydratePromise;
 }
@@ -245,7 +250,7 @@ export function writeCachedMap<T>(key: string, value: Record<string, T>): Promis
 }
 
 export async function flushLocalDataWrites(): Promise<void> {
-  await Promise.all([...persistChain.values()]);
+  await Promise.all([...persistChain.values()].map((pending) => pending.catch(() => undefined)));
 }
 
 export function removeLegacyStorageKey(key: string): void {

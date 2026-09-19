@@ -50,6 +50,7 @@ import {
   getGeocodioSettings,
   getOpenAiSettings,
 } from "../lib/api";
+import { formatError } from "../lib/errorUtils";
 import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
 import {
   clearStaleAddressCheck,
@@ -195,15 +196,26 @@ export function useAppData() {
     setError(null);
     try {
       await initLocalDataStore();
-      await seedDefaults(BUILTIN_JIG_PRESETS, BUILTIN_EXPORT_TEMPLATES);
-      const [initialProfiles, creds, initialCards, initialEmails] = await Promise.all([
-        listProfiles(),
-        listCredentials(),
-        listCreditCards(),
-        listPoolEmails(),
+      try {
+        await seedDefaults(BUILTIN_JIG_PRESETS, BUILTIN_EXPORT_TEMPLATES);
+      } catch (seedError) {
+        console.error("Could not seed default jig/export presets.", seedError);
+      }
+      const loadList = async <T,>(label: string, loader: () => Promise<T[]>): Promise<T[]> => {
+        try {
+          return await loader();
+        } catch (loadError) {
+          console.error(`Could not load ${label}.`, loadError);
+          return [];
+        }
+      };
+      const [fullProfiles, creds, initialCards, initialEmails] = await Promise.all([
+        loadList("profiles", loadAllProfiles),
+        loadList("credentials", listCredentials),
+        loadList("credit cards", listCreditCards),
+        loadList("emails", listPoolEmails),
       ]);
-      if (initialProfiles.length > 0) {
-        const fullProfiles = await Promise.all(initialProfiles.map((summary) => getProfile(summary.id)));
+      if (fullProfiles.length > 0) {
         let linked = fullProfiles;
         if (creds.length > 0) {
           linked = syncAllProfileCredentialLinks(linked, creds);
@@ -221,7 +233,11 @@ export function useAppData() {
             emailLinkChanged(fullProfiles[index], profile),
         );
         if (toSave.length > 0) {
-          await saveProfiles(toSave);
+          try {
+            await saveProfiles(toSave);
+          } catch (linkError) {
+            console.error("Could not sync profile credential/card/email links.", linkError);
+          }
         }
       }
       const [
@@ -237,17 +253,17 @@ export function useAppData() {
         emailCats,
         profileCats,
       ] = await Promise.all([
-        listProfiles(),
-        listJigPresets(),
-        listExportTemplates(),
-        listMasterProfiles(),
-        listCreditCards(),
-        listPoolEmails(),
-        listCredentials(),
-        listAccountCategories(),
-        listCardCategories(),
-        listEmailCategories(),
-        listProfileCategories(),
+        loadList("profile summaries", listProfiles),
+        loadList("jig presets", listJigPresets),
+        loadList("export templates", listExportTemplates),
+        loadList("master profiles", listMasterProfiles),
+        loadList("credit cards", listCreditCards),
+        loadList("emails", listPoolEmails),
+        loadList("credentials", listCredentials),
+        loadList("account categories", listAccountCategories),
+        loadList("card categories", listCardCategories),
+        loadList("email categories", listEmailCategories),
+        loadList("profile categories", listProfileCategories),
       ]);
       setProfiles(profileRows);
       setJigPresets(jigRows as JigPreset[]);
@@ -261,11 +277,15 @@ export function useAppData() {
       setCardCategories(cardCats);
       setEmailCategories(emailCats);
       setProfileCategories(profileCats);
-      const [geocodio, openai] = await Promise.all([getGeocodioSettings(), getOpenAiSettings()]);
-      setGeocodioConfigured(Boolean(geocodio.apiKey.trim()));
-      cacheOpenAiApiKey(openai.apiKey);
+      try {
+        const [geocodio, openai] = await Promise.all([getGeocodioSettings(), getOpenAiSettings()]);
+        setGeocodioConfigured(Boolean(geocodio.apiKey.trim()));
+        cacheOpenAiApiKey(openai.apiKey);
+      } catch (settingsError) {
+        console.error("Could not load API key settings.", settingsError);
+      }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load app data.");
+      setError(formatError(err, "Failed to load app data."));
     } finally {
       setLoading(false);
     }

@@ -260,6 +260,7 @@ export type StoredCreditCard = {
   profileName?: string;
   label?: string;
   number: string;
+  numberLast4?: string;
   expiry: string;
   cvv: string;
   brand: string;
@@ -289,11 +290,14 @@ function normalizeCardAssignmentScope(value: unknown): CardAssignmentScope {
 
 export function normalizeCreditCard(card: StoredCreditCard): CreditCard {
   const number = typeof card.number === "string" ? parseCardNumberDigits(card.number) : "";
+  const storedLast4 =
+    typeof card.numberLast4 === "string" ? card.numberLast4.replace(/\D/g, "").slice(-4) : "";
   const cvv = typeof card.cvv === "string" ? card.cvv : "";
   return {
     id: card.id,
     profileName: card.profileName?.trim() || card.label?.trim() || "",
     number,
+    numberLast4: storedLast4 || (number.length >= 4 ? number.slice(-4) : ""),
     expiry: normalizeCardExpiryString(card.expiry ?? ""),
     cvv,
     brand: card.brand || detectCardBrand(number),

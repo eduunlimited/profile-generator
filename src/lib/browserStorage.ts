@@ -481,7 +481,7 @@ function resolveStoredCardCategoryId(categoryId: string): string {
 
 function repairOrphanCardCategoryIds(): void {
   const categories = readCardCategoriesMap();
-  const cards = readCreditCardsMap();
+  const cards = readMap<StoredCreditCard>(KEYS.creditCards);
   let cardsChanged = false;
   let categoriesChanged = false;
   let needsUncategorized = false;

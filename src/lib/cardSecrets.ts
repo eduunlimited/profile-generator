@@ -43,8 +43,53 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 }
 
 export function secretFieldUsable(value: unknown): boolean {
-  if (isSecretEnvelope(value)) return true;
-  return typeof value === "string" && value.trim().length > 0;
+  return typeof value === "string" && /\d/.test(value);
+}
+
+function preferSecretField(first: unknown, second: unknown): unknown {
+  if (secretFieldUsable(first)) return first;
+  if (secretFieldUsable(second)) return second;
+  if (typeof first === "string" && first.trim()) return first;
+  if (typeof second === "string" && second.trim()) return second;
+  if (first != null) return first;
+  return second;
+}
+
+export function mergeSecretStores(
+  first: Record<string, unknown>,
+  second: Record<string, unknown>,
+  kind: "cards" | "profiles",
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const id of new Set([...Object.keys(first), ...Object.keys(second)])) {
+    const left = asRecord(first[id]);
+    const right = asRecord(second[id]);
+    if (!left && !right) continue;
+    if (!left) {
+      merged[id] = cloneJson(right);
+      continue;
+    }
+    if (!right) {
+      merged[id] = cloneJson(left);
+      continue;
+    }
+    const next = { ...cloneJson(left), ...cloneJson(right) };
+    if (kind === "cards") {
+      next.number = preferSecretField(left.number, right.number);
+      next.cvv = preferSecretField(left.cvv, right.cvv);
+    } else {
+      const leftPay = asRecord(left.payment) ?? {};
+      const rightPay = asRecord(right.payment) ?? {};
+      next.payment = {
+        ...leftPay,
+        ...rightPay,
+        number: preferSecretField(leftPay.number, rightPay.number),
+        cvv: preferSecretField(leftPay.cvv, rightPay.cvv),
+      };
+    }
+    merged[id] = next;
+  }
+  return merged;
 }
 
 async function protectPlaintexts(plaintexts: string[]): Promise<(string | SecretEnvelope)[]> {

@@ -98,6 +98,7 @@ export interface CreditCard {
   id: string;
   profileName: string;
   number: string;
+  numberLast4?: string;
   expiry: string;
   cvv: string;
   brand: string;

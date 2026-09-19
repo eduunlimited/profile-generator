@@ -996,7 +996,7 @@ export function CreditCardsPanel({
                               title={privacyOn ? undefined : card.number}
                             >
                               {privacyOn
-                                ? maskCardNumberDisplay(card.number, card.brand) || "—"
+                                ? maskCardNumberDisplay(card.number || card.numberLast4 || "", card.brand) || "—"
                                 : formatCardNumberDisplay(card.number, card.brand) || "—"}
                             </td>
                             <td className="col-cvv" title={privacyOn ? undefined : card.cvv}>

@@ -4,6 +4,7 @@ import {
   CREDIT_CARDS_STORAGE_KEY,
   decryptStore,
   encryptStore,
+  mergeSecretStores,
   SECRET_STORAGE_KEYS,
 } from "./cardSecrets";
 import { isBrowserUiMode, isTauriRuntime } from "./env";
@@ -108,12 +109,7 @@ function pickRicherSecretStore(
   second: Record<string, unknown>,
   key: string,
 ): Record<string, unknown> {
-  const kind = secretKind(key);
-  const firstScore = countUsableSecretRecords(first, kind);
-  const secondScore = countUsableSecretRecords(second, kind);
-  if (secondScore > firstScore) return second;
-  if (firstScore > secondScore) return first;
-  return Object.keys(second).length > Object.keys(first).length ? second : first;
+  return mergeSecretStores(first, second, secretKind(key));
 }
 
 async function readAppDataStore(fileName: string): Promise<Record<string, unknown>> {
@@ -148,8 +144,22 @@ function enqueueSecretPersist(key: string, value: Record<string, unknown>): Prom
   const snapshot = cloneMap(value);
   const previous = persistChain.get(chainKey) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(async () => {
-    const encrypted = await encryptStore(key, snapshot);
+    const kind = secretKind(key);
     const fileName = STORAGE_KEY_TO_FILE[key];
+    const incomingCount = countUsableSecretRecords(snapshot, kind);
+    if (fileName && !usesProjectDataFiles()) {
+      const onDisk = await readAppDataStore(fileName);
+      if (countUsableSecretRecords(onDisk, kind) > incomingCount) {
+        console.error(`Skipping ${fileName} save: on-disk store has more card numbers.`);
+        return;
+      }
+    }
+    const encrypted = await encryptStore(key, snapshot);
+    const verified = await decryptStore(key, encrypted);
+    if (countUsableSecretRecords(verified, kind) < incomingCount) {
+      console.error(`Skipping ${fileName ?? key} save: encrypt/decrypt would drop card numbers.`);
+      return;
+    }
     if (usesProjectDataFiles()) {
       if (fileName) {
         await persistDataFile(fileName, encrypted);

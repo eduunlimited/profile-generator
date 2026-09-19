@@ -1,5 +1,12 @@
-import { decryptStore, encryptStore, SECRET_STORAGE_KEYS } from "./cardSecrets";
-import { isBrowserUiMode } from "./env";
+import { invoke } from "@tauri-apps/api/core";
+import {
+  countUsableSecretRecords,
+  CREDIT_CARDS_STORAGE_KEY,
+  decryptStore,
+  encryptStore,
+  SECRET_STORAGE_KEYS,
+} from "./cardSecrets";
+import { isBrowserUiMode, isTauriRuntime } from "./env";
 
 export const STORAGE_KEY_TO_FILE: Record<string, string> = {
   "profile-generator:profiles": "profiles.json",
@@ -92,6 +99,40 @@ function persistChainKey(key: string): string {
   return STORAGE_KEY_TO_FILE[key] ?? key;
 }
 
+function secretKind(key: string): "cards" | "profiles" {
+  return key === CREDIT_CARDS_STORAGE_KEY ? "cards" : "profiles";
+}
+
+function pickRicherSecretStore(
+  first: Record<string, unknown>,
+  second: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> {
+  const kind = secretKind(key);
+  const firstScore = countUsableSecretRecords(first, kind);
+  const secondScore = countUsableSecretRecords(second, kind);
+  if (secondScore > firstScore) return second;
+  if (firstScore > secondScore) return first;
+  return Object.keys(second).length > Object.keys(first).length ? second : first;
+}
+
+async function readAppDataStore(fileName: string): Promise<Record<string, unknown>> {
+  if (!isTauriRuntime() || usesProjectDataFiles()) return {};
+  try {
+    const parsed = await invoke<unknown>("read_app_data_store", { fileName });
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    return parsed as Record<string, unknown>;
+  } catch (error) {
+    console.error(`Could not read app data store ${fileName}.`, error);
+    return {};
+  }
+}
+
+async function writeAppDataStore(fileName: string, value: Record<string, unknown>): Promise<void> {
+  if (!isTauriRuntime() || usesProjectDataFiles()) return;
+  await invoke("write_app_data_store", { fileName, value });
+}
+
 function enqueuePersist(fileName: string, value: Record<string, unknown>): Promise<void> {
   const snapshot = cloneMap(value);
   const previous = persistChain.get(fileName) ?? Promise.resolve();
@@ -116,6 +157,9 @@ function enqueueSecretPersist(key: string, value: Record<string, unknown>): Prom
       return;
     }
     writeLocalStorageMap(key, encrypted);
+    if (fileName) {
+      await writeAppDataStore(fileName, encrypted);
+    }
   });
   persistChain.set(chainKey, next);
   return next;
@@ -167,11 +211,16 @@ async function hydratePackagedSecretKeys(): Promise<void> {
   await Promise.all(
     [...SECRET_STORAGE_KEYS].map(async (key) => {
       if (cache.has(key)) return;
-      const raw = readLocalStorageMap(key);
+      const fileName = STORAGE_KEY_TO_FILE[key];
+      const raw = pickRicherSecretStore(
+        readLocalStorageMap(key),
+        fileName ? await readAppDataStore(fileName) : {},
+        key,
+      );
       try {
         cache.set(key, await decryptStore(key, raw));
       } catch (error) {
-        console.error(`Failed to decrypt ${STORAGE_KEY_TO_FILE[key] ?? key}:`, error);
+        console.error(`Failed to decrypt ${fileName ?? key}:`, error);
         if (!cache.has(key)) {
           cache.set(key, raw);
         }
@@ -236,6 +285,14 @@ export function writeCachedMap<T>(key: string, value: Record<string, T>): Promis
     const existing = cache.get(key) ?? readLocalStorageMap(key);
     if (Object.keys(snapshot).length === 0 && Object.keys(existing).length > 0) {
       console.error(`Refusing to persist empty ${key} over existing records.`);
+      return Promise.resolve();
+    }
+    const kind = secretKind(key);
+    if (
+      countUsableSecretRecords(snapshot, kind) < countUsableSecretRecords(existing, kind) &&
+      Object.keys(existing).length > 0
+    ) {
+      console.error(`Refusing to persist ${key} with fewer usable card numbers than the current store.`);
       return Promise.resolve();
     }
     cache.set(key, snapshot);

@@ -7,9 +7,6 @@ export const CREDIT_CARDS_STORAGE_KEY = "profile-generator:credit-cards";
 
 export const SECRET_STORAGE_KEYS = new Set([PROFILES_STORAGE_KEY, CREDIT_CARDS_STORAGE_KEY]);
 
-/** Card/profile PAN+CVV vault encryption is off. Values stay plaintext. */
-const CARD_FIELD_ENCRYPTION_ENABLED = false;
-
 export type SecretEnvelope = {
   v: 1;
   alg: "aes-256-gcm";
@@ -45,10 +42,43 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value as Record<string, unknown>;
 }
 
-function plaintextFromValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (value == null || isSecretEnvelope(value)) return "";
-  return "";
+export function secretFieldUsable(value: unknown): boolean {
+  if (isSecretEnvelope(value)) return true;
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+async function protectPlaintexts(plaintexts: string[]): Promise<(string | SecretEnvelope)[]> {
+  if (!isTauriRuntime() || plaintexts.length === 0) return plaintexts;
+  const indexes: number[] = [];
+  const payload: string[] = [];
+  const result: (string | SecretEnvelope)[] = plaintexts.map((text, index) => {
+    if (!text) return text;
+    indexes.push(index);
+    payload.push(text);
+    return text;
+  });
+  if (payload.length === 0) return result;
+  const envelopes = await invoke<SecretEnvelope[]>("protect_secrets", { plaintexts: payload });
+  indexes.forEach((index, i) => {
+    result[index] = envelopes[i];
+  });
+  return result;
+}
+
+async function unprotectValues(values: unknown[]): Promise<string[]> {
+  if (values.length === 0) return [];
+  const hasEnvelope = values.some((value) => isSecretEnvelope(value));
+  if (!hasEnvelope) {
+    return values.map((value) => {
+      if (typeof value === "string") return value;
+      if (value == null) return "";
+      return String(value);
+    });
+  }
+  if (!isTauriRuntime()) {
+    return values.map((value) => (typeof value === "string" ? value : ""));
+  }
+  return invoke<string[]>("unprotect_secrets", { values });
 }
 
 type SecretSlot = { record: Record<string, unknown>; field: string };
@@ -76,9 +106,38 @@ function collectCardSlots(store: Record<string, unknown>): SecretSlot[] {
   return slots;
 }
 
-function stripSecretSlots(slots: SecretSlot[]): void {
+async function encryptSlots(slots: SecretSlot[]): Promise<void> {
+  const pending: { slot: SecretSlot; text: string }[] = [];
   for (const slot of slots) {
-    slot.record[slot.field] = plaintextFromValue(slot.record[slot.field]);
+    const current = slot.record[slot.field];
+    if (isSecretEnvelope(current) || typeof current !== "string" || !current) continue;
+    pending.push({ slot, text: current });
+  }
+  const protectedValues = await protectPlaintexts(pending.map((item) => item.text));
+  pending.forEach((item, index) => {
+    item.slot.record[item.slot.field] = protectedValues[index];
+  });
+}
+
+async function decryptSlots(slots: SecretSlot[]): Promise<void> {
+  if (slots.length === 0) return;
+  const values = slots.map((slot) => slot.record[slot.field]);
+  try {
+    const plaintexts = await unprotectValues(values);
+    slots.forEach((slot, index) => {
+      const current = slot.record[slot.field];
+      const text = plaintexts[index] ?? "";
+      if (isSecretEnvelope(current) && !text) {
+        const last4 =
+          (typeof slot.record.numberLast4 === "string" && slot.record.numberLast4.trim()) ||
+          last4FromNumber(slot.record.number);
+        slot.record[slot.field] = slot.field === "number" && last4 ? `••••${last4}` : current;
+        return;
+      }
+      slot.record[slot.field] = text;
+    });
+  } catch (error) {
+    console.error("Could not decrypt card fields.", error);
   }
 }
 
@@ -86,10 +145,7 @@ export async function encryptProfilesMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  if (!CARD_FIELD_ENCRYPTION_ENABLED) {
-    stripSecretSlots(collectPaymentSlots(next));
-    return next;
-  }
+  await encryptSlots(collectPaymentSlots(next));
   return next;
 }
 
@@ -97,7 +153,7 @@ export async function decryptProfilesMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  stripSecretSlots(collectPaymentSlots(next));
+  await decryptSlots(collectPaymentSlots(next));
   return next;
 }
 
@@ -111,10 +167,7 @@ export async function encryptCreditCardsMap(
     const existingLast4 = typeof card.numberLast4 === "string" ? card.numberLast4.trim() : "";
     card.numberLast4 = existingLast4 || last4FromNumber(card.number);
   }
-  if (!CARD_FIELD_ENCRYPTION_ENABLED) {
-    stripSecretSlots(collectCardSlots(next));
-    return next;
-  }
+  await encryptSlots(collectCardSlots(next));
   return next;
 }
 
@@ -122,7 +175,7 @@ export async function decryptCreditCardsMap(
   store: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const next = cloneJson(store);
-  stripSecretSlots(collectCardSlots(next));
+  await decryptSlots(collectCardSlots(next));
   return next;
 }
 
@@ -162,6 +215,15 @@ export async function encryptProfilesList(profiles: Profile[]): Promise<unknown[
 export async function decryptProfilesList(profiles: Profile[]): Promise<Profile[]> {
   const mapped = await decryptProfilesMap(Object.fromEntries(profiles.map((profile) => [profile.id, profile])));
   return profiles.map((profile) => mapped[profile.id] as Profile);
+}
+
+export function countUsableSecretRecords(store: Record<string, unknown>, kind: "cards" | "profiles"): number {
+  return Object.values(store).reduce<number>((count, value) => {
+    const record = asRecord(value);
+    if (!record) return count;
+    const secret = kind === "cards" ? record.number : asRecord(record.payment)?.number;
+    return count + (secretFieldUsable(secret) ? 1 : 0);
+  }, 0);
 }
 
 export async function confirmWindowsUser(message: string): Promise<boolean> {

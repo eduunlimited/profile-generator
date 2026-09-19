@@ -43,9 +43,52 @@ pub fn get_profile(state: State<DbState>, id: String) -> Result<Value, String> {
     })
 }
 
+fn payment_field_usable(value: &Value) -> bool {
+    match value {
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Object(object) => object.get("alg").and_then(Value::as_str) == Some("aes-256-gcm"),
+        _ => false,
+    }
+}
+
+fn keep_existing_payment_secrets(connection: &Connection, profile: &mut Value) -> Result<(), String> {
+    let Some(id) = profile.get("id").and_then(Value::as_str).map(str::to_string) else {
+        return Ok(());
+    };
+    let existing_raw: String = match connection.query_row(
+        "SELECT data FROM profiles WHERE id = ?1",
+        rusqlite::params![id],
+        |row| row.get(0),
+    ) {
+        Ok(raw) => raw,
+        Err(rusqlite::Error::QueryReturnedNoRows) => return Ok(()),
+        Err(error) => return Err(error.to_string()),
+    };
+    let existing: Value = serde_json::from_str(&existing_raw).map_err(|error| error.to_string())?;
+    let Some(existing_payment) = existing.get("payment") else {
+        return Ok(());
+    };
+    let Some(payment) = profile.get_mut("payment").and_then(Value::as_object_mut) else {
+        return Ok(());
+    };
+    for field in ["number", "cvv"] {
+        let incoming_ok = payment.get(field).map(payment_field_usable).unwrap_or(false);
+        if incoming_ok {
+            continue;
+        }
+        if let Some(keep) = existing_payment.get(field) {
+            if payment_field_usable(keep) {
+                payment.insert(field.to_string(), keep.clone());
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
-pub fn save_profile(state: State<DbState>, profile: Value) -> Result<(), String> {
+pub fn save_profile(state: State<DbState>, mut profile: Value) -> Result<(), String> {
     with_connection(&state, |connection| {
+        keep_existing_payment_secrets(connection, &mut profile)?;
         let id = profile
             .get("id")
             .and_then(|item| item.as_str())
@@ -57,9 +100,10 @@ pub fn save_profile(state: State<DbState>, profile: Value) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn save_profiles(state: State<DbState>, profiles: Vec<Value>) -> Result<(), String> {
+pub fn save_profiles(state: State<DbState>, mut profiles: Vec<Value>) -> Result<(), String> {
     with_connection(&state, |connection| {
-        for profile in profiles {
+        for profile in &mut profiles {
+            keep_existing_payment_secrets(connection, profile)?;
             let id = profile
                 .get("id")
                 .and_then(|item| item.as_str())

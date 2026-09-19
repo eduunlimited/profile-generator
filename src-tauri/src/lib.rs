@@ -238,6 +238,8 @@ pub fn run() {
             commands::check_license,
             commands::clear_license,
             commands::licensing_required,
+            vault::read_app_data_store,
+            vault::write_app_data_store,
             vault::protect_secret,
             vault::protect_secrets,
             vault::unprotect_secret,

@@ -72,6 +72,7 @@ export interface TargetCancelFetchRequest {
 }
 
 export const TARGET_CANCEL_MANUAL_REASON = "Check reason manually";
+const TARGET_CANCEL_REASON_FETCH_ENABLED = false;
 const CANCEL_STAGGER_MIN_MS = 15_000;
 const CANCEL_STAGGER_MAX_MS = 30_000;
 
@@ -99,9 +100,8 @@ export function shortTargetCancelReason(reason?: string | null): string {
   return text.replace(/^policy\s*[-:]\s*/i, "").trim() || text;
 }
 
-export function formatCancelledStatus(order: Pick<ParsedOrder, "cancelReason">): string {
-  const reason = shortTargetCancelReason(order.cancelReason);
-  return reason ? `Cancelled - ${reason}` : "Cancelled";
+export function formatCancelledStatus(_order?: Pick<ParsedOrder, "cancelReason">): string {
+  return "Cancelled";
 }
 
 export function isManualCancelReason(reason?: string | null): boolean {
@@ -443,6 +443,15 @@ export async function fetchTargetCancelReasons(
   onStatus?: (message: string) => void,
   options: FetchTargetCancelReasonsOptions = {},
 ): Promise<FetchTargetCancelReasonsResult> {
+  if (!TARGET_CANCEL_REASON_FETCH_ENABLED) {
+    return {
+      orders,
+      fetched: 0,
+      accounts: 0,
+      status: "",
+      tone: "ok",
+    };
+  }
   const run = cancelFetchChain.then(
     () => fetchTargetCancelReasonsLocked(orders, onStatus, options),
     () => fetchTargetCancelReasonsLocked(orders, onStatus, options),
@@ -456,17 +465,11 @@ export async function fetchTargetCancelReasons(
 
 export async function applyTargetCancelReasonsAfterRefresh(
   orders: ParsedOrder[],
-  source: "button" | "auto",
-  newCancelledOrderIds: string[] | undefined,
-  onStatus?: (message: string) => void,
+  _source: "button" | "auto",
+  _newCancelledOrderIds?: string[],
+  _onStatus?: (message: string) => void,
 ): Promise<FetchTargetCancelReasonsResult> {
-  if (source === "auto") {
-    return fetchTargetCancelReasons(orders, onStatus, {
-      orderIds: newCancelledOrderIds ?? [],
-      allowLogin: true,
-    });
-  }
-  return fetchTargetCancelReasons(orders, onStatus, { allowLogin: true });
+  return fetchTargetCancelReasons(orders);
 }
 
 async function saveAndReload(orders: ParsedOrder[]): Promise<ParsedOrder[]> {

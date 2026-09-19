@@ -584,12 +584,6 @@ export function OrdersPanel({
                     )}
                   </dd>
                 </div>
-                {active.status === "cancelled" ? (
-                  <div>
-                    <dt>Cancel reason</dt>
-                    <dd>{active.cancelReason || "Not fetched yet"}</dd>
-                  </div>
-                ) : null}
                 {active.fulfillment === "pickup" ? (
                   <div>
                     <dt>Fulfillment</dt>

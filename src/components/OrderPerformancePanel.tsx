@@ -151,7 +151,7 @@ function TimelineNode({
         <div className="performance-node-body">
           <span
             className={succeeded ? "order-metric-ok" : "order-metric-cxl"}
-            title={succeeded ? undefined : order.cancelReason?.trim() || undefined}
+            title={succeeded ? undefined : "Cancelled"}
           >
             {succeeded ? "Succeeded" : formatCancelledStatus(order)}
           </span>

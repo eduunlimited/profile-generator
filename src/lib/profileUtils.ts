@@ -3,7 +3,13 @@ import { emailsMatch, findPoolEmailByAddress, isAssignablePoolEmail } from "./em
 import { billingSameAsShippingFlag, resolveProfileEmail, setProfileEmail } from "./profileEmailUtils";
 import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "./profileCategoryUtils";
 import type { Credential, CreditCard, PoolEmail, Profile, ProfileLogin, ProfileName, ProfilePayment } from "./types";
-import { cardNumbersMatch, findPoolCardByPayment, isAssignablePoolCard, parseCardNumberDigits } from "./creditCardUtils";
+import {
+  cardNumbersMatch,
+  findPoolCardByPayment,
+  isAssignablePoolCard,
+  normalizeCardExpiryString,
+  parseCardNumberDigits,
+} from "./creditCardUtils";
 import { generateProfile } from "./generator";
 import { normalizeUsPhone } from "./phoneUtils";
 export function syncProfileName(profile: Profile): Profile {
@@ -259,7 +265,8 @@ export function updateProfilePaymentField(
   value: string,
   cards: CreditCard[],
 ): Profile {
-  const next = updateProfileField(profile, path, value);
+  const nextValue = path === "payment.expiry" ? normalizeCardExpiryString(value) || value : value;
+  const next = updateProfileField(profile, path, nextValue);
   let linked = syncProfileCreditCardLink(next, cards);
   if (path === "payment.number" && parseCardNumberDigits(value).length === 0) {
     linked = clearProfileCreditCardAssignment(linked);

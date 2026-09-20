@@ -1,4 +1,5 @@
 import type { Profile, ProfileAddress, ProfileName } from "./types";
+import { expandExpiryYearToFourDigits, parseCardExpiry } from "./creditCardUtils";
 import {
   exportProfileAddress,
   exportProfileName,
@@ -121,11 +122,10 @@ function mapCardBrand(brand: string): string {
 }
 
 function parseExpiry(expiry: string): { month: string; year2: string; year4: string } {
-  const [rawMonth = "01", rawYear = "30"] = expiry.split("/");
-  const month = rawMonth.padStart(2, "0");
-  const yearDigits = rawYear.replace(/\D/g, "");
-  const year2 = (yearDigits.length >= 2 ? yearDigits.slice(-2) : yearDigits.padStart(2, "0")).padStart(2, "0");
-  const year4 = yearDigits.length === 4 ? yearDigits : `20${year2}`;
+  const parts = parseCardExpiry(expiry);
+  const month = (parts.month || "01").padStart(2, "0");
+  const year4 = expandExpiryYearToFourDigits(parts.year || "30") || "2030";
+  const year2 = year4.slice(-2);
   return { month, year2, year4 };
 }
 

@@ -1,8 +1,8 @@
 import {
-  formatCardExpiry,
   formatCardNumberDisplay,
   formatCardNumberInput,
-  parseCardExpiry,
+  formatExpiryDisplay,
+  formatExpiryInput,
   parseCardNumberDigits,
 } from "../lib/creditCardUtils";
 import { PROFILE_UNCATEGORIZED_CATEGORY_ID } from "../lib/profileCategoryUtils";
@@ -142,7 +142,6 @@ export function ProfileFormModal({
   const shippingAddress = billingMatchesShipping
     ? profile.address
     : (profile.shippingAddress ?? profile.address);
-  const expiryParts = parseCardExpiry(profile.payment.expiry);
   const cardholderMatchesShipping = cardHolderSameAsShipping(profile);
   const displayedCardholderName = cardholderMatchesShipping
     ? shippingFullName(profile)
@@ -414,18 +413,15 @@ export function ProfileFormModal({
                       value={
                         showMixed("paymentExpiry")
                           ? ""
-                          : expiryParts.month && expiryParts.year
-                            ? `${expiryParts.month}/${expiryParts.year.slice(-2)}`
-                            : profile.payment.expiry
+                          : formatExpiryDisplay(profile.payment.expiry)
                       }
                       onChange={(event) => {
                         if (isMassEditing) touch("paymentExpiry");
-                        const parts = parseCardExpiry(event.target.value);
                         onProfileDraftChange(
                           updateProfilePaymentField(
                             profile,
                             "payment.expiry",
-                            formatCardExpiry(parts.month, parts.year),
+                            formatExpiryInput(event.target.value),
                             creditCards,
                           ),
                         );

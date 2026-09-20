@@ -97,6 +97,16 @@ export function expandExpiryYearToFourDigits(value: string): string {
   return digits;
 }
 
+function expiryDigitsOnly(value: string): string {
+  return value.replace(/\D/g, "").slice(0, 6);
+}
+
+function isValidMonthDigits(digits: string): boolean {
+  if (!digits || digits.length > 2) return false;
+  const month = Number(digits);
+  return month >= 1 && month <= 12;
+}
+
 export function parseCardExpiry(expiry: string): { month: string; year: string } {
   const trimmed = expiry.trim();
   if (!trimmed) {
@@ -105,38 +115,55 @@ export function parseCardExpiry(expiry: string): { month: string; year: string }
 
   const slashMatch = trimmed.match(/^(\d{1,2})\s*\/\s*(\d{1,4})$/);
   if (slashMatch) {
+    const monthRaw = slashMatch[1];
     return {
-      month: normalizeExpiryMonth(slashMatch[1]),
+      month: monthRaw.length === 1 ? monthRaw : normalizeExpiryMonth(monthRaw),
       year: normalizeExpiryYear(slashMatch[2]),
     };
   }
 
-  const yearOnlyMatch = trimmed.match(/^\/(\d{1,4})$/);
-  if (yearOnlyMatch) {
-    return { month: "", year: normalizeExpiryYear(yearOnlyMatch[1]) };
+  const digits = expiryDigitsOnly(trimmed);
+  if (!digits) {
+    return { month: "", year: "" };
   }
 
-  const compactMatch = trimmed.match(/^(\d{2})(\d{2,4})$/);
-  if (compactMatch) {
+  if (digits.length >= 5) {
     return {
-      month: normalizeExpiryMonth(compactMatch[1]),
-      year: normalizeExpiryYear(compactMatch[2]),
+      month: normalizeExpiryMonth(digits.slice(0, 2)),
+      year: normalizeExpiryYear(digits.slice(2)),
     };
   }
 
-  const bareMatch = trimmed.match(/^(\d{1,4})$/);
-  if (bareMatch) {
-    const digits = bareMatch[1];
-    if (digits.length === 2) {
-      const monthNum = Number(digits);
-      if (monthNum >= 1 && monthNum <= 12) {
-        return { month: normalizeExpiryMonth(digits), year: "" };
-      }
+  if (digits.length === 4) {
+    const monthPart = digits.slice(0, 2);
+    if (isValidMonthDigits(monthPart)) {
+      return {
+        month: normalizeExpiryMonth(monthPart),
+        year: normalizeExpiryYear(digits.slice(2)),
+      };
     }
     return { month: "", year: normalizeExpiryYear(digits) };
   }
 
-  return { month: "", year: "" };
+  if (digits.length === 3) {
+    const monthPart = digits.slice(0, 2);
+    if (isValidMonthDigits(monthPart)) {
+      return {
+        month: normalizeExpiryMonth(monthPart),
+        year: normalizeExpiryYear(digits.slice(2)),
+      };
+    }
+    return { month: "", year: normalizeExpiryYear(digits) };
+  }
+
+  if (digits.length === 2) {
+    if (isValidMonthDigits(digits)) {
+      return { month: normalizeExpiryMonth(digits), year: "" };
+    }
+    return { month: "", year: normalizeExpiryYear(digits) };
+  }
+
+  return { month: digits, year: "" };
 }
 
 export function normalizeExpiryMonth(value: string): string {
@@ -153,12 +180,34 @@ export function normalizeExpiryYear(value: string): string {
 }
 
 export function formatCardExpiry(month: string, year: string): string {
-  const normalizedMonth = normalizeExpiryMonth(month);
+  const normalizedMonth = month.length === 1 && !year ? month : month ? normalizeExpiryMonth(month) : "";
   const yearDigits = normalizeExpiryYear(year);
   if (!normalizedMonth && !yearDigits) return "";
-  if (!normalizedMonth) return `/${yearDigits}`;
+  if (!normalizedMonth) return yearDigits;
   if (!yearDigits) return normalizedMonth;
   return `${normalizedMonth}/${yearDigits}`;
+}
+
+/** Live MM/YY input: digits only, never prefix a leading slash. */
+export function formatExpiryInput(value: string): string {
+  const digits = value.replace(/\D/g, "").slice(0, 4);
+  if (!digits) return "";
+  if (digits.length <= 2) return digits;
+  return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+}
+
+/** Profile expiry field display as MM/YY, including leftover `/1129` values. */
+export function formatExpiryDisplay(expiry: string): string {
+  const trimmed = expiry.trim();
+  if (!trimmed) return "";
+  const parts = parseCardExpiry(trimmed);
+  if (parts.month && parts.year) {
+    const month = parts.month.length === 1 ? parts.month : normalizeExpiryMonth(parts.month);
+    return `${month}/${parts.year.slice(-2)}`;
+  }
+  if (parts.month) return parts.month;
+  if (parts.year) return parts.year;
+  return formatExpiryInput(trimmed);
 }
 
 /** Normalize any expiry value to MM/YYYY, upgrading 2-digit years on import or load. */

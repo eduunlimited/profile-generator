@@ -1,5 +1,5 @@
 import { profileGroupId } from "./profileGroupUtils";
-import { parseCardNumberDigits } from "./creditCardUtils";
+import { normalizeCardExpiryString, parseCardNumberDigits } from "./creditCardUtils";
 import { normalizeUsPhone } from "./phoneUtils";
 import type { Profile, ProfileName } from "./types";
 
@@ -71,7 +71,7 @@ export function normalizeProfile(profile: Profile): Profile {
   const email = resolveProfileEmail(profile);
   const phone = normalizeUsPhone(profile.phone ?? "");
   const billingSame = billingSameAsShippingFlag(profile.billingSameAsShipping);
-  return stripOrphanProfilePayment({
+  const next = stripOrphanProfilePayment({
     ...profile,
     email,
     phone,
@@ -90,6 +90,17 @@ export function normalizeProfile(profile: Profile): Profile {
       username: email || login.username,
     })),
   });
+  const expiry = normalizeCardExpiryString(next.payment.expiry ?? "");
+  if (expiry === (next.payment.expiry ?? "")) {
+    return next;
+  }
+  return {
+    ...next,
+    payment: {
+      ...next.payment,
+      expiry,
+    },
+  };
 }
 
 export function setProfileEmail(profile: Profile, email: string): Profile {

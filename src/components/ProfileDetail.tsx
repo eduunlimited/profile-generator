@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { reapplyJigPreset } from "../lib/jigEngine";
-import { profileHasPaymentCard } from "../lib/creditCardUtils";
+import { normalizeCardExpiryString, profileHasPaymentCard } from "../lib/creditCardUtils";
 import type { JigPreset, Profile } from "../lib/types";
 import { CopyField, Field, Section } from "./ui";
 
@@ -128,7 +128,7 @@ export function ProfileDetail({
 
         <Section title="Payment (TEST DATA)">
           <CopyField label="Card number" value={profile.payment.number} />
-          <CopyField label="Expiry" value={profile.payment.expiry} />
+          <CopyField label="Expiry" value={normalizeCardExpiryString(profile.payment.expiry)} />
           <CopyField label="CVV" value={profile.payment.cvv} />
           {profileHasPaymentCard(profile) && profile.payment.brand.trim() ? (
             <CopyField label="Brand" value={profile.payment.brand} />

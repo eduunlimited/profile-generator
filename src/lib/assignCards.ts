@@ -420,8 +420,7 @@ export function assignCardsToProfiles(
         continue;
       }
       updatedById.set(profile.id, {
-        ...profile,
-        creditCardId: undefined,
+        ...clearProfileCreditCardAssignment(profile),
         updatedAt: now,
       });
     }
@@ -464,8 +463,7 @@ export function assignCardsToProfiles(
       continue;
     }
     updatedById.set(profile.id, {
-      ...profile,
-      creditCardId: undefined,
+      ...clearProfileCreditCardAssignment(profile),
       updatedAt: now,
     });
   }

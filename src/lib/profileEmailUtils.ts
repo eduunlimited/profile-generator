@@ -91,15 +91,19 @@ export function normalizeProfile(profile: Profile): Profile {
     })),
   });
   const expiry = normalizeCardExpiryString(next.payment.expiry ?? "");
-  if (expiry === (next.payment.expiry ?? "")) {
+  const paymentChanged = expiry !== (next.payment.expiry ?? "");
+  if (!next.clearPaymentSecrets && !paymentChanged) {
     return next;
   }
   return {
     ...next,
-    payment: {
-      ...next.payment,
-      expiry,
-    },
+    clearPaymentSecrets: undefined,
+    payment: paymentChanged
+      ? {
+          ...next.payment,
+          expiry,
+        }
+      : next.payment,
   };
 }
 

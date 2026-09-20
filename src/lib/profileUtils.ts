@@ -322,6 +322,7 @@ export function applyCreditCardFromPool(
   return {
     ...profile,
     creditCardId: cardId,
+    clearPaymentSecrets: undefined,
     payment: {
       number: card.number,
       expiry: card.expiry,
@@ -335,6 +336,7 @@ export function clearProfileCreditCardAssignment(profile: Profile): Profile {
   return {
     ...profile,
     creditCardId: undefined,
+    clearPaymentSecrets: true,
     payment: {
       number: "",
       expiry: "",

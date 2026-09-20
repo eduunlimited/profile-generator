@@ -160,6 +160,8 @@ export interface Profile {
   accountSite?: string;
   payment: ProfilePayment;
   creditCardId?: string;
+  /** One-shot save flag: persist a cleared card number/CVV. Stripped before storage. */
+  clearPaymentSecrets?: boolean;
   emailPoolId?: string;
   credentialIds: string[];
   logins: ProfileLogin[];

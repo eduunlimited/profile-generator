@@ -52,6 +52,17 @@ fn payment_field_usable(value: &Value) -> bool {
 }
 
 fn keep_existing_payment_secrets(connection: &Connection, profile: &mut Value) -> Result<(), String> {
+    let clear_payment = profile
+        .get("clearPaymentSecrets")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    if let Some(object) = profile.as_object_mut() {
+        object.remove("clearPaymentSecrets");
+    }
+    if clear_payment {
+        return Ok(());
+    }
+
     let Some(id) = profile.get("id").and_then(Value::as_str).map(str::to_string) else {
         return Ok(());
     };

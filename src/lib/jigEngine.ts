@@ -204,7 +204,7 @@ function applyStreetTypeCombo(street: string): string {
   const coreTokens = matchedType ? afterDirection.slice(0, -1) : afterDirection;
 
   if (!matchedType && !direction) {
-    return applyHouseNumberLetter([prefix, core.join(" "), suffix].filter(Boolean).join(" "));
+    return [prefix, core.join(" "), suffix].filter(Boolean).join(" ");
   }
 
   const house = coreTokens[0] && /^\d/.test(coreTokens[0]) ? coreTokens[0] : "";
@@ -215,9 +215,7 @@ function applyStreetTypeCombo(street: string): string {
   const typeText = typePair ? (Math.random() < 0.5 ? typePair.short : typePair.long) : "";
   const directionText = direction ? pickRandom(direction.group.variants) : "";
 
-  return applyHouseNumberLetter(
-    [prefix, house, name, typeText, directionText, suffix].filter(Boolean).join(" "),
-  );
+  return [prefix, house, name, typeText, directionText, suffix].filter(Boolean).join(" ");
 }
 
 function randomLetters(count: number): string {

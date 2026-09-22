@@ -301,7 +301,7 @@ function toShipment(order: ParsedOrder): IncomingShipment {
     tracking,
     site: retailerLabel(order.retailer),
     carrier,
-    eta: dateLabel !== "—" ? dateLabel : carrierLabel(carrier) || "—",
+    eta: dateLabel,
     hasDate: dateLabel !== "—",
   };
 }

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { Plugin } from "vite";
 import { crawlSeventeenTrack } from "./vite-17track-crawl";
+import { crawlUpsTrack } from "./vite-ups-crawl";
 
 const DATA_ROUTE = "/__data";
 
@@ -72,14 +73,25 @@ export function localDataPlugin(): Plugin {
               const tracking =
                 target.hash.match(/nums=([^&]+)/i)?.[1] ??
                 target.searchParams.get("nums") ??
+                target.searchParams.get("tracknum") ??
                 (payload.json && typeof payload.json === "object"
                   ? String(
-                      (payload.json as { data?: Array<{ num?: string }> }).data?.[0]?.num ?? "",
+                      (payload.json as { data?: Array<{ num?: string }> }).data?.[0]?.num ??
+                        (payload.json as { TrackingNumber?: string[] }).TrackingNumber?.[0] ??
+                        "",
                     )
                   : "");
               const carrierFc = target.hash.match(/[?&]fc=([^&]+)/i)?.[1] ?? target.searchParams.get("fc") ?? undefined;
               if (host.endsWith("17track.net") && tracking) {
                 const crawled = await crawlSeventeenTrack(decodeURIComponent(tracking), carrierFc ?? undefined);
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "application/json");
+                res.setHeader("Cache-Control", "no-store");
+                res.end(JSON.stringify(crawled));
+                return;
+              }
+              if (host === "www.ups.com" && /\/track/i.test(target.pathname) && tracking) {
+                const crawled = await crawlUpsTrack(decodeURIComponent(tracking));
                 res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
                 res.setHeader("Cache-Control", "no-store");

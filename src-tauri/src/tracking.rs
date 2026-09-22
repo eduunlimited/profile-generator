@@ -35,6 +35,15 @@ fn is_seventeen_track_url(url: &str) -> bool {
     lower.contains("t.17track.net") || lower.contains("www.17track.net")
 }
 
+fn is_ups_track_url(url: &str) -> bool {
+    let Ok(parsed) = reqwest::Url::parse(url.trim()) else {
+        return false;
+    };
+    let host = parsed.host_str().unwrap_or("").to_ascii_lowercase();
+    let path = parsed.path().to_ascii_lowercase();
+    host == "www.ups.com" && path == "/track"
+}
+
 pub async fn fetch_tracking_page(
     app: AppHandle,
     request: TrackingFetchRequest,
@@ -43,6 +52,21 @@ pub async fn fetch_tracking_page(
         let url = request.url.clone();
         return tauri::async_runtime::spawn_blocking(move || {
             match crate::browser::crawl_seventeen_track(&app, &url) {
+                Ok((status, text)) => Ok(TrackingFetchResult { status, text }),
+                Err(_) => Ok(TrackingFetchResult {
+                    status: 0,
+                    text: String::new(),
+                }),
+            }
+        })
+        .await
+        .map_err(|error| error.to_string())?;
+    }
+
+    if is_ups_track_url(&request.url) {
+        let url = request.url.clone();
+        return tauri::async_runtime::spawn_blocking(move || {
+            match crate::browser::crawl_ups_track(&app, &url) {
                 Ok((status, text)) => Ok(TrackingFetchResult { status, text }),
                 Err(_) => Ok(TrackingFetchResult {
                     status: 0,

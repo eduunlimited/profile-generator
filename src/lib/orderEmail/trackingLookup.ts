@@ -2,7 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { saveOrders } from "../api";
 import { isTauriRuntime } from "../env";
 import type { ParsedOrder, ShipmentCarrier } from "../types";
-import { allowedTrackingHost, detectCarrier, normalizeTracking } from "./carrier";
+import { allowedTrackingHost, detectCarrier, normalizeTracking, parseCarrierPage, trackingUrl } from "./carrier";
 import { isCancelledOrder, isInTransitOrder } from "./dashboard";
 import { finalizeParsedOrder } from "./merge";
 import {
@@ -198,6 +198,32 @@ export async function refreshIncomingDeliveryDates(orders: ParsedOrder[]): Promi
   return inflight;
 }
 
+async function lookupCarrierEta(
+  tracking: string,
+  preferred?: ShipmentCarrier,
+): Promise<{ eta?: string; carrier?: ShipmentCarrier }> {
+  const id = normalizeTracking(tracking);
+  if (!isUsableId(id)) return {};
+  const carrier = preferred ?? detectCarrier(id);
+  if (!carrier) return {};
+
+  try {
+    if (carrier === "ups") {
+      const page = await fetchTrackingPage(trackingUrl("ups", id));
+      const eta = parseCarrierPage(page.text);
+      if (eta) return { eta, carrier };
+      return { carrier };
+    }
+
+    const page = await fetchTrackingPage(trackingUrl(carrier, id));
+    const eta = parseCarrierPage(page.text);
+    if (eta) return { eta, carrier };
+  } catch {
+    // Leave the 17track result alone when the carrier page fails.
+  }
+  return { carrier };
+}
+
 async function refreshIncomingDeliveryDatesInner(
   orders: ParsedOrder[],
   incoming: ParsedOrder[],
@@ -210,12 +236,24 @@ async function refreshIncomingDeliveryDatesInner(
   for (const order of incoming) {
     const tracking = normalizeTracking(order.trackingNumber ?? "");
     const lookup = lookups.get(tracking);
-    const expectedDelivery = lookup?.eta ?? lookup?.deliveredAt;
+    let expectedDelivery = lookup?.eta ?? lookup?.deliveredAt;
+    let source: "carrier" | "email" | "17track" | undefined = expectedDelivery ? "17track" : undefined;
+    let carrier = lookup?.carrier ?? detectCarrier(tracking) ?? order.carrier;
+
+    if (!expectedDelivery) {
+      const carrierLookup = await lookupCarrierEta(tracking, carrier);
+      carrier = carrierLookup.carrier ?? carrier;
+      if (carrierLookup.eta) {
+        expectedDelivery = carrierLookup.eta;
+        source = "carrier";
+      }
+    }
+
     const updated = applyShipmentFields(order, {
       tracking,
-      carrier: lookup?.carrier ?? detectCarrier(tracking) ?? order.carrier,
+      carrier,
       expectedDelivery,
-      source: expectedDelivery ? "17track" : undefined,
+      source,
       stamp: Boolean(expectedDelivery),
       delivered: lookup?.delivered,
       deliveredAt: lookup?.deliveredAt,

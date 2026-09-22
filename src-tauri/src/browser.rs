@@ -315,6 +315,27 @@ fn track_script_path(app: &AppHandle) -> PathBuf {
     dev_track_script_path()
 }
 
+fn dev_ups_track_script_path() -> PathBuf {
+    project_root()
+        .join("scripts")
+        .join("camoufox")
+        .join("crawl_ups.py")
+}
+
+fn bundled_ups_track_script_path(resource_dir: &Path) -> PathBuf {
+    resource_dir.join("camoufox").join("crawl_ups.py")
+}
+
+fn ups_track_script_path(app: &AppHandle) -> PathBuf {
+    if let Some(resource_dir) = bundled_resource_dir(app) {
+        let bundled = bundled_ups_track_script_path(&resource_dir);
+        if bundled.exists() {
+            return bundled;
+        }
+    }
+    dev_ups_track_script_path()
+}
+
 fn bundled_python_path(resource_dir: &Path) -> PathBuf {
     #[cfg(windows)]
     {
@@ -993,11 +1014,23 @@ pub fn fetch_target_cancel_reasons(
 }
 
 pub fn crawl_seventeen_track(app: &AppHandle, url: &str) -> Result<(u16, String), String> {
+    crawl_tracking_script(app, track_script_path(app), url, "17track")
+}
+
+pub fn crawl_ups_track(app: &AppHandle, url: &str) -> Result<(u16, String), String> {
+    crawl_tracking_script(app, ups_track_script_path(app), url, "UPS")
+}
+
+fn crawl_tracking_script(
+    app: &AppHandle,
+    script: PathBuf,
+    url: &str,
+    label: &str,
+) -> Result<(u16, String), String> {
     let python = resolve_python_executable(app, None);
-    let script = track_script_path(app);
     if !script.exists() {
         return Err(format!(
-            "17track crawl script not found at {}.",
+            "{label} crawl script not found at {}.",
             script.display()
         ));
     }
@@ -1014,7 +1047,7 @@ pub fn crawl_seventeen_track(app: &AppHandle, url: &str) -> Result<(u16, String)
         .spawn()
         .map_err(|error| {
             format!(
-                "Failed to start 17track crawl with {}: {error}",
+                "Failed to start {label} crawl with {}: {error}",
                 python.display()
             )
         })?;
@@ -1030,13 +1063,13 @@ pub fn crawl_seventeen_track(app: &AppHandle, url: &str) -> Result<(u16, String)
     let mut stdout = child
         .stdout
         .take()
-        .ok_or_else(|| "Failed to capture 17track crawl output.".to_string())?;
+        .ok_or_else(|| format!("Failed to capture {label} crawl output."))?;
     let mut output = Vec::new();
     let deadline = std::time::Instant::now() + Duration::from_secs(90);
     loop {
         if std::time::Instant::now() > deadline {
             let _ = child.kill();
-            return Err("Timed out waiting for 17track crawl.".to_string());
+            return Err(format!("Timed out waiting for {label} crawl."));
         }
         match child.try_wait() {
             Ok(Some(_)) => {
@@ -1056,7 +1089,7 @@ pub fn crawl_seventeen_track(app: &AppHandle, url: &str) -> Result<(u16, String)
                 .rev()
                 .find_map(|line| serde_json::from_str(line.trim()).ok())
         })
-        .ok_or_else(|| "17track crawl returned invalid JSON.".to_string())?;
+        .ok_or_else(|| format!("{label} crawl returned invalid JSON."))?;
     let status = parsed
         .get("status")
         .and_then(|value| value.as_u64())

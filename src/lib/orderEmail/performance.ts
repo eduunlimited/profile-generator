@@ -6,8 +6,10 @@ import {
   isNotShippedOrder,
   isSuccessfulOrder,
   orderEmailKey,
+  orderPlacedMs,
   retailerLabel,
   sortOrdersByPlaced,
+  startOfLocalWeek,
   UNKNOWN_ORDER_EMAIL,
 } from "./dashboard";
 import { formatOrderAddress } from "./parse";
@@ -372,6 +374,66 @@ export function summarizeSitePerformance(orders: ParsedOrder[]) {
     cancelRate: rate(cancelled, total),
     stickRate: rate(successful, total),
   };
+}
+
+export interface WeeklyPerformancePoint {
+  weekStartMs: number;
+  weekStartIso: string;
+  label: string;
+  successful: number;
+  cancelled: number;
+  total: number;
+  successRate: number | undefined;
+}
+
+function toIsoDateLocal(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function summarizeWeeklyPerformance(
+  orders: ParsedOrder[],
+  weekCount = 12,
+  now = new Date(),
+): WeeklyPerformancePoint[] {
+  const count = Math.max(1, Math.floor(weekCount));
+  const thisWeek = startOfLocalWeek(now);
+  const buckets = new Map<number, { successful: number; cancelled: number }>();
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const start = new Date(thisWeek);
+    start.setDate(start.getDate() - index * 7);
+    buckets.set(start.getTime(), { successful: 0, cancelled: 0 });
+  }
+
+  const rangeStart = thisWeek.getTime() - (count - 1) * 7 * 24 * 60 * 60 * 1000;
+  const rangeEnd = thisWeek.getTime() + 7 * 24 * 60 * 60 * 1000;
+  for (const order of orders) {
+    const placed = orderPlacedMs(order);
+    if (!Number.isFinite(placed) || placed <= 0 || placed < rangeStart || placed >= rangeEnd) continue;
+    const weekStart = startOfLocalWeek(new Date(placed)).getTime();
+    const bucket = buckets.get(weekStart);
+    if (!bucket) continue;
+    if (isSuccessfulOrder(order)) bucket.successful += 1;
+    else bucket.cancelled += 1;
+  }
+
+  return [...buckets.entries()]
+    .sort((left, right) => left[0] - right[0])
+    .map(([weekStartMs, counts]) => {
+      const total = counts.successful + counts.cancelled;
+      const start = new Date(weekStartMs);
+      return {
+        weekStartMs,
+        weekStartIso: toIsoDateLocal(start),
+        label: start.toLocaleDateString("en-US", { month: "short", day: "numeric" }),
+        successful: counts.successful,
+        cancelled: counts.cancelled,
+        total,
+        successRate: rate(counts.successful, total),
+      };
+    });
 }
 
 export function accountSearchHaystack(account: AccountPerformance): string {

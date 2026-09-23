@@ -50,7 +50,7 @@ function startOfLocalDay(date: Date): Date {
   return new Date(date.getFullYear(), date.getMonth(), date.getDate());
 }
 
-function startOfLocalWeek(date: Date): Date {
+export function startOfLocalWeek(date: Date): Date {
   const start = startOfLocalDay(date);
   start.setDate(start.getDate() - start.getDay());
   return start;

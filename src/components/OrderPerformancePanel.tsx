@@ -32,6 +32,7 @@ import {
   retailerLabel,
   summarizeOrderAccounts,
   summarizeSitePerformance,
+  summarizeWeeklyPerformance,
   timelineFieldChanges,
   timelineRailTone,
   type AccountPerformance,
@@ -45,6 +46,7 @@ import type {
   PoolEmail,
   ProfileSummary,
 } from "../lib/types";
+import { PerformanceWeeklyChart } from "./PerformanceWeeklyChart";
 
 function formatStickRate(value: number | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
@@ -372,6 +374,10 @@ export function OrderPerformancePanel({
     () => summarizeSitePerformance(filterOrdersBySite(orders, siteFilter)),
     [orders, siteFilter],
   );
+  const weeklyMetrics = useMemo(
+    () => summarizeWeeklyPerformance(filterOrdersBySite(orders, siteFilter), 12),
+    [orders, siteFilter],
+  );
   const accounts = useMemo(
     () =>
       summarizeOrderAccounts(orders, profiles, poolEmails, siteFilter).filter(
@@ -479,6 +485,7 @@ export function OrderPerformancePanel({
       </div>
 
       <div className="orders-overview orders-performance-overview">
+        <PerformanceWeeklyChart weeks={weeklyMetrics} siteLabel={siteLabel} />
         <div className="orders-tiles orders-performance-tiles">
           <div className="order-tile">
             <span className="order-tile-label">Succeeded / cancelled</span>

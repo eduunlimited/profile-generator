@@ -79,6 +79,7 @@ export {
   accountPaymentLabel,
   accountSearchHaystack,
   summarizeSitePerformance,
+  summarizeWeeklyPerformance,
   toAccountPerformanceSnapshot,
   LAST_ORDERS_PER_EMAIL,
   lastOrdersForEmail,
@@ -98,6 +99,7 @@ export type {
   AccountOrderTimeline,
   TimelineFieldChanges,
   TimelineRailTone,
+  WeeklyPerformancePoint,
 } from "./performance";
 export { formatOrderCardDisplay, formatOrderCardCompact, matchOrderCardName, orderCardSearchText } from "./payment";
 export type { OrderCardDisplay } from "./payment";

@@ -500,8 +500,11 @@ pub async fn fetch_imap_message(
 pub async fn search_imap_headers(
     settings: crate::imap::ImapSettings,
     subjects: Vec<String>,
+    min_uid: Option<u32>,
 ) -> Result<Vec<crate::imap::ImapMessage>, String> {
-    tauri::async_runtime::spawn_blocking(move || crate::imap::search_imap_headers(settings, subjects))
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::imap::search_imap_headers(settings, subjects, min_uid)
+    })
         .await
         .map_err(|error| error.to_string())?
 }

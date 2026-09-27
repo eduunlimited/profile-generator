@@ -59,8 +59,7 @@ import {
   type ProfileOpportunityId,
 } from "../lib/profileOpportunities";
 import { useConfirmDelete } from "../hooks/useConfirmDelete";
-import { listOrders } from "../lib/api";
-import { ensureDataKey } from "../lib/localDataStore";
+import { subscribeSyncedOrders } from "../lib/orderEmail/orderSync";
 import {
   orderCountsByProfileId,
   retailerFromAccountSite,
@@ -498,21 +497,7 @@ export function ProfilesPanel({
     setSelectedIds((current) => current.filter((id) => orderedIds.includes(id)));
   }, [orderedIds]);
 
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        await ensureDataKey("profile-generator:orders");
-        const stored = await listOrders();
-        if (!cancelled) setOrders(stored);
-      } catch {
-        if (!cancelled) setOrders([]);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+  useEffect(() => subscribeSyncedOrders((next) => setOrders(next)), []);
 
   useEffect(() => {
     setActiveOpportunityId(null);

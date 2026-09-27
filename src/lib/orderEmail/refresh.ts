@@ -57,13 +57,26 @@ export interface OrderRefreshResult {
 async function headersForAccount(account: ImapAccount): Promise<StoredImapMessage[]> {
   const stored = foldStoredImapMessages(await getImapMail(account.id));
   const beforeCount = stored.length;
+  const lastUid = stored.reduce((max, message) => Math.max(max, message.uid || 0), 0);
   const headers = foldStoredImapMessages([
     ...stored,
     ...(await (async () => {
       try {
-        const searched = await searchImapHeaders(imapAccountToSettings(account), [...ORDER_SEARCH_SUBJECTS]);
+        const searched = await searchImapHeaders(
+          imapAccountToSettings(account),
+          [...ORDER_SEARCH_SUBJECTS],
+          lastUid,
+        );
         return searched.map((message) => toStoredImapHeaders(message));
       } catch {
+        if (lastUid > 0) {
+          try {
+            const searched = await searchImapHeaders(imapAccountToSettings(account), [...ORDER_SEARCH_SUBJECTS]);
+            return searched.map((message) => toStoredImapHeaders(message));
+          } catch {
+            return [] as StoredImapMessage[];
+          }
+        }
         // Stored headers still classify; SEARCH is a supplement for Hide My Email inboxes.
         return [] as StoredImapMessage[];
       }
@@ -289,7 +302,18 @@ function newlyCancelledTargetIds(before: ParsedOrder[], after: ParsedOrder[]): s
     .map((order) => order.orderId);
 }
 
-export async function refreshTargetOrders(): Promise<OrderRefreshResult> {
+let inflightOrderRefresh: Promise<OrderRefreshResult> | null = null;
+
+export function refreshTargetOrders(): Promise<OrderRefreshResult> {
+  if (!inflightOrderRefresh) {
+    inflightOrderRefresh = refreshTargetOrdersInner().finally(() => {
+      inflightOrderRefresh = null;
+    });
+  }
+  return inflightOrderRefresh;
+}
+
+async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
   const existing = await listOrders();
   const accounts = await listImapAccounts();
   if (accounts.length === 0) {

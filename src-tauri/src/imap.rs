@@ -250,7 +250,11 @@ pub fn fetch_imap_message(settings: ImapSettings, uid: u32) -> Result<ImapMessag
     })
 }
 
-pub fn search_imap_headers(settings: ImapSettings, subjects: Vec<String>) -> Result<Vec<ImapMessage>, String> {
+pub fn search_imap_headers(
+    settings: ImapSettings,
+    subjects: Vec<String>,
+    min_uid: Option<u32>,
+) -> Result<Vec<ImapMessage>, String> {
     let terms: Vec<String> = subjects
         .into_iter()
         .map(|value| value.trim().to_string())
@@ -269,7 +273,12 @@ pub fn search_imap_headers(settings: ImapSettings, subjects: Vec<String>) -> Res
         let mut any_ok = false;
         for term in &terms {
             let escaped = term.replace('\\', "\\\\").replace('"', "\\\"");
-            let query = format!("SUBJECT \"{escaped}\"");
+            let query = match min_uid {
+                Some(uid) if uid > 0 => {
+                    format!("UID {}:* SUBJECT \"{escaped}\"", uid.saturating_add(1))
+                }
+                _ => format!("SUBJECT \"{escaped}\""),
+            };
             match session.uid_search(&query) {
                 Ok(found) => {
                     any_ok = true;

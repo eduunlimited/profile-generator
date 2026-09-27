@@ -122,13 +122,17 @@ async function fetchMessages(settings: ImapSettings, uids: number[]) {
   });
 }
 
-async function searchHeaders(settings: ImapSettings, subjects: string[]) {
+async function searchHeaders(settings: ImapSettings, subjects: string[], minUid = 0) {
   const terms = [...new Set(subjects.map((value) => value.trim()).filter(Boolean))];
   if (terms.length === 0) return [];
+  const uidRange = minUid > 0 ? `${minUid + 1}:*` : undefined;
   return withMailbox(settings, async (client) => {
     const uids = new Set<number>();
     for (const subject of terms) {
-      const found = await client.search({ subject }, { uid: true });
+      const found = await client.search(
+        uidRange ? { uid: uidRange, subject } : { subject },
+        { uid: true },
+      );
       if (!found) continue;
       for (const uid of found) uids.add(uid);
     }
@@ -156,8 +160,16 @@ export function imapDevPlugin(): Plugin {
         }
         void (async () => {
           try {
-            const payload = (await readJson(req)) as { settings?: ImapSettings; subjects?: string[] };
-            const messages = await searchHeaders(payload.settings ?? {}, payload.subjects ?? []);
+            const payload = (await readJson(req)) as {
+              settings?: ImapSettings;
+              subjects?: string[];
+              minUid?: number;
+            };
+            const messages = await searchHeaders(
+              payload.settings ?? {},
+              payload.subjects ?? [],
+              payload.minUid ?? 0,
+            );
             res.statusCode = 200;
             res.setHeader("Content-Type", "application/json");
             res.setHeader("Cache-Control", "no-store");

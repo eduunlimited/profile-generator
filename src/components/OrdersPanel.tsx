@@ -21,9 +21,9 @@ import {
   PARSED_ORDER_SITES,
   refreshIncomingDeliveryDates,
   resolveOrderProfileName,
-  stripUnconfirmedSeventeenTrackDelivered,
   refreshTargetOrders,
   applyTargetCancelReasonsAfterRefresh,
+  publishSyncedOrders,
   repairUtf8Mojibake,
   retailerLabel,
   siteFilterLabel,
@@ -148,9 +148,11 @@ export function OrdersPanel({
   const [spendPeriod, setSpendPeriod] = useState<SpendPeriod>("3m");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Scan IMAP for Target and Pokemon Center confirmation emails.");
+  const [status, setStatus] = useState("Checking new mail…");
   const [tone, setTone] = useState<"ok" | "error">("ok");
+  const [mailChecked, setMailChecked] = useState(false);
   const busyRef = useRef(false);
+  const displayedRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
 
@@ -163,7 +165,9 @@ export function OrdersPanel({
     try {
       const result = await refreshTargetOrders();
       const withDates = await refreshIncomingDeliveryDates(result.orders);
+      publishSyncedOrders(withDates);
       setOrders(withDates);
+      displayedRef.current = true;
       setStatus(result.status);
       setTone(result.tone);
       const currentId = activeIdRef.current;
@@ -176,7 +180,9 @@ export function OrdersPanel({
         result.newCancelledOrderIds,
         (message) => setStatus(message),
       );
+      publishSyncedOrders(cancel.orders);
       setOrders(cancel.orders);
+      displayedRef.current = true;
       if (cancel.status) {
         setStatus(cancel.status);
         setTone(cancel.tone);
@@ -184,9 +190,17 @@ export function OrdersPanel({
     } catch (error) {
       setTone("error");
       setStatus(formatError(error, source === "auto" ? "Order refresh failed." : "Order scan failed."));
+      if (!displayedRef.current) {
+        const stored = await listOrders().catch(() => []);
+        if (stored.length > 0) {
+          displayedRef.current = true;
+          setOrders(stored);
+        }
+      }
     } finally {
       busyRef.current = false;
       setBusy(false);
+      setMailChecked(true);
     }
   };
   const runRefreshRef = useRef(runRefresh);
@@ -198,16 +212,6 @@ export function OrdersPanel({
       await ensureDataKey("profile-generator:orders");
       await ensureDataKey("profile-generator:imap-mail");
       await ensureDataKey("profile-generator:imap-settings");
-      try {
-        const stored = await listOrders();
-        const repaired = stored.length > 0 ? await stripUnconfirmedSeventeenTrackDelivered(stored) : stored;
-        if (!cancelled && repaired.length > 0) setOrders(repaired);
-      } catch (error) {
-        if (!cancelled) {
-          setTone("error");
-          setStatus(formatError(error, "Could not load saved orders."));
-        }
-      }
       if (cancelled) return;
       await runRefreshRef.current("auto");
     })();
@@ -351,6 +355,7 @@ export function OrdersPanel({
         </div>
       </div>
 
+      {mailChecked ? (
       <div className="orders-overview">
         <div
           className={`orders-period-filter${listFilter === "in_transit" ? " is-disabled" : ""}`}
@@ -422,6 +427,7 @@ export function OrdersPanel({
           </button>
         </div>
       </div>
+      ) : null}
 
       {listFilter === "cancelled" ? (
         <div className="orders-cancel-emails">
@@ -471,9 +477,11 @@ export function OrdersPanel({
                 ? `${siteFilterLabel(siteFilter)} order emails are not parsed yet.`
                 : siteOrders.length > 0
                   ? `No ${siteFilterLabel(siteFilter)} orders in this timeframe. ${siteOrders.length} older order(s) are outside ${periodLabel}.`
-                  : orders.length === 0
-                    ? "No orders with a confirmation email yet. Refresh to scan the loaded mail."
-                    : "No orders match this filter or timeframe."}
+                    : orders.length === 0
+                      ? mailChecked
+                        ? "No orders with a confirmation email yet. Refresh to scan the loaded mail."
+                        : "Checking new mail…"
+                      : "No orders match this filter or timeframe."}
             </p>
           ) : (
             <table className="profiles-table orders-table">

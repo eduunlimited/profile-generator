@@ -116,6 +116,7 @@ export {
 } from "./targetCancelReasons";
 export type { FetchTargetCancelReasonsResult, FetchTargetCancelReasonsOptions } from "./targetCancelReasons";
 export { refreshIncomingDeliveryDates, stripUnconfirmedSeventeenTrackDelivered } from "./trackingLookup";
+export { publishSyncedOrders, subscribeSyncedOrders, syncedOrders } from "./orderSync";
 export { carrierLabel, detectCarrier, formatEtaLabel } from "./carrier";
 export {
   groupIncomingHouses,

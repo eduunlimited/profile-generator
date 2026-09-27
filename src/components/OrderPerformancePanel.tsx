@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listOrderAnalysis, listOrders, upsertOrderAnalysis } from "../lib/api";
+import { listOrderAnalysis, upsertOrderAnalysis } from "../lib/api";
 import { formatError } from "../lib/errorUtils";
 import { ensureDataKey, releaseDataKey } from "../lib/localDataStore";
 import {
@@ -27,8 +27,10 @@ import {
   applyTargetCancelReasonsAfterRefresh,
   formatCancelledStatus,
   refreshIncomingDeliveryDates,
-  stripUnconfirmedSeventeenTrackDelivered,
   repairUtf8Mojibake,
+  publishSyncedOrders,
+  subscribeSyncedOrders,
+  syncedOrders,
   retailerLabel,
   summarizeOrderAccounts,
   summarizeSitePerformance,
@@ -291,6 +293,7 @@ export function OrderPerformancePanel({
   active = true,
 }: OrderPerformancePanelProps) {
   const [orders, setOrders] = useState<ParsedOrder[]>([]);
+  const [ordersReady, setOrdersReady] = useState(() => syncedOrders() != null);
   const [siteFilter, setSiteFilter] = useState<OrderRetailer>("target");
   const [query, setQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -313,6 +316,7 @@ export function OrderPerformancePanel({
     try {
       const result = await refreshTargetOrders();
       const withDates = await refreshIncomingDeliveryDates(result.orders);
+      publishSyncedOrders(withDates);
       setOrders(withDates);
       setStatus(result.status);
       setTone(result.tone);
@@ -322,7 +326,10 @@ export function OrderPerformancePanel({
         result.newCancelledOrderIds,
         (message) => setStatus(message),
       );
-      if (cancel.orders !== withDates) setOrders(cancel.orders);
+      if (cancel.orders !== withDates) {
+        publishSyncedOrders(cancel.orders);
+        setOrders(cancel.orders);
+      }
       if (cancel.status) {
         setStatus(cancel.fetched > 0 || cancel.accounts > 0 ? cancel.status : result.status);
         setTone(cancel.tone);
@@ -343,10 +350,8 @@ export function OrderPerformancePanel({
       await ensureDataKey("profile-generator:orders");
       await ensureDataKey("profile-generator:order-analysis");
       try {
-        const [stored, storedAnalysis] = await Promise.all([listOrders(), listOrderAnalysis()]);
+        const storedAnalysis = await listOrderAnalysis();
         if (cancelled) return;
-        const repaired = stored.length > 0 ? await stripUnconfirmedSeventeenTrackDelivered(stored) : stored;
-        setOrders(repaired);
         setAnalysisByKey(
           Object.fromEntries(storedAnalysis.map((record) => [orderAnalysisKey(record.site, record.email), record])),
         );
@@ -360,6 +365,14 @@ export function OrderPerformancePanel({
     return () => {
       cancelled = true;
     };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
+    return subscribeSyncedOrders((next) => {
+      setOrders(next);
+      setOrdersReady(true);
+    });
   }, [active]);
 
   useEffect(() => {
@@ -484,6 +497,7 @@ export function OrderPerformancePanel({
         </div>
       </div>
 
+      {ordersReady ? (
       <div className="orders-overview orders-performance-overview">
         <PerformanceWeeklyChart weeks={weeklyMetrics} siteLabel={siteLabel} />
         <div className="orders-tiles orders-performance-tiles">
@@ -512,13 +526,16 @@ export function OrderPerformancePanel({
           </div>
         </div>
       </div>
+      ) : null}
 
       <div className="accounts-table-wrap orders-performance-wrap">
         <div className="table-scroll">
           {filtered.length === 0 ? (
             <p className="table-empty">
               {orders.length === 0
-                ? "No Target orders with a confirmation email yet. Refresh to scan mail."
+                ? ordersReady
+                  ? "No Target orders with a confirmation email yet. Refresh to scan mail."
+                  : "Checking new mail…"
                 : `No ${siteLabel} emails with cancelled orders.`}
             </p>
           ) : (

@@ -435,14 +435,22 @@ export async function fetchImapMessages(
   return messages;
 }
 
-export async function searchImapHeaders(settings: import("./types").ImapSettings, subjects: string[]) {
+export async function searchImapHeaders(
+  settings: import("./types").ImapSettings,
+  subjects: string[],
+  minUid = 0,
+) {
   if (isTauriRuntime()) {
-    return invoke<import("./types").ImapMessage[]>("search_imap_headers", { settings, subjects });
+    return invoke<import("./types").ImapMessage[]>("search_imap_headers", {
+      settings,
+      subjects,
+      minUid: minUid > 0 ? minUid : undefined,
+    });
   }
   const response = await fetch("/__imap/headers", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ settings, subjects }),
+    body: JSON.stringify({ settings, subjects, minUid: minUid > 0 ? minUid : undefined }),
   });
   const payload = (await response.json().catch(() => null)) as
     | import("./types").ImapMessage[]

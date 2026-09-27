@@ -62,6 +62,8 @@ export function ExportPanel({
   const [previewFormat, setPreviewFormat] = useState<ExportFormat>("aycd");
   const [templateId, setTemplateId] = useState("");
   const [oneFilePerProfile, setOneFilePerProfile] = useState(false);
+  const [randomizeOrder, setRandomizeOrder] = useState(false);
+  const [randomizeSeed, setRandomizeSeed] = useState(1);
   const [fields, setFields] = useState({
     identity: true,
     address: true,
@@ -120,6 +122,11 @@ export function ExportPanel({
   }, [selectedProfileKey]);
 
   useEffect(() => {
+    if (!randomizeOrder) return;
+    setRandomizeSeed(Math.random());
+  }, [randomizeOrder, selectedProfileKey]);
+
+  useEffect(() => {
     if (selectedFormats.length === 0) return;
     if (!selectedFormats.includes(previewFormat)) {
       setPreviewFormat(selectedFormats[0]);
@@ -138,8 +145,10 @@ export function ExportPanel({
       profileIds: selectedProfileIds,
       fields,
       oneFilePerProfile,
+      randomizeOrder,
+      randomizeSeed: randomizeOrder ? randomizeSeed : undefined,
     }),
-    [fields, oneFilePerProfile, selectedFormats, selectedProfileIds, templateId],
+    [fields, oneFilePerProfile, randomizeOrder, randomizeSeed, selectedFormats, selectedProfileIds, templateId],
   );
 
   const previewOptions = useMemo<ExportOptions>(
@@ -346,6 +355,14 @@ export function ExportPanel({
             onChange={(event) => setOneFilePerProfile(event.target.checked)}
           />
           One file per profile
+        </label>
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={randomizeOrder}
+            onChange={(event) => setRandomizeOrder(event.target.checked)}
+          />
+          Randomize profile order
         </label>
 
         <div className="button-row">

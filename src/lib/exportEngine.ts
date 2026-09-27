@@ -259,6 +259,22 @@ export function maskProfilesForCardPreview(profiles: Profile[]): Profile[] {
   }));
 }
 
+function shuffleProfiles(profiles: Profile[], seed: number): Profile[] {
+  const next = [...profiles];
+  let state = Math.floor(Math.abs(seed) * 0x7fffffff) || 1;
+  const random = () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 0x100000000;
+  };
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swap = Math.floor(random() * (index + 1));
+    const current = next[index];
+    next[index] = next[swap];
+    next[swap] = current;
+  }
+  return next;
+}
+
 export function exportProfiles(
   profiles: Profile[],
   options: ExportOptions,
@@ -267,13 +283,16 @@ export function exportProfiles(
 ): { filename: string; content: string; mimeType: string }[] {
   if (profiles.length === 0 || options.formats.length === 0) return [];
 
+  const ordered = options.randomizeOrder
+    ? shuffleProfiles(profiles, options.randomizeSeed ?? Math.random())
+    : profiles;
   const context: ExportFilenameContext = {
-    ...(filenameContext ?? buildExportFilenameContext(profiles)),
+    ...(filenameContext ?? buildExportFilenameContext(ordered)),
     exportedAt: filenameContext?.exportedAt ?? new Date(),
   };
 
   return options.formats.flatMap((format) =>
-    exportProfilesForFormat(profiles, { ...options, formats: [format] }, templates, context),
+    exportProfilesForFormat(ordered, { ...options, formats: [format] }, templates, context),
   );
 }
 

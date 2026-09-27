@@ -383,6 +383,9 @@ export interface ExportOptions {
     logins: boolean;
   };
   oneFilePerProfile: boolean;
+  randomizeOrder?: boolean;
+  /** Stable seed so preview and export share one shuffle. */
+  randomizeSeed?: number;
 }
 
 export interface GenerateOptions {

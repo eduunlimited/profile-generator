@@ -1,6 +1,6 @@
 [package]
 name = "profile-generator"
-version = "0.2.151"
+version = "0.2.152"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"

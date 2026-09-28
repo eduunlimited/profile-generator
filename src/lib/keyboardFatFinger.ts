@@ -247,9 +247,15 @@ export function isAllUppercaseLetterToken(token: string): boolean {
   return /^[A-Z]+$/.test(token.trim());
 }
 
+/** SE, S.E., and S.E all mean the same short direction. Long forms like Southeast do not. */
+export function canonicalShortDirection(token: string): string | null {
+  const compact = token.trim().replace(/\./g, "");
+  if (!/^(NE|NW|SE|SW|N|S|E|W)$/i.test(compact)) return null;
+  return compact.toUpperCase();
+}
+
 export function isShortDirectionToken(token: string): boolean {
-  const trimmed = token.trim();
-  return /^(NE|NW|SE|SW|N|S|E|W)$/i.test(trimmed);
+  return canonicalShortDirection(token) !== null;
 }
 
 export function containsDigit(token: string): boolean {

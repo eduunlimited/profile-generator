@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { isTauriRuntime } from "./env";
 import {
+  canonicalShortDirection,
   isAllUppercaseLetterToken,
   isHouseNumberToken,
   isShortDirectionToken,
@@ -307,7 +308,8 @@ function suffixLongLabel(token: string): string {
 }
 
 function directionLongLabel(token: string): string {
-  const canonical = DIRECTION_LONG_CANONICAL[token.toUpperCase()];
+  const key = canonicalShortDirection(token) ?? token.toUpperCase();
+  const canonical = DIRECTION_LONG_CANONICAL[key];
   if (!canonical) return token;
   return canonical.charAt(0) + canonical.slice(1).toLowerCase();
 }
@@ -400,8 +402,8 @@ function directionChangeAllowed(
   shortToken: string,
   resultTokens: string[],
 ): boolean {
-  const normalized = shortToken.toUpperCase();
-  const stillShort = resultTokens.some((part) => part.toUpperCase() === normalized);
+  const normalized = canonicalShortDirection(shortToken) ?? shortToken.toUpperCase();
+  const stillShort = resultTokens.some((part) => canonicalShortDirection(part) === normalized);
   if (stillShort) return true;
   if (hasDirectionLongForm(resultTokens, normalized)) return true;
   return resultTokens.some((part) => isTypoedDirectionLongForm(part, normalized));
@@ -550,17 +552,39 @@ function validateNamePart(original: string, result: string, label: string): stri
   return trimmed;
 }
 
-function getStreetNameWords(street: string): string[] {
+function originalShortDirectionCodes(street: string): string[] {
+  const codes: string[] = [];
+  for (const token of splitStreetTokens(street)) {
+    const code = canonicalShortDirection(token);
+    if (code && !codes.includes(code)) codes.push(code);
+  }
+  return codes;
+}
+
+/** Long forms of a dotted or short direction (S.E. → Southeast / South / East), including light typos. */
+function isDirectionExpansionWord(token: string, codes: string[]): boolean {
+  const upper = token.toUpperCase();
+  for (const code of codes) {
+    const forms = DIRECTION_LONG_FORMS[code] ?? [];
+    if (forms.some((form) => form.includes(upper))) return true;
+    if (isTypoedDirectionLongForm(token, code)) return true;
+  }
+  return false;
+}
+
+function getStreetNameWords(street: string, directionCodes: string[] = []): string[] {
   const tokens = splitStreetTokens(street);
   return tokens.filter((token, index) => {
     if (isProtectedStreetTypoToken(token, index, tokens)) return false;
+    if (isDirectionExpansionWord(token, directionCodes)) return false;
     return /[a-z]/i.test(token);
   });
 }
 
 function assertStreetNameFirstLettersPreserved(original: string, result: string): void {
-  const originalWords = getStreetNameWords(original);
-  const resultWords = getStreetNameWords(result);
+  const directionCodes = originalShortDirectionCodes(original);
+  const originalWords = getStreetNameWords(original, directionCodes);
+  const resultWords = getStreetNameWords(result, directionCodes);
   if (originalWords.length === 0) return;
 
   const pairs = Math.min(originalWords.length, resultWords.length);

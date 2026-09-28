@@ -44,12 +44,21 @@ const UNIT_NUMBER_MAX = 100;
 /** Same jigged line 1 may be used on this many profiles per category. */
 export const MAX_STREET_LINE1_USES = 3;
 
-const STREET_TYPE_PAIRS = [
-  { key: "street", long: "Street", short: "St", match: /^(street|str\.?|st\.?)$/i },
-  { key: "drive", long: "Drive", short: "Dr", match: /^(drive|dr\.?)$/i },
-  { key: "avenue", long: "Avenue", short: "Ave", match: /^(avenue|ave\.?)$/i },
-  { key: "place", long: "Place", short: "Pl", match: /^(place|pl\.?)$/i },
+/** USPS Publication 28 C1 commonly used suffix forms. The combo may switch type, then must write one of these. */
+const STREET_TYPE_FAMILIES = [
+  { key: "street", forms: ["Street", "St", "Strt", "Str"] },
+  { key: "avenue", forms: ["Avenue", "Av", "Ave", "Aven", "Avenu", "Avn", "Avnue"] },
+  { key: "drive", forms: ["Drive", "Dr", "Driv", "Drv"] },
+  { key: "place", forms: ["Place", "Pl"] },
 ] as const;
+
+type StreetTypeFamily = (typeof STREET_TYPE_FAMILIES)[number];
+
+const STREET_TYPE_BY_FORM = new Map<string, StreetTypeFamily>(
+  STREET_TYPE_FAMILIES.flatMap((family) =>
+    family.forms.map((form) => [form.toUpperCase(), family] as const),
+  ),
+);
 
 const DIRECTION_GROUPS = [
   {
@@ -109,8 +118,9 @@ function titleCaseStreetName(value: string): string {
     .join(" ");
 }
 
-function matchStreetType(token: string): (typeof STREET_TYPE_PAIRS)[number] | null {
-  return STREET_TYPE_PAIRS.find((pair) => pair.match.test(token)) ?? null;
+function matchStreetType(token: string): StreetTypeFamily | null {
+  const key = token.trim().replace(/\./g, "").toUpperCase();
+  return STREET_TYPE_BY_FORM.get(key) ?? null;
 }
 
 function matchDirection(value: string): (typeof DIRECTION_GROUPS)[number] | null {
@@ -211,8 +221,8 @@ function applyStreetTypeCombo(street: string): string {
   const nameTokens = house ? coreTokens.slice(1) : coreTokens;
   const name = titleCaseStreetName(nameTokens.join(" "));
 
-  const typePair = matchedType ? pickRandom(STREET_TYPE_PAIRS) : null;
-  const typeText = typePair ? (Math.random() < 0.5 ? typePair.short : typePair.long) : "";
+  const typeFamily = matchedType ? pickRandom(STREET_TYPE_FAMILIES) : null;
+  const typeText = typeFamily ? pickRandom(typeFamily.forms) : "";
   const directionText = direction ? pickRandom(direction.group.variants) : "";
 
   return [prefix, house, name, typeText, directionText, suffix].filter(Boolean).join(" ");

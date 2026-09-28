@@ -194,7 +194,9 @@ export function OrdersPanel({
         const stored = await listOrders().catch(() => []);
         if (stored.length > 0) {
           displayedRef.current = true;
+          publishSyncedOrders(stored);
           setOrders(stored);
+          setMailChecked(true);
         }
       }
     } finally {
@@ -213,6 +215,15 @@ export function OrdersPanel({
       await ensureDataKey("profile-generator:imap-mail");
       await ensureDataKey("profile-generator:imap-settings");
       if (cancelled) return;
+      const stored = await listOrders().catch(() => []);
+      if (cancelled) return;
+      if (stored.length > 0) {
+        publishSyncedOrders(stored);
+        setOrders(stored);
+        displayedRef.current = true;
+        setMailChecked(true);
+        setStatus(`Showing ${stored.length} saved order(s). Checking new mail…`);
+      }
       await runRefreshRef.current("auto");
     })();
     const timer = window.setInterval(() => {

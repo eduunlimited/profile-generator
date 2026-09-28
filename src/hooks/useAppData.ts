@@ -591,6 +591,8 @@ export function useAppData() {
         : null;
       const addressJig = resolveAddressJigFromGenerateOptions(options, jigPresets);
       const categoryId = groupId;
+      let cardCursor = 0;
+      let emailCursor = 0;
       let existingInCategory = await Promise.all(
         profiles
           .filter(
@@ -605,7 +607,13 @@ export function useAppData() {
         try {
           const batch = await generateProfilesFromMaster(
             master,
-            { ...options, groupId: categoryId, categoryId },
+            {
+              ...options,
+              groupId: categoryId,
+              categoryId,
+              creditCardIds: options.creditCardIds?.slice(cardCursor),
+              emailIds: options.emailIds?.slice(emailCursor),
+            },
             namePreset,
             addressJig,
             creditCards,
@@ -616,6 +624,8 @@ export function useAppData() {
           generated.push(...batch);
           existingInCategory = [...existingInCategory, ...batch];
           occupancy = [...occupancy, ...batch];
+          cardCursor += batch.length;
+          emailCursor += batch.length;
         } catch (error) {
           const detail = error instanceof Error ? error.message : "Generation failed.";
           if (generated.length === 0) {

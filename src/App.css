@@ -3225,6 +3225,10 @@ textarea {
   background: rgba(0, 0, 0, 0.72);
 }
 
+.modal-overlay-nested {
+  z-index: 120;
+}
+
 .modal-dialog {
   width: min(720px, 100%);
   max-width: 100%;
@@ -3315,7 +3319,17 @@ textarea {
 }
 
 .generate-modal-topbar-with-card {
-  grid-template-columns: minmax(0, 0.95fr) minmax(0, 0.9fr) 72px minmax(0, 0.85fr) minmax(0, 0.9fr) minmax(0, 0.85fr);
+  grid-template-columns: repeat(auto-fit, minmax(148px, 1fr));
+}
+
+.generate-pool-picker-btn {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: 11px;
+  text-align: left;
 }
 
 .generate-modal-main {

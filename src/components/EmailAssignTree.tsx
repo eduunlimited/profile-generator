@@ -9,6 +9,8 @@ interface EmailAssignTreeProps {
   selectedEmailId?: string;
   selectedEmailIds?: string[];
   selectionLimit?: number;
+  /** Emails that stay visible but cannot be picked (already in use). */
+  disabledIds?: string[];
   onSelectedEmailIdChange?: (id: string) => void;
   onSelectedEmailIdsChange?: (ids: string[]) => void;
 }
@@ -20,6 +22,7 @@ export function EmailAssignTree({
   selectedEmailId = "",
   selectedEmailIds = [],
   selectionLimit = 0,
+  disabledIds = [],
   onSelectedEmailIdChange,
   onSelectedEmailIdsChange,
 }: EmailAssignTreeProps) {
@@ -37,6 +40,9 @@ export function EmailAssignTree({
   };
 
   const toggleEmail = (emailId: string) => {
+    if (disabledIds.includes(emailId) && !selectedEmailIds.includes(emailId) && selectedEmailId !== emailId) {
+      return;
+    }
     if (selectionMode === "single") {
       onSelectedEmailIdChange?.(emailId);
       return;
@@ -92,11 +98,13 @@ export function EmailAssignTree({
                   const selectedIndex = selectedEmailIds.indexOf(email.id);
                   const isSelected =
                     selectionMode === "single" ? selectedEmailId === email.id : selectedIndex >= 0;
-                  const disabled = selectionMode === "multiple" && !isSelected && atLimit;
+                  const unavailable = disabledIds.includes(email.id);
+                  const disabled = unavailable || (selectionMode === "multiple" && !isSelected && atLimit);
 
                   return (
                     <label
                       key={email.id}
+                      title={unavailable ? "Already in use" : undefined}
                       className={`assign-option-row assign-profile-child-row card-assign-row${isSelected ? " card-pool-row-editing" : ""}${disabled ? " assign-option-row-disabled" : ""}`}
                     >
                       <input
@@ -110,7 +118,10 @@ export function EmailAssignTree({
                         {selectionMode === "multiple" && isSelected ? (
                           <span className="assign-card-order">{selectedIndex + 1}</span>
                         ) : null}
-                        <span className="assign-option-label">{email.email}</span>
+                        <span className="assign-option-label">
+                          {email.email}
+                          {unavailable ? <span className="muted"> · In use</span> : null}
+                        </span>
                       </span>
                     </label>
                   );

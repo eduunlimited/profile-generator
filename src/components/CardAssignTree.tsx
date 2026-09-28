@@ -11,6 +11,8 @@ interface CardAssignTreeProps {
   selectedCardId?: string;
   selectedCardIds?: string[];
   selectionLimit?: number;
+  /** Cards that stay visible but cannot be picked (already in use). */
+  disabledIds?: string[];
   onSelectedCardIdChange?: (id: string) => void;
   onSelectedCardIdsChange?: (ids: string[]) => void;
 }
@@ -22,6 +24,7 @@ export function CardAssignTree({
   selectedCardId = "",
   selectedCardIds = [],
   selectionLimit = 0,
+  disabledIds = [],
   onSelectedCardIdChange,
   onSelectedCardIdsChange,
 }: CardAssignTreeProps) {
@@ -39,6 +42,9 @@ export function CardAssignTree({
   };
 
   const toggleCard = (cardId: string) => {
+    if (disabledIds.includes(cardId) && !selectedCardIds.includes(cardId) && selectedCardId !== cardId) {
+      return;
+    }
     if (selectionMode === "single") {
       onSelectedCardIdChange?.(cardId);
       return;
@@ -93,11 +99,13 @@ export function CardAssignTree({
                   const selectedIndex = selectedCardIds.indexOf(card.id);
                   const isSelected =
                     selectionMode === "single" ? selectedCardId === card.id : selectedIndex >= 0;
-                  const disabled = selectionMode === "multiple" && !isSelected && atLimit;
+                  const unavailable = disabledIds.includes(card.id);
+                  const disabled = unavailable || (selectionMode === "multiple" && !isSelected && atLimit);
 
                   return (
                     <label
                       key={card.id}
+                      title={unavailable ? "Already in use" : undefined}
                       className={`assign-option-row assign-profile-child-row card-assign-row${isSelected ? " card-pool-row-editing" : ""}${disabled ? " assign-option-row-disabled" : ""}`}
                     >
                       <input
@@ -120,6 +128,7 @@ export function CardAssignTree({
                           <span className="muted card-pool-number">
                             {" "}
                             · {formatCardNumberDisplay(card.number, card.brand) || "—"}
+                            {unavailable ? " · In use" : ""}
                           </span>
                         </span>
                       </span>

@@ -4,7 +4,11 @@ import type {
 
   Credential,
 
+  CardCategory,
+
   CreditCard,
+
+  EmailCategory,
 
   GenerateFromMasterOptions,
 
@@ -15,6 +19,8 @@ import type {
   PoolEmail,
 
   ProfileCategory,
+
+  ProfileSummary,
 
 } from "../lib/types";
 
@@ -38,7 +44,13 @@ interface GenerateModalProps {
 
   creditCards: CreditCard[];
 
+  cardCategories?: CardCategory[];
+
   poolEmails?: PoolEmail[];
+
+  emailCategories?: EmailCategory[];
+
+  profiles?: ProfileSummary[];
 
   credentials?: Credential[];
 
@@ -72,7 +84,13 @@ export function GenerateModal({
 
   creditCards,
 
+  cardCategories,
+
   poolEmails,
+
+  emailCategories,
+
+  profiles,
 
   credentials,
 
@@ -124,7 +142,13 @@ export function GenerateModal({
 
           creditCards={creditCards}
 
+          cardCategories={cardCategories}
+
           poolEmails={poolEmails}
+
+          emailCategories={emailCategories}
+
+          profiles={profiles}
 
           credentials={credentials}
 

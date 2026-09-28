@@ -813,7 +813,13 @@ function AppContent() {
 
                 creditCards={creditCards}
 
+                cardCategories={cardCategories}
+
                 poolEmails={poolEmails}
+
+                emailCategories={emailCategories}
+
+                profiles={profiles}
 
                 credentials={credentials}
 

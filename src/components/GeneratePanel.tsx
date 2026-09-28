@@ -23,17 +23,32 @@ import {
 } from "../lib/profileCategoryUtils";
 import { filterAssignablePoolCards } from "../lib/creditCardUtils";
 import { filterAssignablePoolEmails } from "../lib/emailPoolUtils";
+import {
+  PENDING_GENERATE_GROUP_ID,
+  countCardsAvailableForGenerate,
+  countEmailsAvailableForGenerate,
+  disabledCardIdsForGenerate,
+  disabledEmailIdsForGenerate,
+  pruneGenerateCardIds,
+  pruneGenerateEmailIds,
+} from "../lib/generatePoolPick";
 import type {
+  CardCategory,
   Credential,
   CreditCard,
+  EmailCategory,
   GenerateFromMasterOptions,
   JigPreset,
   MasterProfile,
   NameMisspellScope,
   PoolEmail,
   ProfileCategory,
+  ProfileSummary,
   StreetAffixMode,
 } from "../lib/types";
+import { CardAssignTree } from "./CardAssignTree";
+import { EmailAssignTree } from "./EmailAssignTree";
+import { GeneratePoolPicker } from "./GeneratePoolPicker";
 import { masterProfileLabel } from "../lib/masterProfileUtils";
 import { AccountSiteSelect } from "./AccountSiteSelect";
 import { Field } from "./ui";
@@ -46,7 +61,10 @@ interface GeneratePanelProps {
   profileCategories: ProfileCategory[];
   jigPresets: JigPreset[];
   creditCards: CreditCard[];
+  cardCategories?: CardCategory[];
   poolEmails?: PoolEmail[];
+  emailCategories?: EmailCategory[];
+  profiles?: ProfileSummary[];
   credentials?: Credential[];
   onSaveCategory: (category: ProfileCategory) => Promise<void>;
   onGenerate: (masterIds: string[], options: GenerateFromMasterOptions) => Promise<number>;
@@ -68,7 +86,10 @@ export function GeneratePanel({
   profileCategories,
   jigPresets,
   creditCards,
+  cardCategories = [],
   poolEmails = [],
+  emailCategories = [],
+  profiles = [],
   credentials = [],
   onSaveCategory,
   onGenerate,
@@ -99,9 +120,11 @@ export function GeneratePanel({
   const [addressJigPresetIds, setAddressJigPresetIds] = useState<string[]>(["builtin-random-unit-line"]);
   const [phoneJigLastFour, setPhoneJigLastFour] = useState(false);
   const [creditCardMode, setCreditCardMode] = useState<GenerateFromMasterOptions["creditCardMode"]>("none");
-  const [creditCardId, setCreditCardId] = useState("");
+  const [creditCardIds, setCreditCardIds] = useState<string[]>([]);
   const [emailMode, setEmailMode] = useState<GenerateFromMasterOptions["emailMode"]>("none");
-  const [emailId, setEmailId] = useState("");
+  const [emailIds, setEmailIds] = useState<string[]>([]);
+  const [cardPickerOpen, setCardPickerOpen] = useState(false);
+  const [emailPickerOpen, setEmailPickerOpen] = useState(false);
   const [accountSite, setAccountSite] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -166,9 +189,48 @@ export function GeneratePanel({
   const selectedCategoryLocked =
     categorySelection.kind === "existing" &&
     isProfileCategoryLocked(profileCategories, categorySelection.categoryId);
-  const canGenerate = Boolean(
-    selectedMasters.length > 0 && categoryReady && masterProfiles.length > 0 && !selectedCategoryLocked,
+  const targetGroupId =
+    categorySelection.kind === "existing" ? categorySelection.categoryId : PENDING_GENERATE_GROUP_ID;
+  const availableCardCount = useMemo(
+    () => countCardsAvailableForGenerate(assignableCreditCards, profiles, targetGroupId),
+    [assignableCreditCards, profiles, targetGroupId],
   );
+  const availableEmailCount = useMemo(
+    () => countEmailsAvailableForGenerate(assignablePoolEmails, profiles, targetGroupId),
+    [assignablePoolEmails, profiles, targetGroupId],
+  );
+  const disabledCardIds = useMemo(
+    () => disabledCardIdsForGenerate(assignableCreditCards, profiles, targetGroupId, totalCount, creditCardIds),
+    [assignableCreditCards, creditCardIds, profiles, targetGroupId, totalCount],
+  );
+  const disabledEmailIds = useMemo(
+    () => disabledEmailIdsForGenerate(assignablePoolEmails, profiles, targetGroupId, totalCount, emailIds),
+    [assignablePoolEmails, emailIds, profiles, targetGroupId, totalCount],
+  );
+  const cardsReady = creditCardMode !== "selected" || (totalCount > 0 && creditCardIds.length === totalCount);
+  const emailsReady = emailMode !== "selected" || (totalCount > 0 && emailIds.length === totalCount);
+  const canGenerate = Boolean(
+    selectedMasters.length > 0 &&
+      categoryReady &&
+      masterProfiles.length > 0 &&
+      !selectedCategoryLocked &&
+      cardsReady &&
+      emailsReady,
+  );
+
+  useEffect(() => {
+    setCreditCardIds((current) => {
+      const next = pruneGenerateCardIds(assignableCreditCards, profiles, targetGroupId, totalCount, current);
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [assignableCreditCards, profiles, targetGroupId, totalCount]);
+
+  useEffect(() => {
+    setEmailIds((current) => {
+      const next = pruneGenerateEmailIds(assignablePoolEmails, profiles, targetGroupId, totalCount, current);
+      return next.length === current.length && next.every((id, index) => id === current[index]) ? current : next;
+    });
+  }, [assignablePoolEmails, profiles, targetGroupId, totalCount]);
 
   const createCategory = async (name: string): Promise<ProfileCategory> => {
     const category: ProfileCategory = {
@@ -213,9 +275,9 @@ export function GeneratePanel({
           addressJigPresetIds: addressJigPresetIds.length > 0 ? addressJigPresetIds : undefined,
           phoneJigLastFour: phoneJigLastFour || undefined,
           creditCardMode,
-          creditCardId: creditCardMode === "selected" ? creditCardId : undefined,
+          creditCardIds: creditCardMode === "selected" ? creditCardIds : undefined,
           emailMode: emailMode ?? "none",
-          emailId: emailMode === "selected" ? emailId : undefined,
+          emailIds: emailMode === "selected" ? emailIds : undefined,
           accountSite: accountSite.trim() || undefined,
         },
       );
@@ -274,7 +336,7 @@ export function GeneratePanel({
       <div
         className={[
           "generate-modal-topbar",
-          creditCardMode === "selected" ? "generate-modal-topbar-with-card" : "",
+          creditCardMode === "selected" || emailMode === "selected" ? "generate-modal-topbar-with-card" : "",
         ]
           .filter(Boolean)
           .join(" ")}
@@ -312,21 +374,18 @@ export function GeneratePanel({
             onChange={(e) => setCreditCardMode(e.target.value as GenerateFromMasterOptions["creditCardMode"])}
           >
             <option value="none">No card</option>
-            <option value="random">Random ({assignableCreditCards.length})</option>
+            <option value="random">Random ({availableCardCount} available)</option>
             <option value="selected">Selected</option>
           </select>
         </Field>
 
         {creditCardMode === "selected" ? (
-          <Field label="Pool card">
-            <select value={creditCardId} onChange={(e) => setCreditCardId(e.target.value)}>
-              <option value="">Choose card</option>
-              {assignableCreditCards.map((card) => (
-                <option key={card.id} value={card.id}>
-                  {card.profileName}
-                </option>
-              ))}
-            </select>
+          <Field label="Pool cards" hint="One available card per profile">
+            <button type="button" className="generate-pool-picker-btn" onClick={() => setCardPickerOpen(true)}>
+              {creditCardIds.length === 0
+                ? "Choose cards"
+                : `${creditCardIds.length} of ${totalCount} selected`}
+            </button>
           </Field>
         ) : null}
 
@@ -336,21 +395,16 @@ export function GeneratePanel({
             onChange={(e) => setEmailMode(e.target.value as GenerateFromMasterOptions["emailMode"])}
           >
             <option value="none">No email</option>
-            <option value="random">Random ({assignablePoolEmails.length})</option>
+            <option value="random">Random ({availableEmailCount} available)</option>
             <option value="selected">Selected</option>
           </select>
         </Field>
 
         {emailMode === "selected" ? (
-          <Field label="Pool email">
-            <select value={emailId} onChange={(e) => setEmailId(e.target.value)}>
-              <option value="">Choose email</option>
-              {assignablePoolEmails.map((email) => (
-                <option key={email.id} value={email.id}>
-                  {email.email}
-                </option>
-              ))}
-            </select>
+          <Field label="Pool emails" hint="One available email per profile">
+            <button type="button" className="generate-pool-picker-btn" onClick={() => setEmailPickerOpen(true)}>
+              {emailIds.length === 0 ? "Choose emails" : `${emailIds.length} of ${totalCount} selected`}
+            </button>
           </Field>
         ) : null}
       </div>
@@ -440,8 +494,61 @@ export function GeneratePanel({
             </>
           )}
         </button>
+        {!cardsReady || !emailsReady ? (
+          <p className="muted generate-modal-status">
+            {!cardsReady ? `Select ${totalCount} available card${totalCount === 1 ? "" : "s"}.` : ""}
+            {!cardsReady && !emailsReady ? " " : ""}
+            {!emailsReady ? `Select ${totalCount} available email${totalCount === 1 ? "" : "s"}.` : ""}
+          </p>
+        ) : null}
         {status ? <p className="status-inline generate-modal-status">{status}</p> : null}
       </div>
+
+      <GeneratePoolPicker
+        open={cardPickerOpen}
+        title="Choose cards"
+        hint="Cards already used in this group are greyed out. Pick one available card per profile. A card cannot be selected twice."
+        selectedCount={creditCardIds.length}
+        totalCount={totalCount}
+        onClose={() => setCardPickerOpen(false)}
+      >
+        {assignableCreditCards.length === 0 ? (
+          <p className="muted">No Good-status cards in the pool.</p>
+        ) : (
+          <CardAssignTree
+            cards={assignableCreditCards}
+            categories={cardCategories}
+            selectionMode="multiple"
+            selectedCardIds={creditCardIds}
+            selectionLimit={totalCount}
+            disabledIds={disabledCardIds}
+            onSelectedCardIdsChange={setCreditCardIds}
+          />
+        )}
+      </GeneratePoolPicker>
+
+      <GeneratePoolPicker
+        open={emailPickerOpen}
+        title="Choose emails"
+        hint="Emails already used in this group are greyed out. Pick one available email per profile. An email cannot be selected twice."
+        selectedCount={emailIds.length}
+        totalCount={totalCount}
+        onClose={() => setEmailPickerOpen(false)}
+      >
+        {assignablePoolEmails.length === 0 ? (
+          <p className="muted">No Good-status emails in the pool.</p>
+        ) : (
+          <EmailAssignTree
+            emails={assignablePoolEmails}
+            categories={emailCategories}
+            selectionMode="multiple"
+            selectedEmailIds={emailIds}
+            selectionLimit={totalCount}
+            disabledIds={disabledEmailIds}
+            onSelectedEmailIdsChange={setEmailIds}
+          />
+        )}
+      </GeneratePoolPicker>
     </section>
   );
 }

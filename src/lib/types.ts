@@ -418,8 +418,12 @@ export interface GenerateFromMasterOptions {
   phoneJigLastFour?: boolean;
   creditCardMode: CreditCardAssignMode;
   creditCardId?: string;
+  /** One pool card per generated profile, in order. Unavailable cards are excluded. */
+  creditCardIds?: string[];
   emailMode?: CreditCardAssignMode;
   emailId?: string;
+  /** One pool email per generated profile, in order. Unavailable emails are excluded. */
+  emailIds?: string[];
   /** Account pool site to stamp on each generated jig. Empty = no account link. */
   accountSite?: string;
 }

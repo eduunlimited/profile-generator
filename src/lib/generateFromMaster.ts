@@ -82,8 +82,8 @@ function resolveCardForProfile(
     return { payment: emptyPayment() };
   }
 
-  if (mode === "selected" && selectedId) {
-    const card = cards.find((item) => item.id === selectedId);
+  if (mode === "selected") {
+    const card = selectedId ? cards.find((item) => item.id === selectedId) : undefined;
     if (card && isCardAvailableForProfile(card, targetProfile, allAssignableProfiles)) {
       batchUsedCardIds.add(card.id);
       return { payment: paymentFromCard(card), creditCardId: card.id };
@@ -118,8 +118,8 @@ function resolveEmailForProfile(
     return { email: "" };
   }
 
-  if (mode === "selected" && selectedId) {
-    const poolEmail = emails.find((item) => item.id === selectedId);
+  if (mode === "selected") {
+    const poolEmail = selectedId ? emails.find((item) => item.id === selectedId) : undefined;
     if (poolEmail && isEmailAvailableForProfile(poolEmail, targetProfile, allAssignableProfiles)) {
       batchUsedEmailIds.add(poolEmail.id);
       return { email: poolEmail.email, emailPoolId: poolEmail.id };
@@ -318,6 +318,8 @@ export async function generateProfilesFromMaster(
   let failedCount = 0;
   const batchUsedCardIds = new Set<string>();
   const batchUsedEmailIds = new Set<string>();
+  let cardQueueIndex = 0;
+  let emailQueueIndex = 0;
   let simulatedAssignable = toAssignableProfiles(occupancyProfiles ?? existingProfilesInCategory);
   let simulatedEmailAssignable = toEmailAssignableProfiles(occupancyProfiles ?? existingProfilesInCategory);
 
@@ -361,10 +363,16 @@ export async function generateProfilesFromMaster(
       categoryId: groupId,
     };
 
+    const queuedCardId =
+      options.creditCardMode === "selected"
+        ? options.creditCardIds
+          ? options.creditCardIds[cardQueueIndex++]
+          : options.creditCardId
+        : undefined;
     const { payment, creditCardId } = resolveCardForProfile(
       options.creditCardMode,
       creditCards,
-      options.creditCardId,
+      queuedCardId,
       targetAssignable,
       simulatedAssignable,
       batchUsedCardIds,
@@ -389,10 +397,16 @@ export async function generateProfilesFromMaster(
       groupId,
       categoryId: groupId,
     };
+    const queuedEmailId =
+      options.emailMode === "selected"
+        ? options.emailIds
+          ? options.emailIds[emailQueueIndex++]
+          : options.emailId
+        : undefined;
     const { email, emailPoolId } = resolveEmailForProfile(
       options.emailMode,
       poolEmails,
-      options.emailId,
+      queuedEmailId,
       emailTargetAssignable,
       simulatedEmailAssignable,
       batchUsedEmailIds,

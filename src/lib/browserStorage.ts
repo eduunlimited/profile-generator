@@ -1,5 +1,5 @@
 import { billingAddressLines, billingFullName, resolveProfileDisplayName } from "./profileNameUtils";
-import { shippingAddressForProfile } from "./profileUtils";
+import { billingSameAsShipping, cardHolderSameAsShipping, shippingAddressForProfile } from "./profileUtils";
 import { normalizeProfile } from "./profileEmailUtils";
 import { formatUsPhone } from "./phoneUtils";
 import { parseCardNumberDigits, profileHasPaymentCard, resolveCreditCardProfileLabel } from "./creditCardUtils";
@@ -154,6 +154,8 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     billingAddressLine1: addressLines.line1,
     billingAddressLine2: addressLines.line2,
     billingAddressLine3: addressLines.line3,
+    billingSameAsShipping: billingSameAsShipping(profile),
+    cardHolderSameAsShipping: cardHolderSameAsShipping(profile),
     cardNumberMasked: hasPaymentCard ? maskCardNumber(payment.number) : "",
     cardBrand: hasPaymentCard && payment.brand.trim() ? payment.brand : "",
     accounts: sites || "None",

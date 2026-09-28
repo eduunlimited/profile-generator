@@ -270,6 +270,8 @@ export interface ProfileSummary {
   billingAddressLine1: string;
   billingAddressLine2: string;
   billingAddressLine3: string;
+  billingSameAsShipping: boolean;
+  cardHolderSameAsShipping: boolean;
   cardNumberMasked: string;
   cardBrand: string;
   accounts: string;

@@ -807,6 +807,11 @@ body.is-col-resizing * {
   text-overflow: ellipsis;
 }
 
+.col-same-as {
+  white-space: nowrap;
+  text-align: center;
+}
+
 .address-cell {
   display: flex;
   flex-direction: column;

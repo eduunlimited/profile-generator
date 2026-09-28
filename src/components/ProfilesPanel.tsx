@@ -96,6 +96,8 @@ const PROFILE_TABLE_COLUMNS = [
   "email",
   "phone",
   "address",
+  "cardholderSame",
+  "billingSame",
   "card",
   "accounts",
   "status",
@@ -108,6 +110,8 @@ const PROFILE_TABLE_MAX_WIDTHS: Partial<Record<(typeof PROFILE_TABLE_COLUMNS)[nu
   index: 36,
   master: 120,
   phone: 108,
+  billingSame: 240,
+  cardholderSame: 250,
   accounts: 88,
   status: 86,
 };
@@ -437,6 +441,8 @@ export function ProfilesPanel({
         addressCheckLabel(profile.addressCheckStatus),
         profile.addressCheckDisplayLabel,
         addressMasterMatchLabel(profile.addressMasterMatch),
+        profile.cardHolderSameAsShipping ? "yes cardholder name same as shipping" : "no cardholder name different from shipping",
+        profile.billingSameAsShipping ? "yes billing address same as shipping" : "no billing address different from shipping",
         (orderCountsById.get(profile.id)?.successful ?? 0) > 0 ? "success succeeded" : "",
         (orderCountsById.get(profile.id)?.cancelled ?? 0) > 0 ? "cancel cancelled cancellation" : "",
       ]
@@ -451,6 +457,10 @@ export function ProfilesPanel({
     columnIds: PROFILE_TABLE_COLUMNS,
     lockedIds: PROFILE_TABLE_LOCKED_COLUMNS,
     flexIds: PROFILE_TABLE_FLEX_COLUMNS,
+    minWidths: {
+      cardholderSame: 220,
+      billingSame: 210,
+    },
     maxWidths: PROFILE_TABLE_MAX_WIDTHS,
     storageKey: "profiles",
     fitKey: searchFilteredProfiles
@@ -465,6 +475,8 @@ export function ProfilesPanel({
           profile.billingAddressLine1,
           profile.billingAddressLine2,
           profile.billingAddressLine3,
+          profile.cardHolderSameAsShipping ? "Yes" : "No",
+          profile.billingSameAsShipping ? "Yes" : "No",
           profile.creditCardLabel,
           profile.cardNumberMasked,
           profile.accounts,
@@ -1362,6 +1374,12 @@ export function ProfilesPanel({
                       <ResizableTh columns={profileTableColumns} id="address">
                         Address
                       </ResizableTh>
+                      <ResizableTh columns={profileTableColumns} id="cardholderSame" className="col-same-as">
+                        Cardholder name same as shipping
+                      </ResizableTh>
+                      <ResizableTh columns={profileTableColumns} id="billingSame" className="col-same-as">
+                        Billing address same as shipping
+                      </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="card" className="col-card-profile">
                         Card
                       </ResizableTh>
@@ -1430,6 +1448,8 @@ export function ProfilesPanel({
                                 cancelSiteLabel={cancelRetailer ? retailerLabel(cancelRetailer) : undefined}
                               />
                             </td>
+                            <td className="col-same-as">{profile.cardHolderSameAsShipping ? "Yes" : "No"}</td>
+                            <td className="col-same-as">{profile.billingSameAsShipping ? "Yes" : "No"}</td>
                             <td className="col-card-profile">
                               <CardProfileCell
                                 profileName={profile.creditCardLabel}

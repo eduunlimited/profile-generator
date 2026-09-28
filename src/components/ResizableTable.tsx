@@ -17,10 +17,11 @@ interface ResizableThProps {
   columns: ResizableTableColumns;
   id: string;
   className?: string;
+  title?: string;
   children: ReactNode;
 }
 
-export function ResizableTh({ columns, id, className, children }: ResizableThProps) {
+export function ResizableTh({ columns, id, className, title, children }: ResizableThProps) {
   const startX = useRef(0);
   const startWidth = useRef(0);
   const frame = useRef(0);
@@ -63,7 +64,7 @@ export function ResizableTh({ columns, id, className, children }: ResizableThPro
   };
 
   return (
-    <th className={className} style={width != null ? { width } : undefined}>
+    <th className={className} title={title} style={width != null ? { width } : undefined}>
       {children}
       {resizable ? (
         <span

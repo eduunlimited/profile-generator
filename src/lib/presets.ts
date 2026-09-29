@@ -50,7 +50,7 @@ export const BUILTIN_JIG_PRESETS: JigPreset[] = [
     id: "builtin-street-type-combo",
     name: "Street type combo (PKC/Target)",
     description:
-      "Swaps Street, Avenue, Drive, or Place, then writes a USPS commonly used form (St, Strt, Str, Av, Ave, Aven, Dr, Pl) and a direction form (SE/Southeast) on line 1.",
+      "Recognizes a USPS commonly used suffix (Rd, St, Ave, Dr, Pl) as its primary name, then writes any commonly used form of Road, Street, Avenue, Drive, or Place, plus a direction form (SE/Southeast) on line 1.",
     nameRules: [],
     addressRules: [{ type: "streetTypeCombo" }, { type: "splitLines" }],
   },

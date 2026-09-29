@@ -50,6 +50,7 @@ const STREET_TYPE_FAMILIES = [
   { key: "avenue", forms: ["Avenue", "Av", "Ave", "Aven", "Avenu", "Avn", "Avnue"] },
   { key: "drive", forms: ["Drive", "Dr", "Driv", "Drv"] },
   { key: "place", forms: ["Place", "Pl"] },
+  { key: "road", forms: ["Road", "Rd"] },
 ] as const;
 
 type StreetTypeFamily = (typeof STREET_TYPE_FAMILIES)[number];

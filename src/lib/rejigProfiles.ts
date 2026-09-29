@@ -3,7 +3,9 @@ import {
   applyJigRulesBatchToMasterAsync,
   applyLocalJigRulesToMaster,
   applyLocalJigRulesToProfile,
+  beginStreetTypeComboDiversity,
   buildStreetUseCounts,
+  endStreetTypeComboDiversity,
   canAssignStreetLine,
   collectUniqueStreetLines,
   finalizeJigFromLocalAndMisspell,
@@ -107,6 +109,23 @@ function incrementCategoryStreetUse(
 }
 
 export async function rejigProfiles(
+  master: MasterProfile,
+  profilesToUpdate: Profile[],
+  allProfiles: Profile[],
+  namePreset: JigPreset | null,
+  addressJig: ResolvedAddressJig,
+  params: RejigProfilesParams = {},
+  maxAttempts = DEFAULT_MAX_ATTEMPTS,
+): Promise<{ updated: Profile[]; failedIds: string[] }> {
+  beginStreetTypeComboDiversity();
+  try {
+    return await rejigProfilesNow(master, profilesToUpdate, allProfiles, namePreset, addressJig, params, maxAttempts);
+  } finally {
+    endStreetTypeComboDiversity();
+  }
+}
+
+async function rejigProfilesNow(
   master: MasterProfile,
   profilesToUpdate: Profile[],
   allProfiles: Profile[],

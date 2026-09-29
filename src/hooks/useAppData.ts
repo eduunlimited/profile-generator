@@ -714,7 +714,7 @@ export function useAppData() {
         const result = await rejigProfiles(master, bucket, allProfiles, namePreset, addressJig, {
           nameMisspellScope: options.nameMisspellScope,
           phoneJigLastFour: options.phoneJigLastFour,
-          sourceFromMaster: Boolean(sourceMaster),
+          sourceFromMaster: true,
         });
         updated.push(...result.updated);
         failedIds.push(...result.failedIds);

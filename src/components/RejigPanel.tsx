@@ -76,48 +76,39 @@ export function RejigPanel({
     return masterProfiles[0] ?? null;
   }, [masterProfiles, selectedProfiles, sourceMaster]);
 
+  const linkedMasters = useMemo(() => {
+    const ids = [
+      ...new Set(
+        selectedProfiles
+          .map((profile) => profile.masterProfileId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    return ids
+      .map((id) => masterProfiles.find((master) => master.id === id))
+      .filter((master): master is MasterProfile => Boolean(master));
+  }, [masterProfiles, selectedProfiles]);
+
   const previewBase = useMemo((): JigPreviewBase | null => {
-    if (!previewMaster) return null;
-    if (sourceMaster) {
-      return {
-        name: {
-          first: sourceMaster.name.first,
-          last: sourceMaster.name.last,
-          full: sourceMaster.name.full || `${sourceMaster.name.first} ${sourceMaster.name.last}`.trim(),
-        },
-        address: {
-          street: sourceMaster.address.street,
-          unit: sourceMaster.address.unit,
-          city: sourceMaster.address.city,
-          state: sourceMaster.address.state,
-          postalCode: sourceMaster.address.postalCode,
-          country: sourceMaster.address.country,
-        },
-        phone: sourceMaster.phone,
-      };
-    }
-    const summary = selectedProfiles[0];
-    if (!summary) return null;
-    const tokens = summary.billingFullName.trim().split(/\s+/).filter(Boolean);
-    const first = tokens[0] || previewMaster.name.first;
-    const last = tokens.slice(1).join(" ") || previewMaster.name.last;
+    const master = sourceMaster ?? previewMaster;
+    if (!master) return null;
     return {
       name: {
-        first,
-        last,
-        full: summary.billingFullName.trim() || `${first} ${last}`.trim(),
+        first: master.name.first,
+        last: master.name.last,
+        full: master.name.full || `${master.name.first} ${master.name.last}`.trim(),
       },
       address: {
-        street: summary.billingAddressLine1,
-        unit: summary.billingAddressLine2.trim() || undefined,
-        city: summary.city,
-        state: summary.state,
-        postalCode: summary.postalCode ?? "",
-        country: previewMaster.address.country,
+        street: master.address.street,
+        unit: master.address.unit,
+        city: master.address.city,
+        state: master.address.state,
+        postalCode: master.address.postalCode,
+        country: master.address.country,
       },
-      phone: summary.billingPhone || previewMaster.phone,
+      phone: master.phone,
     };
-  }, [previewMaster, selectedProfiles, sourceMaster]);
+  }, [previewMaster, sourceMaster]);
 
   const hasAddressJigSelected = streetRandomLettersEnabled || addressJigPresetIds.length > 0;
   const hasSelectedJig = Boolean(nameJigPresetId) || phoneJigLastFour || hasAddressJigSelected;
@@ -187,7 +178,13 @@ export function RejigPanel({
             </>
           ) : (
             <>
-              Re-jig <strong>{selectedCount}</strong> profile{selectedCount === 1 ? "" : "s"}
+              Re-jig <strong>{selectedCount}</strong> profile{selectedCount === 1 ? "" : "s"} from{" "}
+              {linkedMasters.length === 1 ? (
+                <strong>{masterProfileLabel(linkedMasters[0])}</strong>
+              ) : (
+                "each profile's current master"
+              )}
+              . Email, phone, and cards stay the same.
             </>
           )
         ) : (
@@ -200,7 +197,7 @@ export function RejigPanel({
           <Field
             className="generate-modal-source-master"
             label="Source master"
-            hint="Use another master to change the address. Email, phone, and cards stay on the profile."
+            hint="Current master uses the master each profile is linked to. Choose another master to switch the address. Email, phone, and cards stay on the profile."
           >
             <select
               value={sourceMasterId}

@@ -107,6 +107,45 @@ function pickRandom<T>(items: readonly T[]): T {
   return items[Math.floor(Math.random() * items.length)];
 }
 
+type StreetTypeDiversityState = {
+  familyCounts: Map<string, number>;
+  formCounts: Map<string, number>;
+};
+
+let streetTypeDiversity: StreetTypeDiversityState | null = null;
+
+/** Spread suffix families across one re-jig batch so one form is not repeated while others are unused. */
+export function beginStreetTypeComboDiversity(): void {
+  streetTypeDiversity = { familyCounts: new Map(), formCounts: new Map() };
+}
+
+export function endStreetTypeComboDiversity(): void {
+  streetTypeDiversity = null;
+}
+
+function pickLeastUsed<T>(items: readonly T[], counts: Map<string, number>, keyOf: (item: T) => string): T {
+  let min = Infinity;
+  for (const item of items) {
+    const count = counts.get(keyOf(item)) ?? 0;
+    if (count < min) min = count;
+  }
+  const pool = items.filter((item) => (counts.get(keyOf(item)) ?? 0) === min);
+  return pickRandom(pool);
+}
+
+function pickStreetTypeForm(): string {
+  const state = streetTypeDiversity;
+  if (!state) {
+    return pickRandom(pickRandom(STREET_TYPE_FAMILIES).forms);
+  }
+
+  const family = pickLeastUsed(STREET_TYPE_FAMILIES, state.familyCounts, (item) => item.key);
+  const form = pickLeastUsed(family.forms, state.formCounts, (item) => item.toUpperCase());
+  state.familyCounts.set(family.key, (state.familyCounts.get(family.key) ?? 0) + 1);
+  state.formCounts.set(form.toUpperCase(), (state.formCounts.get(form.toUpperCase()) ?? 0) + 1);
+  return form;
+}
+
 function tokenizeStreet(street: string): string[] {
   return street.trim().split(/\s+/).filter(Boolean);
 }
@@ -222,8 +261,7 @@ function applyStreetTypeCombo(street: string): string {
   const nameTokens = house ? coreTokens.slice(1) : coreTokens;
   const name = titleCaseStreetName(nameTokens.join(" "));
 
-  const typeFamily = matchedType ? pickRandom(STREET_TYPE_FAMILIES) : null;
-  const typeText = typeFamily ? pickRandom(typeFamily.forms) : "";
+  const typeText = matchedType ? pickStreetTypeForm() : "";
   const directionText = direction ? pickRandom(direction.group.variants) : "";
 
   return [prefix, house, name, typeText, directionText, suffix].filter(Boolean).join(" ");

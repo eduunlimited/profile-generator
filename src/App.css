@@ -826,6 +826,10 @@ body.is-col-resizing * {
   white-space: nowrap;
 }
 
+.address-cell-name {
+  font-weight: 600;
+}
+
 .address-check-stack {
   display: flex;
   flex-wrap: wrap;

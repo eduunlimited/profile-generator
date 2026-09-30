@@ -107,17 +107,33 @@ export function billingFullName(profile: Profile): string {
   return (profile.name.jig || resolveProfileNameBase(profile.name)).trim();
 }
 
-export function billingAddressLines(profile: Profile): {
+function addressDisplayLines(address: Profile["address"]): {
   line1: string;
   line2: string;
   line3: string;
 } {
-  const address = shippingAddressForProfile(profile);
   return {
     line1: address.street,
     line2: address.unit ?? "",
     line3: [address.city, address.state, address.postalCode].filter(Boolean).join(", "),
   };
+}
+
+export function billingAddressLines(profile: Profile): {
+  line1: string;
+  line2: string;
+  line3: string;
+} {
+  return addressDisplayLines(shippingAddressForProfile(profile));
+}
+
+/** Billing address stored on the profile, separate from the shipping address when they differ. */
+export function billedAddressLines(profile: Profile): {
+  line1: string;
+  line2: string;
+  line3: string;
+} {
+  return addressDisplayLines(profile.address);
 }
 
 export function formatLinkedProfileNames(names: string[]): string {

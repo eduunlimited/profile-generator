@@ -428,11 +428,15 @@ export function ProfilesPanel({
       const haystack = [
         profile.name,
         profile.billingFullName,
+        profile.shippingFullName,
         profile.billingEmail,
         profile.billingPhone,
         profile.billingAddressLine1,
         profile.billingAddressLine2,
         profile.billingAddressLine3,
+        profile.billedAddressLine1,
+        profile.billedAddressLine2,
+        profile.billedAddressLine3,
         profile.creditCardLabel,
         profile.cardNumberMasked,
         profile.accounts,
@@ -470,11 +474,15 @@ export function ProfilesPanel({
           profile.name,
           profile.masterProfileId ? masterLabelById.get(profile.masterProfileId) : "",
           profile.billingFullName,
+          profile.shippingFullName,
           profile.billingEmail,
           profile.billingPhone,
           profile.billingAddressLine1,
           profile.billingAddressLine2,
           profile.billingAddressLine3,
+          profile.billedAddressLine1,
+          profile.billedAddressLine2,
+          profile.billedAddressLine3,
           profile.cardHolderSameAsShipping ? "Yes" : "No",
           profile.billingSameAsShipping ? "Yes" : "No",
           profile.creditCardLabel,
@@ -1431,11 +1439,27 @@ export function ProfilesPanel({
                                 ? masterLabelById.get(profile.masterProfileId) || "—"
                                 : "—"}
                             </td>
-                            <td className="col-billing-name">{profile.billingFullName || "—"}</td>
+                            <td className="col-billing-name">
+                              <div className="address-cell">
+                                <span className="address-cell-line address-cell-name">
+                                  {profile.billingFullName || "—"}
+                                </span>
+                                {profile.billedAddressLine1 ? (
+                                  <span className="address-cell-line">{profile.billedAddressLine1}</span>
+                                ) : null}
+                                {profile.billedAddressLine2 ? (
+                                  <span className="address-cell-line">{profile.billedAddressLine2}</span>
+                                ) : null}
+                                {profile.billedAddressLine3 ? (
+                                  <span className="address-cell-line">{profile.billedAddressLine3}</span>
+                                ) : null}
+                              </div>
+                            </td>
                             <td className="col-email">{profile.billingEmail || "—"}</td>
                             <td className="col-phone">{profile.billingPhone || "—"}</td>
                             <td className="col-address">
                               <BillingAddressCell
+                                name={profile.shippingFullName}
                                 line1={profile.billingAddressLine1}
                                 line2={profile.billingAddressLine2}
                                 line3={profile.billingAddressLine3}

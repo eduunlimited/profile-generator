@@ -1,5 +1,5 @@
-import { billingAddressLines, billingFullName, resolveProfileDisplayName } from "./profileNameUtils";
-import { billingSameAsShipping, cardHolderSameAsShipping, shippingAddressForProfile } from "./profileUtils";
+import { billedAddressLines, billingAddressLines, billingFullName, resolveProfileDisplayName } from "./profileNameUtils";
+import { billingSameAsShipping, cardHolderSameAsShipping, shippingAddressForProfile, shippingFullName } from "./profileUtils";
 import { normalizeProfile } from "./profileEmailUtils";
 import { formatUsPhone } from "./phoneUtils";
 import { parseCardNumberDigits, profileHasPaymentCard, resolveCreditCardProfileLabel } from "./creditCardUtils";
@@ -138,6 +138,7 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
   const billingName = billingFullName(profile);
   const shippingAddress = shippingAddressForProfile(profile);
   const addressLines = billingAddressLines(profile);
+  const billedLines = billedAddressLines(profile);
   const profileEmail = profile.email?.trim() || profile.logins[0]?.email?.trim() || "";
   const hasPaymentCard = profileHasPaymentCard(profile);
 
@@ -154,6 +155,10 @@ function profileSummary(profile: Profile, cards: Record<string, CreditCard>, cre
     billingAddressLine1: addressLines.line1,
     billingAddressLine2: addressLines.line2,
     billingAddressLine3: addressLines.line3,
+    shippingFullName: shippingFullName(profile),
+    billedAddressLine1: billedLines.line1,
+    billedAddressLine2: billedLines.line2,
+    billedAddressLine3: billedLines.line3,
     billingSameAsShipping: billingSameAsShipping(profile),
     cardHolderSameAsShipping: cardHolderSameAsShipping(profile),
     cardNumberMasked: hasPaymentCard ? maskCardNumber(payment.number) : "",

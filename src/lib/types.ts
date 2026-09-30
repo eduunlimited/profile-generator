@@ -267,9 +267,15 @@ export interface ProfileSummary {
   billingFullName: string;
   billingEmail: string;
   billingPhone: string;
+  /** Shipping street lines shown in the Address column. */
   billingAddressLine1: string;
   billingAddressLine2: string;
   billingAddressLine3: string;
+  shippingFullName: string;
+  /** Billing address shown under the billing name. */
+  billedAddressLine1: string;
+  billedAddressLine2: string;
+  billedAddressLine3: string;
   billingSameAsShipping: boolean;
   cardHolderSameAsShipping: boolean;
   cardNumberMasked: string;

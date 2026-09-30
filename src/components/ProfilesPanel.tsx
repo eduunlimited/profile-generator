@@ -1380,7 +1380,7 @@ export function ProfilesPanel({
                         Phone
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="address">
-                        Address
+                        Shipping address
                       </ResizableTh>
                       <ResizableTh columns={profileTableColumns} id="cardholderSame" className="col-same-as">
                         Cardholder name same as shipping

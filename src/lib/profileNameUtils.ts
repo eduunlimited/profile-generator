@@ -104,7 +104,7 @@ export function resolveGeneratedProfileName(master: MasterProfile, usedNames: Se
 }
 
 export function billingFullName(profile: Profile): string {
-  return (profile.name.jig || resolveProfileNameBase(profile.name)).trim();
+  return (resolveProfileNameBase(profile.name) || profile.name.jig || "").trim();
 }
 
 function addressDisplayLines(address: Profile["address"]): {

@@ -14,16 +14,13 @@ import { generateProfile } from "./generator";
 import { normalizeUsPhone } from "./phoneUtils";
 export function syncProfileName(profile: Profile): Profile {
   const full = `${profile.name.first} ${profile.name.last}`.trim();
-  const name = {
-    ...profile.name,
-    full,
-  };
-  if (billingSameAsShipping(profile)) {
-    name.jig = full;
-  }
   return {
     ...profile,
-    name,
+    name: {
+      ...profile.name,
+      full,
+      jig: full,
+    },
   };
 }
 
@@ -35,6 +32,7 @@ export function syncShippingName(profile: Profile): Profile {
     shippingName: {
       ...profile.shippingName,
       full,
+      jig: full,
     },
   };
 }
@@ -90,7 +88,8 @@ export function resolveShippingNameParts(profile: Profile): ProfileName {
 
 export function shippingFullName(profile: Profile): string {
   const parts = resolveShippingNameParts(profile);
-  return (parts.jig || `${parts.first} ${parts.last}`.trim() || parts.full.trim());
+  const fromParts = `${parts.first} ${parts.last}`.trim();
+  return (fromParts || parts.jig || parts.full).trim();
 }
 
 export function syncCardHolderFromShipping(profile: Profile): Profile {

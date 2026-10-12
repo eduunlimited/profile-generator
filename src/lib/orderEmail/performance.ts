@@ -291,20 +291,31 @@ export function summarizeOrderAccounts(
     list.push(order);
     grouped.set(email, list);
   }
-  const accounts: AccountPerformance[] = [];
+  const ranked: Array<{ account: AccountPerformance; lastPlacedMs: number }> = [];
   for (const [email, group] of grouped) {
     const matchedProfiles = profilesMatchingOrderEmail(email, profiles, poolEmails, retailer);
     const exact = matchedProfiles.filter((profile) => profile.email.trim().toLowerCase() === email);
     const chosen = exact[0] ?? matchedProfiles[0];
-    accounts.push(summarizeAccountOrders(email, retailer, group, chosen ? [accountProfileContext(chosen)] : []));
+    ranked.push({
+      account: summarizeAccountOrders(email, retailer, group, chosen ? [accountProfileContext(chosen)] : []),
+      lastPlacedMs: latestOrderPlacedMs(group),
+    });
   }
-  return accounts.sort(
-    (a, b) =>
-      b.cancelledTotal - a.cancelledTotal ||
-      b.cancelled - a.cancelled ||
-      b.successTotal - a.successTotal ||
-      a.email.localeCompare(b.email),
-  );
+  return ranked
+    .sort(
+      (a, b) =>
+        b.lastPlacedMs - a.lastPlacedMs || a.account.email.localeCompare(b.account.email),
+    )
+    .map((row) => row.account);
+}
+
+function latestOrderPlacedMs(orders: ParsedOrder[]): number {
+  let latest = 0;
+  for (const order of orders) {
+    const placed = orderPlacedMs(order);
+    if (placed > latest) latest = placed;
+  }
+  return latest;
 }
 
 export function accountDisplayName(account: AccountPerformance): string {

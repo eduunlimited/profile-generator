@@ -1,9 +1,52 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
+import sysconfig
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
+
+
+def repair_shadowed_camoufox_modules() -> None:
+    """Remove leftover package folders that hide a newer single-file module.
+
+    Camoufox replaced ``webgl/`` with ``webgl.py``. An in-place app update can
+    leave the old folder in place, and Python then imports that folder instead
+    of the module the rest of the package expects.
+    """
+    roots: list[Path] = []
+    purelib = sysconfig.get_paths().get("purelib")
+    if purelib:
+        roots.append(Path(purelib) / "camoufox")
+    for entry in os.environ.get("PYTHONPATH", "").split(os.pathsep):
+        if entry.strip():
+            roots.append(Path(entry.strip()) / "camoufox")
+
+    seen: set[Path] = set()
+    for package_dir in roots:
+        try:
+            resolved = package_dir.resolve()
+        except OSError:
+            continue
+        if resolved in seen or not package_dir.is_dir():
+            continue
+        seen.add(resolved)
+        for module_file in package_dir.glob("*.py"):
+            if module_file.name == "__init__.py":
+                continue
+            shadow = package_dir / module_file.stem
+            if not (shadow / "__init__.py").is_file():
+                continue
+            shutil.rmtree(shadow, ignore_errors=True)
+            cache = package_dir / "__pycache__"
+            if cache.is_dir():
+                for stale in cache.glob(f"{module_file.stem}*.pyc"):
+                    stale.unlink(missing_ok=True)
+
+
+repair_shadowed_camoufox_modules()
 
 
 def _parse_host_port_user_pass(raw: str) -> dict[str, str] | None:

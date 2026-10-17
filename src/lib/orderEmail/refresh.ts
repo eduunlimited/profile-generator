@@ -6,6 +6,7 @@ import {
   saveImapMail,
   listOrders,
   saveOrders,
+  withoutDismissedOrders,
   searchImapHeaders,
 } from "../api";
 import { formatError } from "../errorUtils";
@@ -487,8 +488,7 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
     const rows = withRecipientFallback(
       attachClassifiedEvents(upsertParsedOrders(existing, incoming), classified),
     );
-    await saveOrders(rows);
-    return rows;
+    return saveOrders(rows);
   };
 
   // Write confirmation rows before the slow per-message body fetches so a
@@ -502,7 +502,7 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
       errors.push(formatError(error, "Could not load order email bodies."));
     }
   }
-  orders = await persistOrders(scanned);
+  orders = await withoutDismissedOrders(await persistOrders(scanned));
   const status = errors.length
     ? `Saved ${orders.length} order(s) with a confirmation. ${errors.join(" ")}`
     : scanned.length === 0

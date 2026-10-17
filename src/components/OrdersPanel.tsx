@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { listOrders } from "../lib/api";
+import { deletePlacedOrder, listOrders, withoutDismissedOrders } from "../lib/api";
 import { formatError } from "../lib/errorUtils";
 import { ensureDataKey, releaseDataKey } from "../lib/localDataStore";
 import {
@@ -148,6 +148,7 @@ export function OrdersPanel({
   const [spendPeriod, setSpendPeriod] = useState<SpendPeriod>("3m");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [status, setStatus] = useState("Checking new mail…");
   const [tone, setTone] = useState<"ok" | "error">("ok");
   const [mailChecked, setMailChecked] = useState(false);
@@ -155,6 +156,39 @@ export function OrdersPanel({
   const displayedRef = useRef(false);
   const activeIdRef = useRef<string | null>(null);
   activeIdRef.current = activeId;
+
+  const showOrders = async (next: ParsedOrder[]) => {
+    const visible = await withoutDismissedOrders(next);
+    publishSyncedOrders(visible);
+    setOrders(visible);
+    const currentId = activeIdRef.current;
+    if (currentId && !visible.some((order) => order.id === currentId)) {
+      setActiveId(null);
+    }
+    return visible;
+  };
+
+  const deleteSelected = async (order: ParsedOrder) => {
+    if (order.status !== "placed" || deleting) return;
+    const confirmed = window.confirm(
+      `Delete order ${order.orderId}? It will be removed from recorded orders.`,
+    );
+    if (!confirmed) return;
+    setDeleting(true);
+    try {
+      const next = await deletePlacedOrder(order.id);
+      publishSyncedOrders(next);
+      setOrders(next);
+      setActiveId(null);
+      setTone("ok");
+      setStatus(`Deleted order ${order.orderId}.`);
+    } catch (error) {
+      setTone("error");
+      setStatus(formatError(error, "Could not delete that order."));
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const runRefresh = async (source: "button" | "auto" = "button") => {
     if (busyRef.current) return;
@@ -165,23 +199,17 @@ export function OrdersPanel({
     try {
       const result = await refreshTargetOrders();
       const withDates = await refreshIncomingDeliveryDates(result.orders);
-      publishSyncedOrders(withDates);
-      setOrders(withDates);
+      const visibleDates = await showOrders(withDates);
       displayedRef.current = true;
       setStatus(result.status);
       setTone(result.tone);
-      const currentId = activeIdRef.current;
-      if (currentId && !result.orders.some((order) => order.id === currentId)) {
-        setActiveId(null);
-      }
       const cancel = await applyTargetCancelReasonsAfterRefresh(
-        withDates,
+        visibleDates,
         source,
         result.newCancelledOrderIds,
         (message) => setStatus(message),
       );
-      publishSyncedOrders(cancel.orders);
-      setOrders(cancel.orders);
+      await showOrders(cancel.orders);
       displayedRef.current = true;
       if (cancel.status) {
         setStatus(cancel.status);
@@ -578,11 +606,25 @@ export function OrdersPanel({
         <aside className="orders-detail card">
           {active ? (
             <>
-              <h3>Order {active.orderId}</h3>
-              <p className="muted">
-                {retailerLabel(active.retailer)} · {STATUS_LABEL[active.status]}
-                {active.fulfillment === "pickup" ? " · Store pickup" : ""}
-              </p>
+              <div className="orders-detail-head">
+                <div>
+                  <h3>Order {active.orderId}</h3>
+                  <p className="muted">
+                    {retailerLabel(active.retailer)} · {STATUS_LABEL[active.status]}
+                    {active.fulfillment === "pickup" ? " · Store pickup" : ""}
+                  </p>
+                </div>
+                {active.status === "placed" ? (
+                  <button
+                    type="button"
+                    className="ghost-button danger orders-detail-delete"
+                    disabled={deleting}
+                    onClick={() => void deleteSelected(active)}
+                  >
+                    Delete
+                  </button>
+                ) : null}
+              </div>
               <dl className="orders-detail-meta">
                 <div>
                   <dt>Profile</dt>

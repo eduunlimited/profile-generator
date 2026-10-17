@@ -11,22 +11,11 @@ import argparse
 import asyncio
 import json
 import re
-import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 from urllib.parse import unquote
-
-if sys.platform == "win32":
-    _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-    _popen_init = subprocess.Popen.__init__
-
-    def _hidden_popen_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        kwargs["creationflags"] = int(kwargs.get("creationflags") or 0) | _CREATE_NO_WINDOW
-        _popen_init(self, *args, **kwargs)
-
-    subprocess.Popen.__init__ = _hidden_popen_init  # type: ignore[method-assign]
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:

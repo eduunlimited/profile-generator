@@ -2781,6 +2781,21 @@ body.accounts-resizing {
   color: var(--danger);
 }
 
+.orders-api-enable {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0;
+  font-size: 13px;
+}
+
+.orders-api-example {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .panel-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
@@ -5067,6 +5082,27 @@ textarea {
   min-height: 0;
   overflow: auto;
   padding: var(--space-md);
+}
+
+.orders-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.orders-detail-head h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.orders-detail-head .muted {
+  margin: 0;
+}
+
+.orders-detail-delete {
+  flex-shrink: 0;
+  margin-top: 1px;
 }
 
 .orders-detail h3 {

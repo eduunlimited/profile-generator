@@ -86,9 +86,11 @@ const KEYS = {
   imapSettings: "profile-generator:imap-settings",
   imapMail: "profile-generator:imap-mail",
   orders: "profile-generator:orders",
+  dismissedOrders: "profile-generator:dismissed-orders",
   geocodioSettings: "profile-generator:geocodio-settings",
   openaiSettings: "profile-generator:openai-settings",
   orderAnalysis: "profile-generator:order-analysis",
+  ordersApi: "profile-generator:orders-api",
   pythonPath: "profile-generator:python-path",
 } as const;
 
@@ -1353,23 +1355,67 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
   });
 }
 
+function dismissedOrderIds(): Set<string> {
+  const stored = readMap<string>(KEYS.dismissedOrders);
+  return new Set(Object.keys(stored).filter((id) => id.trim().length > 0));
+}
+
+function omitDismissedOrders(orders: ParsedOrder[]): ParsedOrder[] {
+  const dismissed = dismissedOrderIds();
+  if (dismissed.size === 0) return orders;
+  return orders.filter((order) => !dismissed.has(order.id));
+}
+
+export async function withoutDismissedOrders(orders: ParsedOrder[]): Promise<ParsedOrder[]> {
+  await ensureDataKey(KEYS.dismissedOrders);
+  return omitDismissedOrders(orders);
+}
+
+function writeOrderMap(orders: ParsedOrder[]): void {
+  const map: Record<string, ParsedOrder> = {};
+  for (const order of orders) map[order.id] = order;
+  writeMap(KEYS.orders, map);
+}
+
 export async function listOrders(): Promise<ParsedOrder[]> {
   await ensureDataKey(KEYS.orders);
+  await ensureDataKey(KEYS.dismissedOrders);
   const orders = Object.values(readMap<Partial<ParsedOrder>>(KEYS.orders))
     .map((raw) => normalizeParsedOrder(raw ?? {}))
     .filter((order): order is ParsedOrder => order != null);
-  return upsertParsedOrders([], orders);
+  return omitDismissedOrders(upsertParsedOrders([], orders));
 }
 
-export async function saveOrders(orders: ParsedOrder[]): Promise<void> {
-  const folded = upsertParsedOrders(
-    [],
-    orders.map((raw) => normalizeParsedOrder(raw)).filter((order): order is ParsedOrder => order != null),
+export async function saveOrders(orders: ParsedOrder[]): Promise<ParsedOrder[]> {
+  await ensureDataKey(KEYS.dismissedOrders);
+  const folded = omitDismissedOrders(
+    upsertParsedOrders(
+      [],
+      orders.map((raw) => normalizeParsedOrder(raw)).filter((order): order is ParsedOrder => order != null),
+    ),
   );
-  const map: Record<string, ParsedOrder> = {};
-  for (const order of folded) map[order.id] = order;
-  writeMap(KEYS.orders, map);
+  writeOrderMap(folded);
   await persistMap();
+  return omitDismissedOrders(
+    Object.values(readMap<ParsedOrder>(KEYS.orders)).filter((order): order is ParsedOrder => order != null),
+  );
+}
+
+export async function deletePlacedOrder(id: string): Promise<ParsedOrder[]> {
+  await ensureDataKey(KEYS.orders);
+  await ensureDataKey(KEYS.dismissedOrders);
+  const current = await listOrders();
+  const target = current.find((order) => order.id === id);
+  if (!target || target.status !== "placed") {
+    throw new Error("Only orders shown as Placed can be deleted.");
+  }
+  const dismissed = readMap<string>(KEYS.dismissedOrders);
+  dismissed[target.id] = new Date().toISOString();
+  writeMap(KEYS.dismissedOrders, dismissed);
+  const next = current.filter((order) => order.id !== target.id);
+  writeOrderMap(next);
+  await persistMap();
+  return next;
 }
 
 export async function getGeocodioSettings(): Promise<import("./types").GeocodioSettings> {
@@ -1391,6 +1437,23 @@ export async function getOpenAiSettings(): Promise<import("./types").OpenAiSetti
 
 export async function saveOpenAiSettings(settings: import("./types").OpenAiSettings): Promise<void> {
   writeMap(KEYS.openaiSettings, { apiKey: settings.apiKey.trim() });
+  await persistMap();
+}
+
+export async function getOrdersApiSettings(): Promise<import("./ordersApi").OrdersApiSettings> {
+  await ensureDataKey(KEYS.ordersApi);
+  const stored = readMap<string>(KEYS.ordersApi);
+  return {
+    enabled: stored.enabled === "true",
+    token: (stored.token ?? "").trim(),
+  };
+}
+
+export async function saveOrdersApiSettings(settings: import("./ordersApi").OrdersApiSettings): Promise<void> {
+  writeMap(KEYS.ordersApi, {
+    enabled: settings.enabled ? "true" : "false",
+    token: settings.token.trim(),
+  });
   await persistMap();
 }
 

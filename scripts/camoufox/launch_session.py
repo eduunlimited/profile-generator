@@ -7,24 +7,21 @@ import argparse
 import asyncio
 import json
 import os
-import subprocess
 import sys
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
-# Playwright/Camoufox spawn console helpers on Windows. Hide those so only the
-# headed browser window stays visible — the parent python.exe is already launched
-# with CREATE_NO_WINDOW from the Tauri side.
-if sys.platform == "win32":
-    _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-    _popen_init = subprocess.Popen.__init__
-
-    def _hidden_popen_init(self, *args, **kwargs):  # type: ignore[no-untyped-def]
-        kwargs["creationflags"] = int(kwargs.get("creationflags") or 0) | _CREATE_NO_WINDOW
-        _popen_init(self, *args, **kwargs)
-
-    subprocess.Popen.__init__ = _hidden_popen_init  # type: ignore[method-assign]
+# Rust reads this process's stdout as UTF-8. Windows Python defaults to cp1252,
+# so a geoip name or progress glyph would make that read fail. Keep the status
+# pipe for one JSON line and send library output to stderr.
+_STATUS_STREAM = sys.stdout.buffer
+for _stream in (sys.stdout, sys.stderr):
+    _reconfigure = getattr(_stream, "reconfigure", None)
+    if callable(_reconfigure):
+        with suppress(Exception):
+            _reconfigure(encoding="utf-8", errors="replace")
+sys.stdout = sys.stderr
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
@@ -54,8 +51,8 @@ def _clear_session_running(session_dir: Path) -> None:
 
 
 def _emit(payload: dict[str, Any]) -> None:
-    sys.stdout.write(json.dumps(payload) + "\n")
-    sys.stdout.flush()
+    _STATUS_STREAM.write((json.dumps(payload) + "\n").encode("utf-8"))
+    _STATUS_STREAM.flush()
 
 
 def _fail(message: str, *, code: int = 1) -> None:
@@ -146,10 +143,12 @@ async def _load_start_url(page: Any, start_url: str) -> None:
 async def run_session(request: dict[str, Any]) -> dict[str, Any]:
     try:
         from camoufox.async_api import AsyncCamoufox
-    except ImportError:
-        _fail(
-            "Camoufox is not installed. Run: pip install camoufox[geoip] && python -m camoufox fetch"
-        )
+    except ImportError as exc:
+        if exc.name == "camoufox":
+            _fail(
+                "Camoufox is not installed. Run: pip install camoufox[geoip] && python -m camoufox fetch"
+            )
+        _fail(f"Camoufox failed to load: {exc}")
 
     account_id = str(request.get("accountId") or "").strip()
     session_dir = Path(str(request.get("sessionDir") or "").strip())

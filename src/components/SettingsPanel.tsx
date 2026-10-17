@@ -2,11 +2,14 @@ import { useEffect, useState } from "react";
 import {
   getGeocodioSettings,
   getOpenAiSettings,
+  getOrdersApiSettings,
   saveGeocodioSettings,
   saveOpenAiSettings,
+  saveOrdersApiSettings,
   testGeocodioConnection,
   testOpenAiConnection,
 } from "../lib/api";
+import { createOrdersApiToken, ORDERS_API_BASE } from "../lib/ordersApi";
 import { exportAppBackupFile, importAppBackupFile, type AppBackupSummary } from "../lib/appBackup";
 import { checkForAppUpdates, isAppUpdateCheckAvailable } from "../lib/appUpdates";
 import { formatError } from "../lib/errorUtils";
@@ -30,16 +33,26 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
   const [backupStatus, setBackupStatus] = useState<KeyStatus>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
   const [updateStatus, setUpdateStatus] = useState<KeyStatus>(null);
+  const [ordersApiEnabled, setOrdersApiEnabled] = useState(false);
+  const [ordersApiToken, setOrdersApiToken] = useState("");
+  const [ordersApiBusy, setOrdersApiBusy] = useState(false);
+  const [ordersApiStatus, setOrdersApiStatus] = useState<KeyStatus>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [geocodio, openai] = await Promise.all([getGeocodioSettings(), getOpenAiSettings()]);
+        const [geocodio, openai, ordersApi] = await Promise.all([
+          getGeocodioSettings(),
+          getOpenAiSettings(),
+          getOrdersApiSettings(),
+        ]);
         if (cancelled) return;
         setGeocodioKey(geocodio.apiKey);
         setOpenAiKey(openai.apiKey);
         cacheOpenAiApiKey(openai.apiKey);
+        setOrdersApiEnabled(ordersApi.enabled);
+        setOrdersApiToken(ordersApi.token);
       } catch (error) {
         if (!cancelled) {
           setGeocodioStatus({ tone: "error", text: formatError(error, "Could not load API keys.") });
@@ -93,6 +106,61 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
       setOpenAiStatus({ tone: "error", text: formatError(error, "Could not save OpenAI API key.") });
     } finally {
       setOpenAiBusy(false);
+    }
+  };
+
+  const saveOrdersApi = async () => {
+    const token = ordersApiToken.trim() || (ordersApiEnabled ? createOrdersApiToken() : "");
+    setOrdersApiBusy(true);
+    try {
+      await saveOrdersApiSettings({ enabled: ordersApiEnabled, token });
+      setOrdersApiToken(token);
+      setOrdersApiStatus({
+        tone: "ok",
+        text: ordersApiEnabled ? "Orders API saved. It is listening on this computer only." : "Orders API turned off.",
+      });
+    } catch (error) {
+      setOrdersApiStatus({ tone: "error", text: formatError(error, "Could not save the Orders API.") });
+    } finally {
+      setOrdersApiBusy(false);
+    }
+  };
+
+  const testOrdersApi = async () => {
+    const token = ordersApiToken.trim();
+    if (!ordersApiEnabled || !token) {
+      setOrdersApiStatus({ tone: "error", text: "Turn the API on, save a token, then test again." });
+      return;
+    }
+    setOrdersApiBusy(true);
+    setOrdersApiStatus({ tone: "ok", text: "Testing…" });
+    try {
+      const response = await fetch(`${ORDERS_API_BASE}/api/orders`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const body = (await response.json().catch(() => null)) as { count?: number; error?: string } | null;
+      if (!response.ok) {
+        throw new Error(body?.error || `Orders API returned ${response.status}.`);
+      }
+      setOrdersApiStatus({
+        tone: "ok",
+        text: `Connected. ${body?.count ?? 0} order(s) available.`,
+      });
+    } catch (error) {
+      setOrdersApiStatus({ tone: "error", text: formatError(error, "Orders API test failed.") });
+    } finally {
+      setOrdersApiBusy(false);
+    }
+  };
+
+  const copyOrdersApiExample = async () => {
+    const token = ordersApiToken.trim() || "YOUR_TOKEN";
+    const example = `curl -H "Authorization: Bearer ${token}" "${ORDERS_API_BASE}/api/orders"`;
+    try {
+      await navigator.clipboard.writeText(example);
+      setOrdersApiStatus({ tone: "ok", text: "Copied the example request." });
+    } catch (error) {
+      setOrdersApiStatus({ tone: "error", text: formatError(error, "Could not copy the example.") });
     }
   };
 
@@ -243,6 +311,66 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
         </div>
         {openAiStatus ? (
           <p className={openAiStatus.tone === "error" ? "is-error" : "muted"}>{openAiStatus.text}</p>
+        ) : null}
+      </section>
+
+      <section className="card settings-card">
+        <div className="card-header">
+          <h2>Orders API</h2>
+        </div>
+        <p className="muted">
+          Other programs on this computer can read recorded orders while the app is open. The API listens
+          only on {ORDERS_API_BASE}. Deleted Placed orders stay excluded.
+        </p>
+        <label className="orders-api-enable">
+          <input
+            type="checkbox"
+            checked={ordersApiEnabled}
+            onChange={(event) => setOrdersApiEnabled(event.target.checked)}
+          />
+          <span>Enable orders export</span>
+        </label>
+        <div className="form-grid">
+          <Field label="API token" className="form-grid-span">
+            <input
+              type="text"
+              value={ordersApiToken}
+              onChange={(event) => setOrdersApiToken(event.target.value)}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Save to generate a token"
+            />
+          </Field>
+        </div>
+        <p className="muted orders-api-example">
+          GET /api/orders?status=placed&retailer=target&since=2026-10-01T00:00:00Z
+          <br />
+          Authorization: Bearer token
+        </p>
+        <div className="button-row">
+          <button type="button" className="btn-secondary" disabled={ordersApiBusy} onClick={() => void testOrdersApi()}>
+            Test connection
+          </button>
+          <button type="button" className="btn-secondary" disabled={ordersApiBusy} onClick={() => void copyOrdersApiExample()}>
+            Copy example
+          </button>
+          <button
+            type="button"
+            className="btn-secondary"
+            disabled={ordersApiBusy}
+            onClick={() => {
+              setOrdersApiToken(createOrdersApiToken());
+              setOrdersApiStatus({ tone: "ok", text: "New token ready. Save to start using it." });
+            }}
+          >
+            New token
+          </button>
+          <button type="button" className="btn-primary" disabled={ordersApiBusy} onClick={() => void saveOrdersApi()}>
+            {ordersApiBusy ? "Saving…" : "Save"}
+          </button>
+        </div>
+        {ordersApiStatus ? (
+          <p className={ordersApiStatus.tone === "error" ? "is-error" : "muted"}>{ordersApiStatus.text}</p>
         ) : null}
       </section>
 

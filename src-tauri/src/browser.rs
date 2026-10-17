@@ -351,11 +351,8 @@ pub fn stop_bundled_python_runtime(app: &AppHandle) {
     app.state::<BrowserSessionRegistry>().kill_all();
     #[cfg(windows)]
     {
-        for image in ["python.exe", "pythonw.exe", "camoufox.exe"] {
-            let _ = hidden_command("taskkill")
-                .args(["/F", "/T", "/IM", image])
-                .status();
-        }
+        // Only stop this app's bundled interpreter. Killing every python.exe
+        // also kills the session launcher before it can print its status line.
         let _ = hidden_command("powershell")
             .args([
                 "-NoProfile",
@@ -422,6 +419,8 @@ fn resolve_python_executable(app: &AppHandle, requested: Option<&str>) -> PathBu
 
 fn python_env(app: &AppHandle, python: &Path) -> HashMap<String, String> {
     let mut env: HashMap<String, String> = std::env::vars().collect();
+    env.insert("PYTHONUTF8".to_string(), "1".to_string());
+    env.insert("PYTHONIOENCODING".to_string(), "utf-8".to_string());
     let Some(resource_dir) = bundled_resource_dir(app) else {
         return env;
     };
@@ -604,6 +603,29 @@ pub fn check_camoufox(
     })
 }
 
+fn spawn_stderr_reader(stderr: std::process::ChildStderr) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let mut reader = BufReader::new(stderr);
+        let mut collected = String::new();
+        let _ = Read::read_to_string(&mut reader, &mut collected);
+        let _ = tx.send(collected);
+    });
+    rx
+}
+
+fn error_with_launcher_stderr(message: String, stderr_rx: &mpsc::Receiver<String>) -> String {
+    let extra = stderr_rx
+        .recv_timeout(Duration::from_secs(2))
+        .unwrap_or_default();
+    let extra = extra.trim();
+    if extra.is_empty() {
+        message
+    } else {
+        format!("{message}\n{extra}")
+    }
+}
+
 fn read_launcher_line(
     stdout: std::process::ChildStdout,
     timeout: Duration,
@@ -611,15 +633,33 @@ fn read_launcher_line(
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
-        let mut line = String::new();
-        let result = reader.read_line(&mut line).map(|_| line);
+        let mut buf = Vec::new();
+        let result = loop {
+            buf.clear();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break Err("Camoufox launcher returned no output.".to_string()),
+                Ok(_) => {
+                    let line = String::from_utf8_lossy(&buf);
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if trimmed.starts_with('{') {
+                        break Ok(trimmed.to_string());
+                    }
+                }
+                Err(error) => {
+                    break Err(format!("Failed to read Camoufox launcher output: {error}"))
+                }
+            }
+        };
         let _ = tx.send(result);
     });
 
     match rx.recv_timeout(timeout) {
         Ok(Ok(line)) if line.trim().is_empty() => Err("Camoufox launcher returned no output.".to_string()),
         Ok(Ok(line)) => Ok(line),
-        Ok(Err(error)) => Err(format!("Failed to read Camoufox launcher output: {error}")),
+        Ok(Err(error)) => Err(error),
         Err(mpsc::RecvTimeoutError::Timeout) => Err(
             "Timed out waiting for Camoufox to open. Check Python/Camoufox setup and proxy.".to_string(),
         ),
@@ -715,19 +755,22 @@ pub fn launch_browser_session(
             )
         })?;
 
-    if let Some(stderr) = child.stderr.take() {
-        thread::spawn(move || {
-            let mut reader = BufReader::new(stderr);
-            let mut buffer = Vec::new();
-            let _ = Read::read_to_end(&mut reader, &mut buffer);
-        });
-    }
+    let stderr_rx = child.stderr.take().map(spawn_stderr_reader);
 
     let stdout = child
         .stdout
         .take()
         .ok_or("Camoufox launcher did not expose stdout.")?;
-    let line = read_launcher_line(stdout, Duration::from_secs(45))?;
+    let line = match read_launcher_line(stdout, Duration::from_secs(45)) {
+        Ok(line) => line,
+        Err(message) => {
+            let _ = child.kill();
+            return Err(match &stderr_rx {
+                Some(rx) => error_with_launcher_stderr(message, rx),
+                None => message,
+            });
+        }
+    };
 
     if let Ok(parsed) = serde_json::from_str::<PythonLaunchResponse>(line.trim()) {
         if !parsed.ok {
@@ -749,10 +792,13 @@ pub fn launch_browser_session(
     }
 
     let _ = child.kill();
-    Err(format!(
-        "Camoufox launcher returned invalid JSON: {}",
-        line.trim()
-    ))
+    Err(match &stderr_rx {
+        Some(rx) => error_with_launcher_stderr(
+            format!("Camoufox launcher returned invalid JSON: {}", line.trim()),
+            rx,
+        ),
+        None => format!("Camoufox launcher returned invalid JSON: {}", line.trim()),
+    })
 }
 
 #[derive(Debug, Deserialize)]

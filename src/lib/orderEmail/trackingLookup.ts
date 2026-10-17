@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { saveOrders } from "../api";
+import { saveOrders, withoutDismissedOrders } from "../api";
 import { isTauriRuntime } from "../env";
 import type { ParsedOrder, ShipmentCarrier } from "../types";
 import { allowedTrackingHost, detectCarrier, normalizeTracking, parseCarrierPage, trackingUrl } from "./carrier";
@@ -179,17 +179,16 @@ export async function stripUnconfirmedSeventeenTrackDelivered(orders: ParsedOrde
       updatedAt: new Date().toISOString(),
     });
   });
-  if (!changed) return orders;
-  await saveOrders(next);
-  return next;
+  if (!changed) return withoutDismissedOrders(orders);
+  return saveOrders(next);
 }
 
 export async function refreshIncomingDeliveryDates(orders: ParsedOrder[]): Promise<ParsedOrder[]> {
   const repaired = await stripUnconfirmedSeventeenTrackDelivered(orders);
   const incoming = incomingTrackOrders(repaired);
-  if (incoming.length === 0) return repaired;
+  if (incoming.length === 0) return withoutDismissedOrders(repaired);
   const key = seventeenTrackNumbers(incoming.map((order) => order.trackingNumber ?? "")).join(",");
-  if (!key) return repaired;
+  if (!key) return withoutDismissedOrders(repaired);
   if (inflight && inflightKey === key) return inflight;
   inflightKey = key;
   inflight = refreshIncomingDeliveryDatesInner(repaired, incoming).finally(() => {
@@ -266,7 +265,6 @@ async function refreshIncomingDeliveryDatesInner(
     changed = true;
   }
 
-  if (!changed) return orders;
-  await saveOrders(next);
-  return next;
+  if (!changed) return withoutDismissedOrders(orders);
+  return saveOrders(next);
 }

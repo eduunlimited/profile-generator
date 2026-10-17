@@ -474,6 +474,14 @@ export async function saveOrders(orders: import("./types").ParsedOrder[]) {
   return browserStorage.saveOrders(orders);
 }
 
+export async function deletePlacedOrder(id: string) {
+  return browserStorage.deletePlacedOrder(id);
+}
+
+export async function withoutDismissedOrders(orders: import("./types").ParsedOrder[]) {
+  return browserStorage.withoutDismissedOrders(orders);
+}
+
 export async function getGeocodioSettings() {
   return browserStorage.getGeocodioSettings();
 }
@@ -496,6 +504,14 @@ export async function getOpenAiSettings() {
 
 export async function saveOpenAiSettings(settings: import("./types").OpenAiSettings) {
   return browserStorage.saveOpenAiSettings(settings);
+}
+
+export async function getOrdersApiSettings() {
+  return browserStorage.getOrdersApiSettings();
+}
+
+export async function saveOrdersApiSettings(settings: import("./ordersApi").OrdersApiSettings) {
+  return browserStorage.saveOrdersApiSettings(settings);
 }
 
 export async function testOpenAiConnection(apiKey: string) {

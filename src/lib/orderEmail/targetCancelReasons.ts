@@ -10,6 +10,7 @@ import {
   listProxyAssignments,
   saveOrders,
   searchImapHeaders,
+  withoutDismissedOrders,
   upsertOrderAnalysis,
 } from "../api";
 import { getPythonPath } from "../browserStorage";
@@ -289,7 +290,7 @@ async function fetchTargetCancelReasonsLocked(
 ): Promise<FetchTargetCancelReasonsResult> {
   if (!isTauriRuntime()) {
     return {
-      orders,
+      orders: await withoutDismissedOrders(orders),
       fetched: 0,
       accounts: 0,
       status: "",
@@ -297,7 +298,7 @@ async function fetchTargetCancelReasonsLocked(
     };
   }
 
-  let next = upsertParsedOrders(await listOrders(), orders);
+  let next = await withoutDismissedOrders(upsertParsedOrders(await listOrders(), orders));
 
   const scoped = options.orderIds !== undefined;
   const wantedIds = new Set((options.orderIds ?? []).map((id) => id.trim()).filter(Boolean));
@@ -445,7 +446,7 @@ export async function fetchTargetCancelReasons(
 ): Promise<FetchTargetCancelReasonsResult> {
   if (!TARGET_CANCEL_REASON_FETCH_ENABLED) {
     return {
-      orders,
+      orders: await withoutDismissedOrders(orders),
       fetched: 0,
       accounts: 0,
       status: "",

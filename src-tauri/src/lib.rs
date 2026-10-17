@@ -5,6 +5,7 @@ mod geocodio;
 mod imap;
 mod tracking;
 mod license;
+mod orders_api;
 mod vault;
 
 use commands::{init_db, DbState};
@@ -200,6 +201,8 @@ pub fn run() {
                 attach_process_failed_recovery(&window);
             }
             spawn_error_page_watch(app.handle().clone());
+            #[cfg(not(debug_assertions))]
+            orders_api::start(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -266,7 +269,6 @@ pub fn run() {
                 }
                 RunEvent::ExitRequested { .. } => {
                     browser::stop_bundled_python_runtime(app_handle);
-                    app_handle.exit(0);
                 }
                 RunEvent::Exit => {
                     browser::stop_bundled_python_runtime(app_handle);

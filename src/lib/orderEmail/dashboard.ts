@@ -78,10 +78,13 @@ export function spendPeriodStart(period: SpendPeriod, now = new Date()): Date {
 }
 
 export function orderPlacedMs(order: ParsedOrder): number {
+  const placed = order.events
+    .filter((event) => event.kind === "placed" && event.dateMs > 0)
+    .map((event) => event.dateMs);
+  if (placed.length > 0) return Math.min(...placed);
   const parsed = Date.parse(order.placedAt);
   if (Number.isFinite(parsed) && parsed > 0) return parsed;
-  const placed = order.events.find((event) => event.kind === "placed");
-  return placed?.dateMs && placed.dateMs > 0 ? placed.dateMs : Date.parse(order.updatedAt) || 0;
+  return Date.parse(order.updatedAt) || 0;
 }
 
 export function isManualCancelOrder(order: ParsedOrder): boolean {

@@ -11,8 +11,6 @@ export const TARGET_SEARCH_SUBJECTS = [
   "on its way",
   "have arrived from order",
   "had to cancel order",
-  "successfully canceled",
-  "successfully cancelled",
   "Your order arrives",
   "was picked up",
   "order ending in",

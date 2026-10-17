@@ -314,7 +314,8 @@ export function OrderPerformancePanel({
     setStatus("Scanning confirmation emails…");
     setTone("ok");
     try {
-      const result = await refreshTargetOrders();
+      const result = await refreshTargetOrders((message) => setStatus(message));
+      setStatus("Checking delivery dates…");
       const withDates = await refreshIncomingDeliveryDates(result.orders);
       publishSyncedOrders(withDates);
       setOrders(withDates);

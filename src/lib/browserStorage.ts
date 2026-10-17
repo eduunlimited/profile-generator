@@ -26,7 +26,7 @@ import {
   sortProfileGroups,
   PROFILE_UNGROUPED_GROUP_ID,
 } from "./profileGroupUtils";
-import { foldStoredImapMessages, toStoredImapHeaders } from "./imapInbox";
+import { foldStoredImapMessages, STORED_BODY_LIMIT, toStoredImapHeaders } from "./imapInbox";
 import { canonicalizeOrderId, orderRecordId } from "./orderEmail/classify";
 import { finalizeParsedOrder, upsertParsedOrders } from "./orderEmail/merge";
 import { repairUtf8Mojibake } from "./orderEmail/parse";
@@ -92,6 +92,7 @@ const KEYS = {
   openaiSettings: "profile-generator:openai-settings",
   orderAnalysis: "profile-generator:order-analysis",
   ordersApi: "profile-generator:orders-api",
+  pokemonTracker: "profile-generator:pokemon-tracker",
   pythonPath: "profile-generator:python-path",
 } as const;
 
@@ -1253,7 +1254,9 @@ export async function compactImapMailIfNeeded(): Promise<void> {
     ).sort((a, b) => b.dateMs - a.dateMs || b.uid - a.uid);
     if (
       folded.length !== list.length ||
-      list.some((message) => Boolean(message.htmlBody?.trim() || message.body?.trim()))
+      list.some(
+        (message) => Boolean(message.htmlBody?.trim()) || (message.body?.length ?? 0) > STORED_BODY_LIMIT,
+      )
     ) {
       changed = true;
     }
@@ -1456,6 +1459,25 @@ export async function getOrdersApiSettings(): Promise<import("./ordersApi").Orde
     enabled: stored.enabled === "true",
     token: (stored.token ?? "").trim(),
   };
+}
+
+export async function getPokemonTrackerPushSettings(): Promise<import("./pokemonTrackerPush").PokemonTrackerPushSettings> {
+  await ensureDataKey(KEYS.pokemonTracker);
+  const stored = readMap<string>(KEYS.pokemonTracker);
+  return {
+    url: (stored.url ?? "").trim(),
+    token: (stored.token ?? "").trim(),
+  };
+}
+
+export async function savePokemonTrackerPushSettings(
+  settings: import("./pokemonTrackerPush").PokemonTrackerPushSettings,
+): Promise<void> {
+  writeMap(KEYS.pokemonTracker, {
+    url: settings.url.trim(),
+    token: settings.token.trim(),
+  });
+  await persistMap();
 }
 
 export async function saveOrdersApiSettings(settings: import("./ordersApi").OrdersApiSettings): Promise<void> {

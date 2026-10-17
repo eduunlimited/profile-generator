@@ -199,7 +199,8 @@ export function OrdersPanel({
     setStatus(source === "auto" ? "Refreshing orders…" : "Scanning confirmation emails…");
     setTone("ok");
     try {
-      const result = await refreshTargetOrders();
+      const result = await refreshTargetOrders((message) => setStatus(message));
+      setStatus("Checking delivery dates…");
       const withDates = await refreshIncomingDeliveryDates(result.orders);
       const visibleDates = await showOrders(withDates);
       displayedRef.current = true;

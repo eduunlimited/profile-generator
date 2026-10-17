@@ -223,31 +223,120 @@ pub fn fetch_imap_message(settings: ImapSettings, uid: u32) -> Result<ImapMessag
     if uid == 0 {
         return Err("Message UID is required.".to_string());
     }
+    fetch_imap_messages(settings, vec![uid])?
+        .into_iter()
+        .next()
+        .ok_or_else(|| format!("Could not load message {uid}."))
+}
+
+const BODY_FETCH_BATCH: usize = 8;
+
+pub fn fetch_imap_messages(settings: ImapSettings, uids: Vec<u32>) -> Result<Vec<ImapMessage>, String> {
+    let mut seen = BTreeSet::new();
+    let unique: Vec<u32> = uids
+        .into_iter()
+        .filter(|uid| *uid > 0 && seen.insert(*uid))
+        .collect();
+    if unique.is_empty() {
+        return Ok(Vec::new());
+    }
     let settings = normalize_settings(&settings)?;
     with_session(&settings, |session| {
         session
             .select(&settings.mailbox)
             .map_err(|error| format!("Could not open {}: {error}", settings.mailbox))?;
-        let uid_set = uid.to_string();
-        let mut last_error = format!("Could not load message {uid}.");
-        for query in BODY_FETCH_QUERIES {
-            match session.uid_fetch(&uid_set, *query) {
-                Ok(fetched) => {
-                    let mut messages: Vec<ImapMessage> =
-                        fetched.iter().filter_map(parse_fetch_message).collect();
-                    fill_missing_html(session, &mut messages);
-                    if let Some(message) = messages.into_iter().next() {
-                        return Ok(message);
-                    }
-                    last_error = format!("Message {uid} had no readable body.");
-                }
-                Err(error) => {
-                    last_error = format!("IMAP fetch failed: {error}");
+        let mut messages = Vec::new();
+        for chunk in unique.chunks(BODY_FETCH_BATCH) {
+            let set = chunk
+                .iter()
+                .map(|uid| uid.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            let mut parsed = fetch_uid_bodies(session, &set);
+            if parsed.is_empty() && chunk.len() > 1 {
+                for uid in chunk {
+                    parsed.extend(fetch_uid_bodies(session, &uid.to_string()));
                 }
             }
+            messages.extend(parsed);
         }
-        Err(last_error)
+        Ok(messages)
     })
+}
+
+fn fetch_uid_bodies(
+    session: &mut imap::Session<native_tls::TlsStream<TcpStream>>,
+    set: &str,
+) -> Vec<ImapMessage> {
+    for query in BODY_FETCH_QUERIES {
+        let Ok(fetched) = session.uid_fetch(set, *query) else {
+            continue;
+        };
+        let mut messages: Vec<ImapMessage> = fetched.iter().filter_map(parse_fetch_message).collect();
+        if messages.is_empty() {
+            continue;
+        }
+        fill_missing_html(session, &mut messages);
+        return messages;
+    }
+    Vec::new()
+}
+
+fn escape_imap_quoted(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+fn subject_or_key(terms: &[String]) -> String {
+    fn nest(terms: &[String]) -> String {
+        if terms.len() == 1 {
+            return format!("SUBJECT \"{}\"", terms[0]);
+        }
+        let mid = terms.len() / 2;
+        format!("(OR {} {})", nest(&terms[..mid]), nest(&terms[mid..]))
+    }
+    nest(terms)
+}
+
+fn search_subject_uids(
+    session: &mut imap::Session<native_tls::TlsStream<TcpStream>>,
+    terms: &[String],
+    min_uid: Option<u32>,
+) -> Result<BTreeSet<u32>, String> {
+    let escaped: Vec<String> = terms.iter().map(|term| escape_imap_quoted(term)).collect();
+    let or_key = subject_or_key(&escaped);
+    let combined = match min_uid {
+        Some(uid) if uid > 0 => format!("UID {}:* {}", uid.saturating_add(1), or_key),
+        _ => or_key,
+    };
+    if let Ok(found) = session.uid_search(&combined) {
+        return Ok(found.into_iter().collect());
+    }
+    let mut uids = BTreeSet::new();
+    let mut last_error = String::new();
+    let mut any_ok = false;
+    for term in &escaped {
+        let query = match min_uid {
+            Some(uid) if uid > 0 => format!("UID {}:* SUBJECT \"{term}\"", uid.saturating_add(1)),
+            _ => format!("SUBJECT \"{term}\""),
+        };
+        match session.uid_search(&query) {
+            Ok(found) => {
+                any_ok = true;
+                uids.extend(found);
+            }
+            Err(error) => {
+                last_error = format!("IMAP search failed: {error}");
+            }
+        }
+    }
+    if !any_ok {
+        return Err(if last_error.is_empty() {
+            "IMAP subject search failed.".to_string()
+        } else {
+            last_error
+        });
+    }
+    Ok(uids)
 }
 
 pub fn search_imap_headers(
@@ -268,35 +357,33 @@ pub fn search_imap_headers(
         session
             .select(&settings.mailbox)
             .map_err(|error| format!("Could not open {}: {error}", settings.mailbox))?;
-        let mut uids = BTreeSet::new();
-        let mut last_error = String::new();
-        let mut any_ok = false;
-        for term in &terms {
-            let escaped = term.replace('\\', "\\\\").replace('"', "\\\"");
-            let query = match min_uid {
-                Some(uid) if uid > 0 => {
-                    format!("UID {}:* SUBJECT \"{escaped}\"", uid.saturating_add(1))
-                }
-                _ => format!("SUBJECT \"{escaped}\""),
-            };
-            match session.uid_search(&query) {
-                Ok(found) => {
-                    any_ok = true;
-                    uids.extend(found);
-                }
-                Err(error) => {
-                    last_error = format!("IMAP search failed: {error}");
-                }
-            }
-        }
-        if !any_ok {
-            return Err(if last_error.is_empty() {
-                "IMAP subject search failed.".to_string()
-            } else {
-                last_error
-            });
-        }
+        let uids = search_subject_uids(session, &terms, min_uid)?;
         fetch_uid_headers(session, &uids)
+    })
+}
+
+const TEXT_SEARCH_LIMIT: usize = 200;
+
+pub fn search_imap_text(settings: ImapSettings, query: String) -> Result<Vec<ImapMessage>, String> {
+    let needle: String = query.trim().chars().take(200).collect();
+    if needle.is_empty() {
+        return Err("Search text is required.".to_string());
+    }
+    let escaped = escape_imap_quoted(&needle);
+    let settings = normalize_settings(&settings)?;
+    with_session(&settings, |session| {
+        session
+            .select(&settings.mailbox)
+            .map_err(|error| format!("Could not open {}: {error}", settings.mailbox))?;
+        let found = session
+            .uid_search(format!("TEXT \"{escaped}\""))
+            .map_err(|error| format!("IMAP search failed: {error}"))?;
+        let mut uids: Vec<u32> = found.into_iter().collect();
+        if uids.len() > TEXT_SEARCH_LIMIT {
+            uids.sort_unstable();
+            uids = uids.split_off(uids.len() - TEXT_SEARCH_LIMIT);
+        }
+        fetch_uid_headers(session, &uids.into_iter().collect())
     })
 }
 

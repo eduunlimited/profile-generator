@@ -47,6 +47,7 @@ function sendJson(
     "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Headers": "Authorization, Content-Type",
     "Access-Control-Allow-Methods": "GET, OPTIONS",
+    "Access-Control-Allow-Private-Network": "true",
     "Cache-Control": "no-store",
   });
   res.end(payload);
@@ -63,6 +64,7 @@ export function ordersApiPlugin(): Plugin {
             "Access-Control-Allow-Origin": "*",
             "Access-Control-Allow-Headers": "Authorization, Content-Type",
             "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Private-Network": "true",
             "Content-Length": "0",
           });
           res.end();

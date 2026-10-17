@@ -1,5 +1,4 @@
 import {
-  fetchImapMessage,
   fetchImapMessages,
   getImapMail,
   listImapAccounts,
@@ -10,6 +9,7 @@ import {
   searchImapHeaders,
 } from "../api";
 import { formatError } from "../errorUtils";
+import { isForwardedSubject, orderMessageDate, originalForwardDateMs } from "./forward";
 import { foldStoredImapMessages, imapAccountToSettings, storedImapAliasKeys, toStoredImapHeaders } from "../imapInbox";
 import type { ImapAccount, ParsedOrder, StoredImapMessage } from "../types";
 import {
@@ -97,9 +97,55 @@ async function headersForAccount(account: ImapAccount): Promise<StoredImapMessag
 }
 
 function classifiedDateMs(message: StoredImapMessage): number {
-  if (Number.isFinite(message.dateMs) && message.dateMs > 0) return message.dateMs;
-  const parsed = Date.parse(message.date);
-  return Number.isFinite(parsed) ? parsed : 0;
+  return orderMessageDate(message).dateMs;
+}
+
+function forwardNeedsBody(message: StoredImapMessage): boolean {
+  if ((message.body ?? "").trim()) return false;
+  return (
+    isForwardedSubject(message.subject ?? "") ||
+    /forwarded message|begin forwarded message|original message/i.test(
+      `${message.subject ?? ""}\n${message.snippet ?? ""}`,
+    )
+  );
+}
+
+async function rememberPlainBodies(
+  accountId: string,
+  messages: { uid: number; body?: string; snippet?: string }[],
+): Promise<void> {
+  const useful = messages.filter((message) => message.body?.trim());
+  if (useful.length === 0) return;
+  const stored = await getImapMail(accountId);
+  const byUid = new Map(useful.map((message) => [message.uid, message]));
+  let changed = false;
+  const next = stored.map((message) => {
+    const full = byUid.get(message.uid);
+    if (!full?.body?.trim() || message.body?.trim()) return message;
+    changed = true;
+    return {
+      ...message,
+      body: full.body,
+      snippet: message.snippet?.trim() || full.snippet || message.snippet,
+    };
+  });
+  if (changed) await saveImapMail(accountId, next);
+}
+
+function applyForwardedEventDate(order: ParsedOrder, uid: number, subject: string, ...parts: string[]): void {
+  const original = originalForwardDateMs(subject, ...parts);
+  if (!original) return;
+  let changed = false;
+  order.events = order.events.map((event) => {
+    if (event.uid !== uid || (event.dateMs > 0 && original >= event.dateMs)) return event;
+    changed = true;
+    return { ...event, date: new Date(original).toISOString(), dateMs: original };
+  });
+  if (!changed) return;
+  const placed = order.events.filter((event) => event.kind === "placed" && event.dateMs > 0);
+  if (placed.length > 0) {
+    order.placedAt = new Date(Math.min(...placed.map((event) => event.dateMs))).toISOString();
+  }
 }
 
 function classifyPickupFromParts(
@@ -253,6 +299,7 @@ async function rememberPokemonCenterSnippets(
 
 async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Promise<void> {
   const settings = imapAccountToSettings(account);
+  const fetches: { order: ParsedOrder; eventUid: number; kind: "placed" | "picked_up" | "shipped" }[] = [];
   for (const order of orders) {
     const confirmation = order.events.find((event) => event.kind === "placed" && event.accountId === account.id);
     const pickedUp = order.events.find((event) => event.kind === "picked_up" && event.accountId === account.id);
@@ -263,7 +310,6 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
           (event.kind === "shipped" || event.kind === "in_transit") && event.accountId === account.id,
       );
     Object.assign(order, finalizeParsedOrder(order));
-    const fetches: { eventUid: number; kind: "placed" | "picked_up" | "shipped" }[] = [];
     const missingAddress = !order.shippingAddress?.line1 && !order.shippingAddress?.raw;
     if (
       confirmation &&
@@ -273,10 +319,10 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
         ((order.retailer === "target" || order.retailer === "pokemon-center") && missingAddress) ||
         (order.retailer === "target" && !order.payment?.raw))
     ) {
-      fetches.push({ eventUid: confirmation.uid, kind: "placed" });
+      fetches.push({ order, eventUid: confirmation.uid, kind: "placed" });
     }
     if (pickedUp && itemsLookIncomplete(order.items)) {
-      fetches.push({ eventUid: pickedUp.uid, kind: "picked_up" });
+      fetches.push({ order, eventUid: pickedUp.uid, kind: "picked_up" });
     }
     const needsShipmentHints =
       order.status !== "cancelled" &&
@@ -284,57 +330,76 @@ async function fillOrderBodies(account: ImapAccount, orders: ParsedOrder[]): Pro
       (order.status === "shipped" || Boolean(shipped)) &&
       (!order.trackingNumber || !order.expectedDelivery || !order.carrier);
     if (shipped && needsShipmentHints) {
-      fetches.push({ eventUid: shipped.uid, kind: "shipped" });
+      fetches.push({ order, eventUid: shipped.uid, kind: "shipped" });
     }
-    for (const fetch of fetches) {
-      try {
-        const full = await fetchImapMessage(settings, fetch.eventUid);
-        if (fetch.kind === "placed" || fetch.kind === "picked_up") {
-          const html = full.htmlBody?.trim() || "";
-          const text = [full.body, full.snippet, full.subject].filter(Boolean).join("\n");
-          if (fetch.kind === "placed") {
-            const total = extractOrderTotal(html || text);
-            if (total != null) {
-              order.total = total;
-              order.currency = "USD";
-            }
-            if (!order.recipientEmail) {
-              order.recipientEmail = orderRecipientEmail(full, account.username);
-            }
-            if (order.retailer === "target" && isTargetPickupConfirmationText(html, text)) {
-              order.fulfillment = "pickup";
-            } else if (html || full.body?.trim()) {
-              order.fulfillment = order.fulfillment ?? "delivery";
-            }
-            const address = extractOrderShippingAddress(order.retailer, html || text);
-            if (address) order.shippingAddress = mergeOrderAddress(address, order.shippingAddress);
-            if (order.retailer === "target") {
-              const payment = extractTargetOrderPayment(html || text);
-              if (payment) order.payment = mergeOrderPayment(payment, order.payment);
-            }
-          }
-          const items = extractOrderItems(html || text);
-          if (items.length > 0) order.items = mergeOrderItems(order.items, items);
+  }
+  if (fetches.length === 0) return;
+  const storedByUid = new Map((await getImapMail(account.id)).map((message) => [message.uid, message]));
+  const pending = fetches.filter((item) => !storedByUid.get(item.eventUid)?.body?.trim());
+  const bodies = new Map<number, { subject?: string; snippet?: string; body?: string; htmlBody?: string; recipients?: string[]; to?: string }>();
+  for (const item of fetches) {
+    const cached = storedByUid.get(item.eventUid);
+    if (cached?.body?.trim()) bodies.set(item.eventUid, cached);
+  }
+  if (pending.length > 0) {
+    try {
+      const fetched = await fetchImapMessages(
+        settings,
+        pending.map((item) => item.eventUid),
+      );
+      await rememberPlainBodies(account.id, fetched);
+      for (const message of fetched) bodies.set(message.uid, message);
+    } catch {
+      // Stored excerpts still apply. Missing messages wait for a later refresh.
+    }
+  }
+  for (const fetch of fetches) {
+    const full = bodies.get(fetch.eventUid);
+    if (!full) continue;
+    const order = fetch.order;
+    const html = full.htmlBody?.trim() || "";
+    const text = [full.body, full.snippet, full.subject].filter(Boolean).join("\n");
+    applyForwardedEventDate(order, fetch.eventUid, full.subject ?? "", html, text);
+    if (fetch.kind === "placed" || fetch.kind === "picked_up") {
+      if (fetch.kind === "placed") {
+        const total = extractOrderTotal(html || text);
+        if (total != null) {
+          order.total = total;
+          order.currency = "USD";
         }
-        if (fetch.kind === "shipped") {
-          const html = full.htmlBody?.trim() || "";
-          const text = [full.body, full.snippet, full.subject].filter(Boolean).join("\n");
-          const hints = shipmentHintsFromText(order.orderId, html || text);
-          if (hints.tracking) order.trackingNumber = hints.tracking;
-          order.carrier =
-            hints.carrier ??
-            detectCarrierFromText(html || text, hints.tracking ?? order.trackingNumber) ??
-            detectCarrier(hints.tracking ?? order.trackingNumber) ??
-            order.carrier;
-          if (hints.expectedDelivery) {
-            order.expectedDelivery = hints.expectedDelivery;
-            order.expectedDeliverySource = "email";
-          }
+        if (!order.recipientEmail) {
+          order.recipientEmail = orderRecipientEmail(full, account.username);
         }
-      } catch {
-        // Keep the subject-derived row; amount/tracking stay empty until a later refresh.
+        if (order.retailer === "target" && isTargetPickupConfirmationText(html, text)) {
+          order.fulfillment = "pickup";
+        } else if (html || full.body?.trim()) {
+          order.fulfillment = order.fulfillment ?? "delivery";
+        }
+        const address = extractOrderShippingAddress(order.retailer, html || text);
+        if (address) order.shippingAddress = mergeOrderAddress(address, order.shippingAddress);
+        if (order.retailer === "target") {
+          const payment = extractTargetOrderPayment(html || text);
+          if (payment) order.payment = mergeOrderPayment(payment, order.payment);
+        }
+      }
+      const items = extractOrderItems(html || text);
+      if (items.length > 0) order.items = mergeOrderItems(order.items, items);
+    }
+    if (fetch.kind === "shipped") {
+      const hints = shipmentHintsFromText(order.orderId, html || text);
+      if (hints.tracking) order.trackingNumber = hints.tracking;
+      order.carrier =
+        hints.carrier ??
+        detectCarrierFromText(html || text, hints.tracking ?? order.trackingNumber) ??
+        detectCarrier(hints.tracking ?? order.trackingNumber) ??
+        order.carrier;
+      if (hints.expectedDelivery) {
+        order.expectedDelivery = hints.expectedDelivery;
+        order.expectedDeliverySource = "email";
       }
     }
+  }
+  for (const order of orders) {
     Object.assign(order, finalizeParsedOrder(order));
   }
 }
@@ -362,16 +427,16 @@ function newlyCancelledTargetIds(before: ParsedOrder[], after: ParsedOrder[]): s
 
 let inflightOrderRefresh: Promise<OrderRefreshResult> | null = null;
 
-export function refreshTargetOrders(): Promise<OrderRefreshResult> {
+export function refreshTargetOrders(onStatus?: (message: string) => void): Promise<OrderRefreshResult> {
   if (!inflightOrderRefresh) {
-    inflightOrderRefresh = refreshTargetOrdersInner().finally(() => {
+    inflightOrderRefresh = refreshTargetOrdersInner(onStatus).finally(() => {
       inflightOrderRefresh = null;
     });
   }
   return inflightOrderRefresh;
 }
 
-async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
+async function refreshTargetOrdersInner(onStatus?: (message: string) => void): Promise<OrderRefreshResult> {
   const existing = await listOrders();
   const accounts = await listImapAccounts();
   if (accounts.length === 0) {
@@ -380,17 +445,22 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
 
   const classified: ClassifiedOrderMessage[] = [];
   const pickupQueue: { account: ImapAccount; message: StoredImapMessage }[] = [];
+  const forwardQueue: { account: ImapAccount; message: StoredImapMessage; index: number }[] = [];
   const manualCancelQueue: { account: ImapAccount; message: StoredImapMessage }[] = [];
   const pokemonQueue: { account: ImapAccount; message: StoredImapMessage }[] = [];
   const loadedAccountIds = new Set<string>();
   const errors: string[] = [];
-  for (const account of accounts) {
+  for (const [index, account] of accounts.entries()) {
+    onStatus?.(`Checking mailbox ${index + 1} of ${accounts.length}…`);
     try {
       const headers = await headersForAccount(account);
       for (const message of headers) {
         const item = classifyStoredMessage(account.id, message);
         if (item) {
           classified.push(item);
+          if (forwardNeedsBody(message)) {
+            forwardQueue.push({ account, message, index: classified.length - 1 });
+          }
           continue;
         }
         if (isTargetPickupSubject(message.subject ?? "")) {
@@ -404,6 +474,35 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
       loadedAccountIds.add(account.id);
     } catch (error) {
       errors.push(formatError(error, `Could not read mail for ${account.name || account.username}.`));
+    }
+  }
+
+  const forwardByAccount = new Map<string, { account: ImapAccount; items: typeof forwardQueue }>();
+  for (const pending of forwardQueue) {
+    const group = forwardByAccount.get(pending.account.id) ?? { account: pending.account, items: [] };
+    group.items.push(pending);
+    forwardByAccount.set(pending.account.id, group);
+  }
+  for (const { account, items } of forwardByAccount.values()) {
+    try {
+      const fetched = await fetchImapMessages(
+        imapAccountToSettings(account),
+        items.map((item) => item.message.uid),
+      );
+      const byUid = new Map(fetched.map((message) => [message.uid, message]));
+      await rememberPlainBodies(account.id, fetched);
+      for (const pending of items) {
+        const full = byUid.get(pending.message.uid);
+        if (!full) continue;
+        const again = classifyStoredMessage(account.id, {
+          ...pending.message,
+          ...full,
+          dateMs: pending.message.dateMs,
+        });
+        if (again) classified[pending.index] = again;
+      }
+    } catch (error) {
+      errors.push(formatError(error, "Could not read forwarded order emails."));
     }
   }
 
@@ -446,6 +545,7 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
         imapAccountToSettings(account),
         needsFetch.map((message) => message.uid),
       );
+      await rememberPlainBodies(account.id, fetched);
       const byUid = new Map(fetched.map((message) => [message.uid, message]));
       const found: ClassifiedOrderMessage[] = [];
       for (const message of needsFetch) {
@@ -511,6 +611,7 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
         imapAccountToSettings(account),
         needsFetch.map((message) => message.uid),
       );
+      await rememberPlainBodies(account.id, fetched);
       const byUid = new Map(fetched.map((message) => [message.uid, message]));
       const found: ClassifiedOrderMessage[] = [];
       for (const message of needsFetch) {
@@ -571,6 +672,7 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
         imapAccountToSettings(account),
         needsFetch.map((message) => message.uid),
       );
+      await rememberPlainBodies(account.id, fetched);
       const byUid = new Map(fetched.map((message) => [message.uid, message]));
       const found: ClassifiedOrderMessage[] = [];
       for (const message of needsFetch) {
@@ -619,6 +721,7 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
   // Write confirmation rows before the slow per-message body fetches so a
   // closed tab or failed IMAP body load does not drop newly found orders.
   let orders = await persistOrders(scanned);
+  onStatus?.("Reading order email details…");
   for (const account of accounts) {
     if (!loadedAccountIds.has(account.id)) continue;
     try {

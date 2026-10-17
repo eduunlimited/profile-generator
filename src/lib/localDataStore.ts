@@ -33,6 +33,7 @@ export const STORAGE_KEY_TO_FILE: Record<string, string> = {
   "profile-generator:openai-settings": "openai-settings.json",
   "profile-generator:order-analysis": "order-analysis.json",
   "profile-generator:orders-api": "orders-api.json",
+  "profile-generator:pokemon-tracker": "pokemon-tracker.json",
 };
 
 const DATA_API = "/__data";

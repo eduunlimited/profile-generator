@@ -497,6 +497,26 @@ pub async fn fetch_imap_message(
 }
 
 #[tauri::command]
+pub async fn fetch_imap_messages(
+    settings: crate::imap::ImapSettings,
+    uids: Vec<u32>,
+) -> Result<Vec<crate::imap::ImapMessage>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::imap::fetch_imap_messages(settings, uids))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn search_imap_text(
+    settings: crate::imap::ImapSettings,
+    query: String,
+) -> Result<Vec<crate::imap::ImapMessage>, String> {
+    tauri::async_runtime::spawn_blocking(move || crate::imap::search_imap_text(settings, query))
+        .await
+        .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
 pub async fn search_imap_headers(
     settings: crate::imap::ImapSettings,
     subjects: Vec<String>,

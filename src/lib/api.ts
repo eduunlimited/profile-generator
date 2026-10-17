@@ -424,15 +424,32 @@ export async function fetchImapMessages(
   if (!isTauriRuntime()) {
     return fetchImapMessagesFromDevServer(settings, unique);
   }
-  const messages: import("./types").ImapMessage[] = [];
-  for (const uid of unique) {
-    try {
-      messages.push(await fetchImapMessage(settings, uid));
-    } catch {
-      // Keep going; the caller reports how many bodies were missing.
-    }
+  return invoke<import("./types").ImapMessage[]>("fetch_imap_messages", { settings, uids: unique });
+}
+
+export async function searchImapText(settings: import("./types").ImapSettings, query: string) {
+  const needle = query.trim();
+  if (!needle) return [];
+  if (isTauriRuntime()) {
+    return invoke<import("./types").ImapMessage[]>("search_imap_text", { settings, query: needle });
   }
-  return messages;
+  const response = await fetch("/__imap/text", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ settings, query: needle }),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | import("./types").ImapMessage[]
+    | { error?: string }
+    | null;
+  if (!response.ok) {
+    const message =
+      payload && !Array.isArray(payload) && payload.error?.trim()
+        ? payload.error
+        : "IMAP reading needs the desktop app, or the local Vite IMAP helper.";
+    throw new Error(message);
+  }
+  return Array.isArray(payload) ? payload : [];
 }
 
 export async function searchImapHeaders(
@@ -508,6 +525,16 @@ export async function saveOpenAiSettings(settings: import("./types").OpenAiSetti
 
 export async function getOrdersApiSettings() {
   return browserStorage.getOrdersApiSettings();
+}
+
+export async function getPokemonTrackerPushSettings() {
+  return browserStorage.getPokemonTrackerPushSettings();
+}
+
+export async function savePokemonTrackerPushSettings(
+  settings: import("./pokemonTrackerPush").PokemonTrackerPushSettings,
+) {
+  return browserStorage.savePokemonTrackerPushSettings(settings);
 }
 
 export async function saveOrdersApiSettings(settings: import("./ordersApi").OrdersApiSettings) {

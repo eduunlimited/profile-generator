@@ -1,6 +1,8 @@
 import type { ImapAccount, ImapMessage, ImapSettings, ProfileSummary, StoredImapMessage } from "./types";
 
 export const IMAP_MAIL_CAP = 500;
+/** Plain-text excerpt kept for search and order parsing. HTML is not stored. */
+export const STORED_BODY_LIMIT = 4000;
 
 export function emptyImapSettings(): ImapSettings {
   return {
@@ -195,12 +197,13 @@ export function toStoredImapHeaders(
 ): StoredImapMessage {
   const stored = toStoredImapMessage(message, fetchedAt);
   const existingMs = "dateMs" in message ? (message as StoredImapMessage).dateMs : undefined;
-  const snippet = (stored.snippet || stored.body).replace(/\s+/g, " ").trim().slice(0, 280);
+  const body = (stored.body || "").trim().slice(0, STORED_BODY_LIMIT);
+  const snippet = (stored.snippet || body).replace(/\s+/g, " ").trim().slice(0, 280);
   return {
     ...stored,
     dateMs: existingMs && existingMs > 0 ? existingMs : stored.dateMs,
     snippet,
-    body: "",
+    body,
     htmlBody: undefined,
   };
 }

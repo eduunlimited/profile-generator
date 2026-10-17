@@ -8,6 +8,7 @@ import {
   listImapAccounts,
   saveImapAccount,
   saveImapMail,
+  searchImapText,
   testImap,
 } from "../lib/api";
 import { formatError } from "../lib/errorUtils";
@@ -88,6 +89,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
   const [selectedAccountId, setSelectedAccountId] = useState<string>(ALL_MAIL_ID);
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  const [bodyMatchKeys, setBodyMatchKeys] = useState<Set<string>>(() => new Set());
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState<"load" | "fetch" | "sync" | "save" | "test" | "delete" | "more" | null>(null);
   const [exhaustedIds, setExhaustedIds] = useState<Record<string, boolean>>({});
@@ -213,6 +215,44 @@ export function MailPanel({ profiles }: MailPanelProps) {
   const visibleAccounts =
     selectedAccountId === ALL_MAIL_ID ? accounts : accounts.filter((account) => account.id === selectedAccountId);
 
+  useEffect(() => {
+    setBodyMatchKeys(new Set());
+    const needle = query.trim();
+    const targets =
+      selectedAccountId === ALL_MAIL_ID
+        ? accounts
+        : accounts.filter((account) => account.id === selectedAccountId);
+    if (needle.length < 3 || targets.length === 0) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void (async () => {
+        const keys = new Set<string>();
+        for (const account of targets) {
+          if (cancelled) return;
+          try {
+            const hits = await searchImapText(imapAccountToSettings(account), needle);
+            if (cancelled) return;
+            const storedHits = hits.map((message) => toStoredImapHeaders(message));
+            for (const message of storedHits) keys.add(`${account.id}:${message.uid}`);
+            if (storedHits.length > 0) {
+              setMailByAccount((current) => ({
+                ...current,
+                [account.id]: mergeStoredImapMessages(current[account.id] ?? [], storedHits),
+              }));
+            }
+          } catch {
+            // Stored subject and body text still filter locally.
+          }
+        }
+        if (!cancelled) setBodyMatchKeys(keys);
+      })();
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [accounts, query, selectedAccountId]);
+
   const rows = useMemo<MailRow[]>(() => {
     const next: MailRow[] = [];
     for (const account of visibleAccounts) {
@@ -234,6 +274,8 @@ export function MailPanel({ profiles }: MailPanelProps) {
     const needle = query.trim().toLowerCase();
     if (!needle) return rows;
     return rows.filter((row) => {
+      if (bodyMatchKeys.has(`${row.accountId}:${row.message.uid}`)) return true;
+      const html = (row.message.htmlBody ?? "").replace(/<[^>]+>/g, " ");
       const haystack = [
         row.message.subject,
         row.message.from,
@@ -242,6 +284,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
         row.message.to,
         row.message.snippet,
         row.message.body,
+        html,
         row.message.recipients.join(" "),
         row.accountLabel,
         row.code ?? "",
@@ -251,7 +294,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
         .toLowerCase();
       return haystack.includes(needle);
     });
-  }, [query, rows]);
+  }, [bodyMatchKeys, query, rows]);
 
   const activeRow = filteredRows.find((row) => `${row.accountId}:${row.message.uid}` === activeKey) ?? null;
   const activeOpened = activeRow
@@ -590,7 +633,7 @@ export function MailPanel({ profiles }: MailPanelProps) {
             <div className="accounts-table-toolbar">
               <input
                 className="table-search"
-                placeholder="Search mail"
+                placeholder="Search subject or email body"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
               />

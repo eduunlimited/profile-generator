@@ -122,6 +122,25 @@ async function fetchMessages(settings: ImapSettings, uids: number[]) {
   });
 }
 
+async function searchText(settings: ImapSettings, query: string) {
+  const needle = query.trim().slice(0, 200);
+  if (!needle) return [];
+  return withMailbox(settings, async (client) => {
+    const found = await client.search({ text: needle }, { uid: true });
+    const uids = [...(found ?? [])].sort((a, b) => a - b).slice(-200);
+    if (uids.length === 0) return [];
+    const messages: Record<string, unknown>[] = [];
+    for await (const item of client.fetch(
+      uids.join(","),
+      { uid: true, envelope: true },
+      { uid: true },
+    )) {
+      messages.push(toMessage(item.uid, item.envelope ?? null, undefined));
+    }
+    return messages;
+  });
+}
+
 async function searchHeaders(settings: ImapSettings, subjects: string[], minUid = 0) {
   const terms = [...new Set(subjects.map((value) => value.trim()).filter(Boolean))];
   if (terms.length === 0) return [];
@@ -153,6 +172,28 @@ export function imapDevPlugin(): Plugin {
   return {
     name: "local-imap",
     configureServer(server) {
+      server.middlewares.use("/__imap/text", (req, res, next) => {
+        if (req.method !== "POST") {
+          next();
+          return;
+        }
+        void (async () => {
+          try {
+            const payload = (await readJson(req)) as { settings?: ImapSettings; query?: string };
+            const messages = await searchText(payload.settings ?? {}, payload.query ?? "");
+            res.statusCode = 200;
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(JSON.stringify(messages));
+          } catch (error) {
+            const message = error instanceof Error && error.message.trim() ? error.message : "IMAP search failed.";
+            res.statusCode = 500;
+            res.setHeader("Content-Type", "application/json");
+            res.setHeader("Cache-Control", "no-store");
+            res.end(JSON.stringify({ error: message }));
+          }
+        })();
+      });
       server.middlewares.use("/__imap/headers", (req, res, next) => {
         if (req.method !== "POST") {
           next();

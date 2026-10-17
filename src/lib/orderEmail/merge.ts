@@ -10,6 +10,7 @@ import {
 } from "./classify";
 import { sortOrdersByPlaced } from "./dashboard";
 import { detectCarrier, isUsableTracking, preferTracking } from "./carrier";
+import { isForwardedSubject, orderMessageDate, stripForwardSubject } from "./forward";
 import {
   extractOrderItems,
   extractOrderTotal,
@@ -81,6 +82,12 @@ function preferEvent(current: OrderEvent, incoming: OrderEvent): OrderEvent {
   const kind = incomingRank >= currentRank ? incoming.kind : current.kind;
   const incomingSubject = incoming.subject.trim();
   const currentSubject = current.subject.trim();
+  const earlier =
+    incoming.dateMs > 0 && (current.dateMs <= 0 || incoming.dateMs < current.dateMs)
+      ? incoming
+      : current.dateMs > 0
+        ? current
+        : incoming;
   return {
     ...current,
     ...incoming,
@@ -88,8 +95,8 @@ function preferEvent(current: OrderEvent, incoming: OrderEvent): OrderEvent {
     uid: incoming.uid || current.uid,
     messageId: incoming.messageId?.trim() || current.messageId,
     subject: incomingSubject.length >= currentSubject.length ? incoming.subject : current.subject,
-    date: incoming.dateMs > 0 ? incoming.date : current.date,
-    dateMs: incoming.dateMs > 0 ? incoming.dateMs : current.dateMs,
+    date: earlier.date,
+    dateMs: earlier.dateMs,
   };
 }
 
@@ -100,6 +107,15 @@ function findIndexedEvent(index: Map<string, OrderEvent>, event: OrderEvent): Or
   }
   const fuzzyHit = index.get(`fuzzy:${fuzzyEventKey(event)}`);
   if (fuzzyHit) return fuzzyHit;
+  if (event.kind === "placed") {
+    const loose = index.get(`loose:${event.kind}:${stripForwardSubject(event.subject)}`);
+    if (
+      loose &&
+      (isForwardedSubject(event.subject) || isForwardedSubject(loose.subject))
+    ) {
+      return loose;
+    }
+  }
   const bucket = Number.isFinite(event.dateMs) ? Math.round(event.dateMs / 2000) : 0;
   for (const delta of [-1, 1]) {
     const neighbor = index.get(
@@ -113,6 +129,9 @@ function findIndexedEvent(index: Map<string, OrderEvent>, event: OrderEvent): Or
 function indexEvent(index: Map<string, OrderEvent>, event: OrderEvent): void {
   for (const key of eventAliasKeys(event)) index.set(key, event);
   index.set(`fuzzy:${fuzzyEventKey(event)}`, event);
+  if (event.kind === "placed") {
+    index.set(`loose:${event.kind}:${stripForwardSubject(event.subject)}`, event);
+  }
 }
 
 function unindexEvent(index: Map<string, OrderEvent>, event: OrderEvent): void {
@@ -121,6 +140,10 @@ function unindexEvent(index: Map<string, OrderEvent>, event: OrderEvent): void {
   }
   const fuzzy = `fuzzy:${fuzzyEventKey(event)}`;
   if (index.get(fuzzy) === event) index.delete(fuzzy);
+  if (event.kind === "placed") {
+    const loose = `loose:${event.kind}:${stripForwardSubject(event.subject)}`;
+    if (index.get(loose) === event) index.delete(loose);
+  }
 }
 
 function dedupeOrderEvents(events: OrderEvent[]): OrderEvent[] {
@@ -170,20 +193,14 @@ export function classifyStoredMessage(
       ? { ...pokemon, retailer: "pokemon-center" as const }
       : null;
   if (!classified) return null;
-  const parsed = Date.parse(message.date);
-  const dateMs =
-    Number.isFinite(message.dateMs) && (message.dateMs ?? 0) > 0
-      ? message.dateMs!
-      : Number.isFinite(parsed)
-        ? parsed
-        : 0;
+  const dated = orderMessageDate(message);
   return {
     retailer: classified.retailer,
     kind: classified.kind,
     orderId: canonicalizeOrderId(classified.orderId),
     accountId,
-    message,
-    dateMs,
+    message: { ...message, date: dated.date || message.date },
+    dateMs: dated.dateMs,
   };
 }
 
@@ -225,6 +242,15 @@ function groupFulfillment(group: ClassifiedOrderMessage[]): OrderFulfillment | u
     return "pickup";
   }
   return undefined;
+}
+
+function earliestPlacedAt(events: OrderEvent[], ...fallbacks: string[]): string {
+  const placed = events.filter((event) => event.kind === "placed" && event.dateMs > 0).map((event) => event.dateMs);
+  const fallback = fallbacks
+    .map((value) => Date.parse(value))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const ms = placed.length > 0 ? Math.min(...placed) : fallback.length > 0 ? Math.min(...fallback) : Date.now();
+  return new Date(ms).toISOString();
 }
 
 function withCanonicalIds(order: ParsedOrder): ParsedOrder {
@@ -288,7 +314,7 @@ function buildOrder(orderId: string, group: ClassifiedOrderMessage[]): ParsedOrd
   ];
   const shippingAddress = extractOrderShippingAddress(retailer, ...confirmationParts);
   const payment = retailer === "target" ? extractTargetOrderPayment(...confirmationParts) : undefined;
-  const placedAt = new Date(placed[0].dateMs || Date.parse(placed[0].message.date) || Date.now()).toISOString();
+  const placedAt = earliestPlacedAt(orderedEvents, placed[0].message.date);
   const updatedMs = Math.max(...orderedEvents.map((event) => event.dateMs), placed[0].dateMs);
   return finalizeParsedOrder({
     id: orderRecordId(retailer, orderId),
@@ -370,7 +396,7 @@ export function upsertParsedOrders(existing: ParsedOrder[], incoming: ParsedOrde
         payment: mergeOrderPayment(next.payment, previous.payment),
         cancelReason: next.cancelReason ?? previous.cancelReason,
         events: mergedEvents,
-        placedAt: previous.placedAt || next.placedAt,
+        placedAt: earliestPlacedAt(mergedEvents, previous.placedAt, next.placedAt),
         updatedAt: new Date(updatedMs || Date.now()).toISOString(),
       }),
     );

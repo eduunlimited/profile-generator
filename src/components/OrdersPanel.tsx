@@ -54,6 +54,7 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   delivered: "Delivered",
   picked_up: "Picked up",
   cancelled: "Cancelled",
+  manual_cancel: "Manual Cancel",
 };
 
 const EVENT_LABEL: Record<OrderEventKind, string> = {
@@ -63,6 +64,7 @@ const EVENT_LABEL: Record<OrderEventKind, string> = {
   delivered: "Delivered",
   picked_up: "Picked up",
   cancelled: "Cancelled",
+  manual_cancel: "Manual Cancel",
 };
 
 function formatTotal(order: ParsedOrder): string {

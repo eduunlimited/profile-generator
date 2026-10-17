@@ -27,9 +27,11 @@ const STATUS_RANK: Record<OrderStatus, number> = {
   delivered: 3,
   picked_up: 3,
   cancelled: 4,
+  manual_cancel: 5,
 };
 
 export function eventStatus(kind: ClassifiedOrderMessage["kind"]): OrderStatus {
+  if (kind === "manual_cancel") return "manual_cancel";
   if (kind === "cancelled") return "cancelled";
   if (kind === "picked_up") return "picked_up";
   if (kind === "delivered") return "delivered";

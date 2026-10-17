@@ -11,6 +11,8 @@ export const TARGET_SEARCH_SUBJECTS = [
   "on its way",
   "have arrived from order",
   "had to cancel order",
+  "successfully canceled",
+  "successfully cancelled",
   "Your order arrives",
   "was picked up",
   "order ending in",
@@ -99,6 +101,17 @@ export function classifyTargetSubject(subject: string): { kind: OrderEventKind; 
   return null;
 }
 
+export function extractTargetManualCancelLastFour(subject: string): string | undefined {
+  const match = subject
+    .trim()
+    .match(/successfully cancel+ed items from your order ending in\s*(\d{4})/i);
+  return match?.[1];
+}
+
+export function isTargetManualCancelSubject(subject: string): boolean {
+  return Boolean(extractTargetManualCancelLastFour(subject));
+}
+
 export function isTargetPickupSubject(subject: string): boolean {
   return Boolean(extractTargetPickupLastFour(subject));
 }
@@ -160,6 +173,12 @@ export function classifyTargetMessage(
 ): { kind: OrderEventKind; orderId: string } | null {
   const fromSubject = classifyTargetSubject(subject);
   if (fromSubject) return fromSubject;
+  const manualLastFour = extractTargetManualCancelLastFour(subject);
+  if (manualLastFour) {
+    const orderId = extractTargetOrderIdMatchingLastFour(manualLastFour, subject, ...parts);
+    if (!orderId) return null;
+    return { kind: "manual_cancel", orderId };
+  }
   const lastFour = extractTargetPickupLastFour(subject);
   if (!lastFour) return null;
   const orderId = extractTargetOrderIdMatchingLastFour(lastFour, subject, ...parts);

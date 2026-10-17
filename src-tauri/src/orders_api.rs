@@ -109,14 +109,14 @@ fn handle_client(app: &AppHandle, mut stream: TcpStream) -> std::io::Result<()> 
     if !status.is_empty()
         && !matches!(
             status,
-            "placed" | "shipped" | "delivered" | "picked_up" | "cancelled"
+            "placed" | "shipped" | "delivered" | "picked_up" | "cancelled" | "manual_cancel"
         )
     {
         return write_json(
             &mut stream,
             400,
             "Bad Request",
-            &json!({ "error": "status must be placed, shipped, delivered, picked_up, or cancelled." }),
+            &json!({ "error": "status must be placed, shipped, delivered, picked_up, cancelled, or manual_cancel." }),
         );
     }
     if !retailer.is_empty() && !matches!(retailer, "target" | "walmart" | "pokemon-center") {

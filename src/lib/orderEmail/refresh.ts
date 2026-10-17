@@ -14,7 +14,9 @@ import { foldStoredImapMessages, imapAccountToSettings, storedImapAliasKeys, toS
 import type { ImapAccount, ParsedOrder, StoredImapMessage } from "../types";
 import {
   classifyPokemonCenterMessage,
+  extractTargetManualCancelLastFour,
   extractTargetPickupLastFour,
+  isTargetManualCancelSubject,
   isTargetPickupSubject,
   isPokemonCenterOrderSubject,
   isTargetPickupConfirmationText,
@@ -121,6 +123,61 @@ function classifyPickupFromParts(
     },
     dateMs: classifiedDateMs(message),
   };
+}
+
+function classifyManualCancelFromParts(
+  account: ImapAccount,
+  message: StoredImapMessage,
+  knownOrderIds: Iterable<string>,
+  ...parts: string[]
+): ClassifiedOrderMessage | null {
+  const lastFour = extractTargetManualCancelLastFour(message.subject ?? "");
+  if (!lastFour) return null;
+  const orderId = resolveTargetOrderIdForLastFour(lastFour, knownOrderIds, message.subject ?? "", ...parts);
+  if (!orderId) return null;
+  return {
+    retailer: "target",
+    kind: "manual_cancel",
+    orderId,
+    accountId: account.id,
+    message: {
+      ...message,
+      snippet: message.snippet || `Order #: ${orderId}. You've successfully canceled items.`,
+    },
+    dateMs: classifiedDateMs(message),
+  };
+}
+
+async function rememberManualCancelSnippets(accountId: string, items: ClassifiedOrderMessage[]): Promise<void> {
+  if (items.length === 0) return;
+  const result = foldStoredImapMessages(await getImapMail(accountId));
+  let changed = false;
+  for (const item of items) {
+    const snippet = `Order #: ${item.orderId}. You've successfully canceled items.`;
+    const aliases = new Set(storedImapAliasKeys(item.message));
+    const existing = result.find((message) => storedImapAliasKeys(message).some((key) => aliases.has(key)));
+    if (!existing) {
+      result.push(
+        toStoredImapHeaders({
+          uid: item.message.uid,
+          messageId: item.message.messageId,
+          date: item.message.date,
+          subject: item.message.subject ?? "",
+          from: "",
+          to: "",
+          recipients: item.message.recipients ?? [],
+          snippet,
+          body: "",
+        }),
+      );
+      changed = true;
+      continue;
+    }
+    if (existing.snippet?.includes(`Order #: ${item.orderId}`)) continue;
+    result[result.indexOf(existing)] = { ...existing, snippet };
+    changed = true;
+  }
+  if (changed) await saveImapMail(accountId, foldStoredImapMessages(result));
 }
 
 async function rememberPickupSnippets(accountId: string, items: ClassifiedOrderMessage[]): Promise<void> {
@@ -323,6 +380,7 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
 
   const classified: ClassifiedOrderMessage[] = [];
   const pickupQueue: { account: ImapAccount; message: StoredImapMessage }[] = [];
+  const manualCancelQueue: { account: ImapAccount; message: StoredImapMessage }[] = [];
   const pokemonQueue: { account: ImapAccount; message: StoredImapMessage }[] = [];
   const loadedAccountIds = new Set<string>();
   const errors: string[] = [];
@@ -337,6 +395,8 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
         }
         if (isTargetPickupSubject(message.subject ?? "")) {
           pickupQueue.push({ account, message });
+        } else if (isTargetManualCancelSubject(message.subject ?? "")) {
+          manualCancelQueue.push({ account, message });
         } else if (isPokemonCenterOrderSubject(message.subject ?? "")) {
           pokemonQueue.push({ account, message });
         }
@@ -414,6 +474,71 @@ async function refreshTargetOrdersInner(): Promise<OrderRefreshResult> {
     } catch (error) {
       errors.push(formatError(error, "Could not read Target pickup emails."));
       await rememberPickupSnippets(account.id, already);
+    }
+  }
+  const manualCancelByAccount = new Map<string, { account: ImapAccount; messages: StoredImapMessage[] }>();
+  for (const pending of manualCancelQueue) {
+    const group = manualCancelByAccount.get(pending.account.id) ?? { account: pending.account, messages: [] };
+    group.messages.push(pending.message);
+    manualCancelByAccount.set(pending.account.id, group);
+  }
+  for (const { account, messages } of manualCancelByAccount.values()) {
+    const already: ClassifiedOrderMessage[] = [];
+    const needsFetch: StoredImapMessage[] = [];
+    for (const message of messages) {
+      const item = classifyManualCancelFromParts(
+        account,
+        message,
+        knownOrderIds,
+        message.snippet ?? "",
+        message.body ?? "",
+        message.htmlBody ?? "",
+      );
+      if (item) {
+        already.push(item);
+        knownOrderIds.add(item.orderId);
+      } else {
+        needsFetch.push(message);
+      }
+    }
+    classified.push(...already);
+    if (needsFetch.length === 0) {
+      await rememberManualCancelSnippets(account.id, already);
+      continue;
+    }
+    try {
+      const fetched = await fetchImapMessages(
+        imapAccountToSettings(account),
+        needsFetch.map((message) => message.uid),
+      );
+      const byUid = new Map(fetched.map((message) => [message.uid, message]));
+      const found: ClassifiedOrderMessage[] = [];
+      for (const message of needsFetch) {
+        const full = byUid.get(message.uid);
+        const item = classifyManualCancelFromParts(
+          account,
+          full ? { ...message, ...full, dateMs: classifiedDateMs(message) } : message,
+          knownOrderIds,
+          full?.subject ?? message.subject ?? "",
+          full?.snippet ?? "",
+          full?.body ?? "",
+          full?.htmlBody ?? "",
+        );
+        if (item) {
+          found.push(item);
+          knownOrderIds.add(item.orderId);
+        }
+      }
+      classified.push(...found);
+      await rememberManualCancelSnippets(account.id, [...already, ...found]);
+      if (found.length < needsFetch.length) {
+        errors.push(
+          `Found ${needsFetch.length} Target manual cancel email(s) but could not match ${needsFetch.length - found.length} to an order number.`,
+        );
+      }
+    } catch (error) {
+      errors.push(formatError(error, "Could not read Target manual cancel emails."));
+      await rememberManualCancelSnippets(account.id, already);
     }
   }
   const pokemonByAccount = new Map<string, { account: ImapAccount; messages: StoredImapMessage[] }>();

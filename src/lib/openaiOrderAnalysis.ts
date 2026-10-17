@@ -220,7 +220,11 @@ export function buildOrderAnalysisPayload(
   const fallbackCard = accountPaymentLabel(account) || card.name;
   const kindHay = [card.name, card.brand, fallbackCard, profile?.profileName, profile?.paymentLabel];
   const history = orders.filter(
-    (order) => order.retailer === account.retailer && orderEmailKey(order) === emailKey,
+    (order) =>
+      order.retailer === account.retailer &&
+      orderEmailKey(order) === emailKey &&
+      order.status !== "manual_cancel" &&
+      !order.events.some((event) => event.kind === "manual_cancel"),
   );
   const rows = history.map((order) => {
     const pickup = isWarmupOrder(order) || order.fulfillment === "pickup" || order.shippingAddress?.source === "pickup";

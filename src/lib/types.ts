@@ -559,8 +559,8 @@ export interface StoredImapMessage extends ImapMessage {
 }
 
 export type OrderRetailer = "target" | "walmart" | "pokemon-center";
-export type OrderStatus = "placed" | "shipped" | "delivered" | "picked_up" | "cancelled";
-export type OrderEventKind = "placed" | "shipped" | "in_transit" | "delivered" | "picked_up" | "cancelled";
+export type OrderStatus = "placed" | "shipped" | "delivered" | "picked_up" | "cancelled" | "manual_cancel";
+export type OrderEventKind = "placed" | "shipped" | "in_transit" | "delivered" | "picked_up" | "cancelled" | "manual_cancel";
 export type OrderFulfillment = "pickup" | "delivery";
 export type ShipmentCarrier = "fedex" | "ups" | "usps";
 

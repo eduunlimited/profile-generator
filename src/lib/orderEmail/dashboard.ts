@@ -84,16 +84,27 @@ export function orderPlacedMs(order: ParsedOrder): number {
   return placed?.dateMs && placed.dateMs > 0 ? placed.dateMs : Date.parse(order.updatedAt) || 0;
 }
 
+export function isManualCancelOrder(order: ParsedOrder): boolean {
+  return order.status === "manual_cancel" || order.events.some((event) => event.kind === "manual_cancel");
+}
+
 export function isCancelledOrder(order: ParsedOrder): boolean {
+  if (isManualCancelOrder(order)) return false;
   return order.status === "cancelled" || order.events.some((event) => event.kind === "cancelled");
 }
 
 export function isSuccessfulOrder(order: ParsedOrder): boolean {
-  return !isCancelledOrder(order);
+  return !isCancelledOrder(order) && !isManualCancelOrder(order);
 }
 
 export function isInTransitOrder(order: ParsedOrder): boolean {
-  if (isCancelledOrder(order) || order.fulfillment === "pickup" || order.status === "picked_up" || order.status === "delivered") {
+  if (
+    isManualCancelOrder(order) ||
+    isCancelledOrder(order) ||
+    order.fulfillment === "pickup" ||
+    order.status === "picked_up" ||
+    order.status === "delivered"
+  ) {
     return false;
   }
   if (order.status === "shipped") return true;
@@ -101,7 +112,7 @@ export function isInTransitOrder(order: ParsedOrder): boolean {
 }
 
 export function isNotShippedOrder(order: ParsedOrder): boolean {
-  return !isCancelledOrder(order) && order.status === "placed" && !isInTransitOrder(order);
+  return !isManualCancelOrder(order) && !isCancelledOrder(order) && order.status === "placed" && !isInTransitOrder(order);
 }
 
 export function orderInPeriod(order: ParsedOrder, period: SpendPeriod, now = new Date()): boolean {
@@ -127,6 +138,7 @@ export function summarizeOrders(orders: ParsedOrder[], period: SpendPeriod, now 
   let notShipped = 0;
   let spent = 0;
   for (const order of orders) {
+    if (isManualCancelOrder(order)) continue;
     if (isInTransitOrder(order)) inTransit += 1;
     if (!orderInPeriod(order, period, now)) continue;
     if (isCancelledOrder(order)) cancelled += 1;
@@ -153,6 +165,7 @@ export function orderEmailKey(order: ParsedOrder): string {
 export function summarizeOrdersByEmail(orders: ParsedOrder[]): EmailOrderSummary[] {
   const byEmail = new Map<string, EmailOrderSummary>();
   for (const order of orders) {
+    if (isManualCancelOrder(order)) continue;
     const email = orderEmailKey(order);
     const current = byEmail.get(email) ?? { email, cancelled: 0, successful: 0, total: 0 };
     current.total += 1;

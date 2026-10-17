@@ -33,7 +33,14 @@ function hasSeventeenTrackDelivered(order: ParsedOrder): boolean {
 
 function incomingTrackOrders(orders: ParsedOrder[]): ParsedOrder[] {
   return orders.filter((order) => {
-    if (isCancelledOrder(order) || order.fulfillment === "pickup" || order.status === "picked_up") return false;
+    if (
+      isCancelledOrder(order) ||
+      order.status === "manual_cancel" ||
+      order.fulfillment === "pickup" ||
+      order.status === "picked_up"
+    ) {
+      return false;
+    }
     if (!isUsableId(normalizeTracking(order.trackingNumber ?? ""))) return false;
     return isInTransitOrder(order) || hasSeventeenTrackDelivered(order);
   });

@@ -1310,6 +1310,7 @@ function normalizeParsedOrder(raw: Partial<ParsedOrder> & { id?: string }): Pars
     orderId,
     status:
       raw.status === "cancelled" ||
+      raw.status === "manual_cancel" ||
       raw.status === "delivered" ||
       raw.status === "picked_up" ||
       raw.status === "shipped"

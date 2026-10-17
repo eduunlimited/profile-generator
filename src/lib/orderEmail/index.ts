@@ -55,6 +55,7 @@ export {
   sortOrdersByPlaced,
   isSuccessfulOrder,
   isCancelledOrder,
+  isManualCancelOrder,
   isInTransitOrder,
   retailerLabel,
   siteFilterLabel,

@@ -3,6 +3,7 @@ import { parseCardNumberDigits } from "../creditCardUtils";
 import {
   filterOrdersBySite,
   isInTransitOrder,
+  isManualCancelOrder,
   isNotShippedOrder,
   isSuccessfulOrder,
   orderEmailKey,
@@ -122,6 +123,7 @@ export function orderCountsForProfile(
 
   const counts = emptyProfileOrderCounts();
   for (const order of orders) {
+    if (isManualCancelOrder(order)) continue;
     if (order.retailer !== retailer) continue;
     const email = orderEmailKey(order);
     if (email === UNKNOWN_ORDER_EMAIL || !emails.has(email)) continue;
@@ -232,7 +234,8 @@ export function summarizeAccountOrders(
   let warmup = 0;
   let delivered = 0;
   const orderValues: AccountOrderValue[] = [];
-  for (const order of orders) {
+  const counted = orders.filter((order) => !isManualCancelOrder(order));
+  for (const order of counted) {
     if (isSuccessfulOrder(order)) successful += 1;
     else cancelled += 1;
     if (isInTransitOrder(order)) inTransit += 1;
@@ -257,7 +260,7 @@ export function summarizeAccountOrders(
   return {
     email,
     retailer,
-    orders: orders.length,
+    orders: counted.length,
     successful,
     cancelled,
     inTransit,
@@ -270,7 +273,7 @@ export function summarizeAccountOrders(
     avgOrderValue: average(allTotals),
     avgSuccessValue: average(successTotals),
     avgCancelledValue: average(cancelledTotals),
-    successRate: rate(successful, orders.length),
+    successRate: rate(successful, counted.length),
     dollarSuccessRate: rate(successTotal, successTotal + cancelledTotal),
     profiles,
     orderValues,
@@ -283,7 +286,7 @@ export function summarizeOrderAccounts(
   poolEmails: PoolEmail[],
   retailer: OrderRetailer,
 ): AccountPerformance[] {
-  const siteOrders = filterOrdersBySite(orders, retailer);
+  const siteOrders = filterOrdersBySite(orders, retailer).filter((order) => !isManualCancelOrder(order));
   const grouped = new Map<string, ParsedOrder[]>();
   for (const order of siteOrders) {
     const email = orderEmailKey(order);
@@ -368,6 +371,7 @@ export function summarizeSitePerformance(orders: ParsedOrder[]) {
   let successTotal = 0;
   let cancelledTotal = 0;
   for (const order of orders) {
+    if (isManualCancelOrder(order)) continue;
     if (isSuccessfulOrder(order)) {
       successful += 1;
       if (order.total != null) successTotal += order.total;
@@ -421,6 +425,7 @@ export function summarizeWeeklyPerformance(
   const rangeStart = thisWeek.getTime() - (count - 1) * 7 * 24 * 60 * 60 * 1000;
   const rangeEnd = thisWeek.getTime() + 7 * 24 * 60 * 60 * 1000;
   for (const order of orders) {
+    if (isManualCancelOrder(order)) continue;
     const placed = orderPlacedMs(order);
     if (!Number.isFinite(placed) || placed <= 0 || placed < rangeStart || placed >= rangeEnd) continue;
     const weekStart = startOfLocalWeek(new Date(placed)).getTime();
@@ -506,7 +511,9 @@ export function lastOrdersForEmail(
   limit = LAST_ORDERS_PER_EMAIL,
 ): ParsedOrder[] {
   return sortOrdersByPlaced(
-    orders.filter((order) => order.retailer === retailer && orderEmailKey(order) === email),
+    orders.filter(
+      (order) => order.retailer === retailer && orderEmailKey(order) === email && !isManualCancelOrder(order),
+    ),
   )
     .slice(0, limit)
     .reverse();

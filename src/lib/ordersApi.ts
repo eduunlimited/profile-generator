@@ -3,7 +3,7 @@
 export const ORDERS_API_PORT = 47321;
 export const ORDERS_API_BASE = `http://127.0.0.1:${ORDERS_API_PORT}`;
 
-const ORDER_STATUSES = new Set(["placed", "shipped", "delivered", "picked_up", "cancelled"]);
+const ORDER_STATUSES = new Set(["placed", "shipped", "delivered", "picked_up", "cancelled", "manual_cancel"]);
 const ORDER_RETAILERS = new Set(["target", "walmart", "pokemon-center"]);
 
 export interface OrdersApiSettings {
@@ -71,7 +71,7 @@ export function parseOrdersApiQuery(
   const retailer = params.get("retailer")?.trim() || undefined;
   const since = params.get("since")?.trim() || undefined;
   if (status && !ORDER_STATUSES.has(status)) {
-    return { error: "status must be placed, shipped, delivered, picked_up, or cancelled." };
+    return { error: "status must be placed, shipped, delivered, picked_up, cancelled, or manual_cancel." };
   }
   if (retailer && !ORDER_RETAILERS.has(retailer)) {
     return { error: "retailer must be target, walmart, or pokemon-center." };

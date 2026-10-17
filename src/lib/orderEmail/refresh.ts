@@ -11,7 +11,7 @@ import {
 import { formatError } from "../errorUtils";
 import { isForwardedSubject, orderMessageDate, originalForwardDateMs } from "./forward";
 import { foldStoredImapMessages, imapAccountToSettings, storedImapAliasKeys, toStoredImapHeaders } from "../imapInbox";
-import type { ImapAccount, ParsedOrder, StoredImapMessage } from "../types";
+import type { ImapAccount, ImapMessage, OrderEvent, ParsedOrder, StoredImapMessage } from "../types";
 import {
   classifyPokemonCenterMessage,
   extractTargetManualCancelLastFour,
@@ -110,10 +110,7 @@ function forwardNeedsBody(message: StoredImapMessage): boolean {
   );
 }
 
-async function rememberPlainBodies(
-  accountId: string,
-  messages: { uid: number; body?: string; snippet?: string }[],
-): Promise<void> {
+async function rememberPlainBodies(accountId: string, messages: ImapMessage[]): Promise<void> {
   const useful = messages.filter((message) => message.body?.trim());
   if (useful.length === 0) return;
   const stored = await getImapMail(accountId);
@@ -123,28 +120,108 @@ async function rememberPlainBodies(
     const full = byUid.get(message.uid);
     if (!full?.body?.trim() || message.body?.trim()) return message;
     changed = true;
+    byUid.delete(message.uid);
     return {
       ...message,
       body: full.body,
       snippet: message.snippet?.trim() || full.snippet || message.snippet,
     };
   });
+  for (const full of byUid.values()) {
+    if (stored.some((message) => message.uid === full.uid)) continue;
+    next.push(
+      toStoredImapHeaders({
+        ...full,
+        from: full.from ?? "",
+        to: full.to ?? "",
+        recipients: full.recipients ?? [],
+        subject: full.subject ?? "",
+        snippet: full.snippet ?? "",
+        body: full.body ?? "",
+        date: full.date ?? "",
+      }),
+    );
+    changed = true;
+  }
   if (changed) await saveImapMail(accountId, next);
 }
 
 function applyForwardedEventDate(order: ParsedOrder, uid: number, subject: string, ...parts: string[]): void {
   const original = originalForwardDateMs(subject, ...parts);
   if (!original) return;
+  applyOriginalEventDate(order, uid, original);
+}
+
+function applyOriginalEventDate(order: ParsedOrder, uid: number, original: number): boolean {
   let changed = false;
   order.events = order.events.map((event) => {
-    if (event.uid !== uid || (event.dateMs > 0 && original >= event.dateMs)) return event;
+    if (event.uid !== uid || (event.dateMs > 0 && original + 60_000 >= event.dateMs)) return event;
     changed = true;
     return { ...event, date: new Date(original).toISOString(), dateMs: original };
   });
-  if (!changed) return;
+  if (!changed) return false;
   const placed = order.events.filter((event) => event.kind === "placed" && event.dateMs > 0);
   if (placed.length > 0) {
     order.placedAt = new Date(Math.min(...placed.map((event) => event.dateMs))).toISOString();
+  }
+  return true;
+}
+
+function cachedForwardParts(message: StoredImapMessage | undefined): string[] {
+  if (!message) return [];
+  return [message.subject ?? "", message.snippet ?? "", message.body ?? "", message.htmlBody ?? ""];
+}
+
+/** Rewrite saved forward events from the original send time. Same order number stays one order. */
+async function reconcileForwardedOrders(account: ImapAccount, orders: ParsedOrder[]): Promise<void> {
+  const targets: { order: ParsedOrder; event: OrderEvent }[] = [];
+  for (const order of orders) {
+    for (const event of order.events) {
+      if (event.accountId !== account.id || !event.uid || !isForwardedSubject(event.subject)) continue;
+      targets.push({ order, event });
+    }
+  }
+  if (targets.length === 0) return;
+  const storedByUid = new Map((await getImapMail(account.id)).map((message) => [message.uid, message]));
+  const partsByUid = new Map<number, string[]>();
+  const pending = new Set<number>();
+  for (const target of targets) {
+    const cached = storedByUid.get(target.event.uid);
+    const parts = cachedForwardParts(cached);
+    const cachedOriginal = originalForwardDateMs(target.event.subject, ...parts);
+    if (cachedOriginal) {
+      partsByUid.set(target.event.uid, parts);
+      continue;
+    }
+    const wrapperMs = cached?.dateMs && cached.dateMs > 0 ? cached.dateMs : 0;
+    if (wrapperMs > 0 && target.event.dateMs > 0 && target.event.dateMs + 60_000 < wrapperMs) continue;
+    pending.add(target.event.uid);
+  }
+  if (pending.size > 0) {
+    const fetched = await fetchImapMessages(imapAccountToSettings(account), [...pending]);
+    await rememberPlainBodies(account.id, fetched);
+    for (const message of fetched) {
+      partsByUid.set(message.uid, [
+        message.subject ?? "",
+        message.snippet ?? "",
+        message.body ?? "",
+        message.htmlBody ?? "",
+      ]);
+    }
+  }
+  const touched = new Set<ParsedOrder>();
+  for (const target of targets) {
+    const parts = partsByUid.get(target.event.uid);
+    if (!parts) continue;
+    const original = originalForwardDateMs(target.event.subject, ...parts);
+    if (!original) continue;
+    if (applyOriginalEventDate(target.order, target.event.uid, original)) touched.add(target.order);
+  }
+  for (const order of touched) {
+    const next = finalizeParsedOrder(order);
+    order.events = next.events;
+    order.status = next.status;
+    order.fulfillment = next.fulfillment;
   }
 }
 
@@ -265,6 +342,10 @@ function classifyPokemonCenterFromParts(
 ): ClassifiedOrderMessage | null {
   const classified = classifyPokemonCenterMessage(message.subject ?? "", ...parts);
   if (!classified) return null;
+  const dated = orderMessageDate({
+    ...message,
+    body: [message.body, ...parts].filter(Boolean).join("\n"),
+  });
   return {
     retailer: "pokemon-center",
     kind: classified.kind,
@@ -272,11 +353,12 @@ function classifyPokemonCenterFromParts(
     accountId: account.id,
     message: {
       ...message,
+      date: dated.date || message.date,
       body: parts.find((part) => part && !/<[a-z][\s\S]*>/i.test(part)) ?? message.body,
       htmlBody: parts.find((part) => /<[a-z][\s\S]*>/i.test(part)) ?? message.htmlBody,
       snippet: message.snippet || `Order Number: ${classified.orderId}`,
     },
-    dateMs: classifiedDateMs(message),
+    dateMs: dated.dateMs,
   };
 }
 
@@ -679,7 +761,7 @@ async function refreshTargetOrdersInner(onStatus?: (message: string) => void): P
         const full = byUid.get(message.uid);
         const item = classifyPokemonCenterFromParts(
           account,
-          full ? { ...message, ...full, dateMs: classifiedDateMs(message) } : message,
+          full ? { ...message, ...full } : message,
           full?.subject ?? message.subject ?? "",
           full?.snippet ?? "",
           full?.body ?? "",
@@ -725,12 +807,17 @@ async function refreshTargetOrdersInner(onStatus?: (message: string) => void): P
   for (const account of accounts) {
     if (!loadedAccountIds.has(account.id)) continue;
     try {
-      await fillOrderBodies(account, scanned);
+      await fillOrderBodies(account, orders);
     } catch (error) {
       errors.push(formatError(error, "Could not load order email bodies."));
     }
+    try {
+      await reconcileForwardedOrders(account, orders);
+    } catch (error) {
+      errors.push(formatError(error, "Could not read the original date from forwarded order emails."));
+    }
   }
-  orders = await withoutDismissedOrders(await persistOrders(scanned));
+  orders = await withoutDismissedOrders(await saveOrders(orders));
   const status = errors.length
     ? `Saved ${orders.length} order(s) with a confirmation. ${errors.join(" ")}`
     : scanned.length === 0

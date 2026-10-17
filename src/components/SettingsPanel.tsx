@@ -3,20 +3,13 @@ import {
   getGeocodioSettings,
   getOpenAiSettings,
   getOrdersApiSettings,
-  getPokemonTrackerPushSettings,
   saveGeocodioSettings,
   saveOpenAiSettings,
   saveOrdersApiSettings,
-  savePokemonTrackerPushSettings,
   testGeocodioConnection,
   testOpenAiConnection,
 } from "../lib/api";
 import { createOrdersApiToken, ORDERS_API_BASE } from "../lib/ordersApi";
-import {
-  POKEMON_TRACKER_ORDERS_URL,
-  pushCurrentOrdersToPokemonTracker,
-  pushOrdersToPokemonTracker,
-} from "../lib/pokemonTrackerPush";
 import { exportAppBackupFile, importAppBackupFile, type AppBackupSummary } from "../lib/appBackup";
 import { checkForAppUpdates, isAppUpdateCheckAvailable } from "../lib/appUpdates";
 import { formatError } from "../lib/errorUtils";
@@ -44,24 +37,17 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
   const [ordersApiToken, setOrdersApiToken] = useState("");
   const [ordersApiBusy, setOrdersApiBusy] = useState(false);
   const [ordersApiStatus, setOrdersApiStatus] = useState<KeyStatus>(null);
-  const [trackerUrl, setTrackerUrl] = useState(POKEMON_TRACKER_ORDERS_URL);
-  const [trackerToken, setTrackerToken] = useState("");
-  const [trackerBusy, setTrackerBusy] = useState(false);
-  const [trackerStatus, setTrackerStatus] = useState<KeyStatus>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       try {
-        const [geocodio, openai, ordersApi, tracker] = await Promise.all([
+        const [geocodio, openai, ordersApi] = await Promise.all([
           getGeocodioSettings(),
           getOpenAiSettings(),
           getOrdersApiSettings(),
-          getPokemonTrackerPushSettings(),
         ]);
         if (cancelled) return;
-        setTrackerUrl(tracker.url || POKEMON_TRACKER_ORDERS_URL);
-        setTrackerToken(tracker.token);
         setGeocodioKey(geocodio.apiKey);
         setOpenAiKey(openai.apiKey);
         cacheOpenAiApiKey(openai.apiKey);
@@ -137,50 +123,6 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
       setOrdersApiStatus({ tone: "error", text: formatError(error, "Could not save the Orders API.") });
     } finally {
       setOrdersApiBusy(false);
-    }
-  };
-
-  const trackerSettings = () => ({ url: trackerUrl.trim(), token: trackerToken.trim() });
-
-  const saveTracker = async () => {
-    setTrackerBusy(true);
-    try {
-      await savePokemonTrackerPushSettings(trackerSettings());
-      setTrackerStatus({ tone: "ok", text: "Pokemon Tracker settings saved." });
-    } catch (error) {
-      setTrackerStatus({ tone: "error", text: formatError(error, "Could not save Pokemon Tracker settings.") });
-    } finally {
-      setTrackerBusy(false);
-    }
-  };
-
-  const testTracker = async () => {
-    setTrackerBusy(true);
-    setTrackerStatus({ tone: "ok", text: "Testing…" });
-    try {
-      const settings = trackerSettings();
-      await savePokemonTrackerPushSettings(settings);
-      const result = await pushOrdersToPokemonTracker([], settings, true);
-      setTrackerStatus({ tone: result.skipped ? "error" : "ok", text: result.message });
-    } catch (error) {
-      setTrackerStatus({ tone: "error", text: formatError(error, "Pokemon Tracker test failed.") });
-    } finally {
-      setTrackerBusy(false);
-    }
-  };
-
-  const pushTracker = async () => {
-    setTrackerBusy(true);
-    setTrackerStatus({ tone: "ok", text: "Sending orders…" });
-    try {
-      const settings = trackerSettings();
-      await savePokemonTrackerPushSettings(settings);
-      const result = await pushCurrentOrdersToPokemonTracker(settings);
-      setTrackerStatus({ tone: result.skipped ? "error" : "ok", text: result.message });
-    } catch (error) {
-      setTrackerStatus({ tone: "error", text: formatError(error, "Could not send orders.") });
-    } finally {
-      setTrackerBusy(false);
     }
   };
 
@@ -429,52 +371,6 @@ export function SettingsPanel({ onGeocodioConfiguredChange }: SettingsPanelProps
         </div>
         {ordersApiStatus ? (
           <p className={ordersApiStatus.tone === "error" ? "is-error" : "muted"}>{ordersApiStatus.text}</p>
-        ) : null}
-      </section>
-
-      <section className="card settings-card">
-        <div className="card-header">
-          <h2>Pokemon Tracker</h2>
-        </div>
-        <p className="muted">
-          Sends the current orders each time they refresh, about once an hour, while this app is open. Use the
-          same API key saved in Pokemon Tracker. Canceled and deleted orders are removed there. The same order
-          updates one expense.
-        </p>
-        <div className="form-grid">
-          <Field label="Tracker address" className="form-grid-span">
-            <input
-              type="url"
-              value={trackerUrl}
-              onChange={(event) => setTrackerUrl(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-            />
-          </Field>
-          <Field label="API key" className="form-grid-span">
-            <input
-              type="password"
-              value={trackerToken}
-              onChange={(event) => setTrackerToken(event.target.value)}
-              autoComplete="off"
-              spellCheck={false}
-              placeholder="Same key saved in Pokemon Tracker settings"
-            />
-          </Field>
-        </div>
-        <div className="button-row">
-          <button type="button" className="btn-secondary" disabled={trackerBusy} onClick={() => void testTracker()}>
-            Test
-          </button>
-          <button type="button" className="btn-secondary" disabled={trackerBusy} onClick={() => void pushTracker()}>
-            {trackerBusy ? "Working…" : "Push now"}
-          </button>
-          <button type="button" className="btn-primary" disabled={trackerBusy} onClick={() => void saveTracker()}>
-            Save
-          </button>
-        </div>
-        {trackerStatus ? (
-          <p className={trackerStatus.tone === "error" ? "is-error" : "muted"}>{trackerStatus.text}</p>
         ) : null}
       </section>
 

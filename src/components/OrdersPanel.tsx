@@ -16,6 +16,7 @@ import {
   ORDER_SITES,
   orderEmailKey,
   orderInPeriod,
+  orderPlacedMs,
   orderTableItem,
   orderCardSearchText,
   PARSED_ORDER_SITES,
@@ -79,8 +80,7 @@ function formatWhen(value: string, dateMs?: number): string {
 }
 
 function formatPlaced(order: ParsedOrder): string {
-  const placed = order.events.find((event) => event.kind === "placed");
-  return formatWhen(order.placedAt, placed?.dateMs);
+  return formatWhen(order.placedAt, orderPlacedMs(order));
 }
 
 function orderItems(order: ParsedOrder): OrderLineItem[] {

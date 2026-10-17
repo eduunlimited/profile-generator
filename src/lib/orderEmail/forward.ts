@@ -3,6 +3,7 @@ import { emailPlainText } from "./parse";
 const FORWARD_SUBJECT = /^(?:fwd|fw)\s*:/i;
 const FORWARD_PREFIX = /^(?:(?:fwd|fw|re)\s*:\s*)+/i;
 const FORWARD_MARKER = /forwarded message|begin forwarded message|original message/i;
+const CONFIRMATION_SUBJECT = /thank you for shopping|here['\u2019]s your order/i;
 
 export function isForwardedSubject(subject: string): boolean {
   return FORWARD_SUBJECT.test(subject.trim());
@@ -19,13 +20,22 @@ export function hasForwardMarker(subject: string, ...parts: string[]): boolean {
 
 export function parseLooseEmailDate(value: string): number | undefined {
   const cleaned = value
+    .replace(/[\u202f\u00a0\u2007\u2009]/g, " ")
     .replace(/\s+at\s+/gi, " ")
     .replace(/\s*\([^)]*\)\s*$/, "")
     .trim();
-  const parsed = Date.parse(cleaned);
-  if (!Number.isFinite(parsed)) return undefined;
-  if (parsed < Date.UTC(2015, 0, 1) || parsed > Date.now() + 36 * 60 * 60 * 1000) return undefined;
-  return parsed;
+  const attempts = [
+    cleaned,
+    cleaned.replace(/\s+(?:eastern|central|mountain|pacific|hawaii|alaska)(?:\s+(?:daylight|standard))?\s+time$/i, ""),
+    cleaned.replace(/\s+[A-Z]{2,5}$/, ""),
+  ];
+  for (const attempt of attempts) {
+    const parsed = Date.parse(attempt);
+    if (!Number.isFinite(parsed)) continue;
+    if (parsed < Date.UTC(2015, 0, 1) || parsed > Date.now() + 36 * 60 * 60 * 1000) continue;
+    return parsed;
+  }
+  return undefined;
 }
 
 /** Earliest Date/Sent line inside a forwarded message, which is the original send time. */
@@ -37,8 +47,10 @@ export function originalForwardDateMs(subject: string, ...parts: string[]): numb
     const parsed = parseLooseEmailDate(match[1] ?? "");
     if (parsed) dates.push(parsed);
   }
-  if (dates.length === 0) return undefined;
-  return Math.min(...dates);
+  if (dates.length > 0) return Math.min(...dates);
+  if (!CONFIRMATION_SUBJECT.test(subject) && !CONFIRMATION_SUBJECT.test(text.slice(0, 600))) return undefined;
+  const orderDate = text.match(/\border\s*date\s*[:\-]?\s*([^\n\r]{6,80})/i);
+  return orderDate ? parseLooseEmailDate(orderDate[1] ?? "") : undefined;
 }
 
 export function orderMessageDate(message: {

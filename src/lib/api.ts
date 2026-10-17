@@ -527,16 +527,6 @@ export async function getOrdersApiSettings() {
   return browserStorage.getOrdersApiSettings();
 }
 
-export async function getPokemonTrackerPushSettings() {
-  return browserStorage.getPokemonTrackerPushSettings();
-}
-
-export async function savePokemonTrackerPushSettings(
-  settings: import("./pokemonTrackerPush").PokemonTrackerPushSettings,
-) {
-  return browserStorage.savePokemonTrackerPushSettings(settings);
-}
-
 export async function saveOrdersApiSettings(settings: import("./ordersApi").OrdersApiSettings) {
   return browserStorage.saveOrdersApiSettings(settings);
 }

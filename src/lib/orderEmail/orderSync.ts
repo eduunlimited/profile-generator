@@ -13,7 +13,6 @@ export function syncedOrders(): ParsedOrder[] | null {
 export function publishSyncedOrders(orders: ParsedOrder[]): void {
   current = orders;
   for (const listener of listeners) listener(orders);
-  void import("../pokemonTrackerPush").then((mod) => mod.schedulePokemonTrackerPush(orders));
 }
 
 export function subscribeSyncedOrders(listener: OrdersListener): () => void {

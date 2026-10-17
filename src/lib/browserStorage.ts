@@ -36,6 +36,7 @@ import {
   readCachedMap,
   removeLegacyStorageKey,
   writeCachedMap,
+  writePackagedDataFile,
 } from "./localDataStore";
 import type {
   AccountCategory,
@@ -1455,6 +1456,12 @@ export async function saveOrdersApiSettings(settings: import("./ordersApi").Orde
     token: settings.token.trim(),
   });
   await persistMap();
+  await writePackagedDataFile(KEYS.ordersApi);
+}
+
+export async function publishOrdersApiSettings(): Promise<void> {
+  await ensureDataKey(KEYS.ordersApi);
+  await writePackagedDataFile(KEYS.ordersApi);
 }
 
 function analysisStorageKey(site: string, email: string): string {

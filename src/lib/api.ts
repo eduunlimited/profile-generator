@@ -514,6 +514,10 @@ export async function saveOrdersApiSettings(settings: import("./ordersApi").Orde
   return browserStorage.saveOrdersApiSettings(settings);
 }
 
+export async function publishOrdersApiSettings() {
+  return browserStorage.publishOrdersApiSettings();
+}
+
 export async function testOpenAiConnection(apiKey: string) {
   return import("./openaiMisspell").then((mod) => mod.testOpenAiConnection(apiKey));
 }

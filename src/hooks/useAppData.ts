@@ -49,6 +49,7 @@ import {
   seedDefaults,
   getGeocodioSettings,
   getOpenAiSettings,
+  publishOrdersApiSettings,
 } from "../lib/api";
 import { formatError } from "../lib/errorUtils";
 import { cacheOpenAiApiKey } from "../lib/openaiMisspell";
@@ -196,6 +197,9 @@ export function useAppData() {
     setError(null);
     try {
       await initLocalDataStore();
+      await publishOrdersApiSettings().catch((publishError) => {
+        console.error("Could not publish Orders API settings.", publishError);
+      });
       try {
         await seedDefaults(BUILTIN_JIG_PRESETS, BUILTIN_EXPORT_TEMPLATES);
       } catch (seedError) {

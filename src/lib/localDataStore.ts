@@ -329,6 +329,15 @@ export async function flushLocalDataWrites(): Promise<void> {
   await Promise.all([...persistChain.values()].map((pending) => pending.catch(() => undefined)));
 }
 
+/** Packaged builds keep non-secret settings in the webview. The orders API reads the app data file. */
+export async function writePackagedDataFile(key: string): Promise<void> {
+  if (!isTauriRuntime() || usesProjectDataFiles()) return;
+  const fileName = STORAGE_KEY_TO_FILE[key];
+  if (!fileName) return;
+  const value = cache.get(key) ?? readLocalStorageMap(key);
+  await writeAppDataStore(fileName, value);
+}
+
 export function removeLegacyStorageKey(key: string): void {
   localStorage.removeItem(key);
 }

@@ -1379,6 +1379,11 @@ function writeOrderMap(orders: ParsedOrder[]): void {
   writeMap(KEYS.orders, map);
 }
 
+async function publishOrderFiles(): Promise<void> {
+  await writePackagedDataFile(KEYS.orders);
+  await writePackagedDataFile(KEYS.dismissedOrders);
+}
+
 export async function listOrders(): Promise<ParsedOrder[]> {
   await ensureDataKey(KEYS.orders);
   await ensureDataKey(KEYS.dismissedOrders);
@@ -1398,6 +1403,7 @@ export async function saveOrders(orders: ParsedOrder[]): Promise<ParsedOrder[]> 
   );
   writeOrderMap(folded);
   await persistMap();
+  await publishOrderFiles();
   return omitDismissedOrders(
     Object.values(readMap<ParsedOrder>(KEYS.orders)).filter((order): order is ParsedOrder => order != null),
   );
@@ -1417,6 +1423,7 @@ export async function deletePlacedOrder(id: string): Promise<ParsedOrder[]> {
   const next = current.filter((order) => order.id !== target.id);
   writeOrderMap(next);
   await persistMap();
+  await publishOrderFiles();
   return next;
 }
 
@@ -1462,7 +1469,10 @@ export async function saveOrdersApiSettings(settings: import("./ordersApi").Orde
 
 export async function publishOrdersApiSettings(): Promise<void> {
   await ensureDataKey(KEYS.ordersApi);
+  await ensureDataKey(KEYS.orders);
+  await ensureDataKey(KEYS.dismissedOrders);
   await writePackagedDataFile(KEYS.ordersApi);
+  await publishOrderFiles();
 }
 
 function analysisStorageKey(site: string, email: string): string {

@@ -27,6 +27,7 @@ import {
   PROFILE_UNGROUPED_GROUP_ID,
 } from "./profileGroupUtils";
 import { foldStoredImapMessages, STORED_BODY_LIMIT, toStoredImapHeaders } from "./imapInbox";
+import { detectCarrier, isUsableTracking, normalizeTracking } from "./orderEmail/carrier";
 import { canonicalizeOrderId, orderRecordId } from "./orderEmail/classify";
 import { finalizeParsedOrder, upsertParsedOrders } from "./orderEmail/merge";
 import { repairUtf8Mojibake } from "./orderEmail/parse";
@@ -56,6 +57,7 @@ import type {
   StoredImapMessage,
   OrderAddress,
   OrderAnalysisRecord,
+  OrderEvent,
   OrderPayment,
   OrderRetailer,
   ParsedOrder,
@@ -1409,6 +1411,68 @@ export async function saveOrders(orders: ParsedOrder[]): Promise<ParsedOrder[]> 
   return omitDismissedOrders(
     Object.values(readMap<ParsedOrder>(KEYS.orders)).filter((order): order is ParsedOrder => order != null),
   );
+}
+
+const MANUAL_SHIPMENT_STATUSES = ["shipped", "delivered", "picked_up"] as const;
+type ManualShipmentStatus = (typeof MANUAL_SHIPMENT_STATUSES)[number];
+
+function manualStatusUid(orderId: string): number {
+  let hash = 0;
+  for (const char of orderId) hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  return 1_610_000_000 + (hash % 80_000_000);
+}
+
+function manualStatusMessageId(orderId: string): string {
+  return `manual:status:${orderId}`;
+}
+
+export async function updateOrderShipment(
+  id: string,
+  patch: { status: ManualShipmentStatus; trackingNumber?: string },
+): Promise<ParsedOrder[]> {
+  await ensureDataKey(KEYS.orders);
+  await ensureDataKey(KEYS.dismissedOrders);
+  const current = await listOrders();
+  const target = current.find((order) => order.id === id);
+  if (!target) throw new Error("That order is no longer recorded.");
+  if (target.status === "cancelled" || target.status === "manual_cancel") {
+    throw new Error("Cancelled orders stay unchanged.");
+  }
+  if (!MANUAL_SHIPMENT_STATUSES.includes(patch.status)) {
+    throw new Error("Choose Shipped, Delivered, or Picked up.");
+  }
+  const typed = (patch.trackingNumber ?? "").trim();
+  const tracking = typed ? normalizeTracking(typed) : "";
+  if (typed && !isUsableTracking(tracking)) {
+    throw new Error("Enter a full tracking number, or leave tracking blank.");
+  }
+  const now = new Date();
+  const accountId = target.events.find((event) => event.accountId)?.accountId || "manual";
+  const label =
+    patch.status === "picked_up" ? "Marked picked up" : patch.status === "delivered" ? "Marked delivered" : "Marked shipped";
+  const manualEvent: OrderEvent = {
+    kind: patch.status,
+    accountId,
+    uid: manualStatusUid(target.id),
+    messageId: manualStatusMessageId(target.id),
+    subject: label,
+    date: now.toISOString(),
+    dateMs: now.getTime(),
+  };
+  const trackingNumber = tracking || target.trackingNumber;
+  const nextOrder = finalizeParsedOrder({
+    ...target,
+    trackingNumber,
+    carrier: detectCarrier(trackingNumber) ?? target.carrier,
+    fulfillment: patch.status === "picked_up" ? "pickup" : target.fulfillment === "pickup" ? "pickup" : "delivery",
+    events: [...target.events.filter((event) => event.messageId !== manualEvent.messageId), manualEvent],
+    updatedAt: now.toISOString(),
+  });
+  const next = current.map((order) => (order.id === target.id ? nextOrder : order));
+  writeOrderMap(next);
+  await persistMap();
+  await publishOrderFiles();
+  return omitDismissedOrders(await listOrders());
 }
 
 export async function deletePlacedOrder(id: string): Promise<ParsedOrder[]> {

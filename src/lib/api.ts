@@ -495,6 +495,13 @@ export async function deletePlacedOrder(id: string) {
   return browserStorage.deletePlacedOrder(id);
 }
 
+export async function updateOrderShipment(
+  id: string,
+  patch: { status: "shipped" | "delivered" | "picked_up"; trackingNumber?: string },
+) {
+  return browserStorage.updateOrderShipment(id, patch);
+}
+
 export async function withoutDismissedOrders(orders: import("./types").ParsedOrder[]) {
   return browserStorage.withoutDismissedOrders(orders);
 }

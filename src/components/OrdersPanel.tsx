@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { deletePlacedOrder, listOrders, withoutDismissedOrders } from "../lib/api";
+import { deletePlacedOrder, listOrders, updateOrderShipment, withoutDismissedOrders } from "../lib/api";
 import { formatError } from "../lib/errorUtils";
 import { ensureDataKey, releaseDataKey } from "../lib/localDataStore";
 import {
@@ -57,6 +57,8 @@ const STATUS_LABEL: Record<OrderStatus, string> = {
   cancelled: "Cancelled",
   manual_cancel: "Manual Cancel",
 };
+
+type ManualShipmentStatus = "shipped" | "delivered" | "picked_up";
 
 const EVENT_LABEL: Record<OrderEventKind, string> = {
   placed: "Placed",
@@ -151,6 +153,9 @@ export function OrdersPanel({
   const [activeId, setActiveId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [savingShipment, setSavingShipment] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<ManualShipmentStatus>("shipped");
+  const [draftTracking, setDraftTracking] = useState("");
   const [status, setStatus] = useState("Checking new mail…");
   const [tone, setTone] = useState<"ok" | "error">("ok");
   const [mailChecked, setMailChecked] = useState(false);
@@ -169,6 +174,18 @@ export function OrdersPanel({
     }
     return visible;
   };
+
+  useEffect(() => {
+    if (!activeId) return;
+    const order = orders.find((item) => item.id === activeId);
+    if (!order) return;
+    setDraftStatus(
+      order.status === "delivered" || order.status === "picked_up" || order.status === "shipped"
+        ? order.status
+        : "shipped",
+    );
+    setDraftTracking(order.trackingNumber ?? "");
+  }, [activeId]);
 
   const deleteSelected = async (order: ParsedOrder) => {
     if (order.status !== "placed" || deleting) return;
@@ -189,6 +206,35 @@ export function OrdersPanel({
       setStatus(formatError(error, "Could not delete that order."));
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const saveShipment = async (order: ParsedOrder) => {
+    if (savingShipment || order.status === "cancelled" || order.status === "manual_cancel") return;
+    setSavingShipment(true);
+    try {
+      const next = await updateOrderShipment(order.id, {
+        status: draftStatus,
+        trackingNumber: draftTracking,
+      });
+      publishSyncedOrders(next);
+      setOrders(next);
+      const saved = next.find((item) => item.id === order.id);
+      if (saved?.trackingNumber) setDraftTracking(saved.trackingNumber);
+      if (saved?.status === "shipped" || saved?.status === "delivered" || saved?.status === "picked_up") {
+        setDraftStatus(saved.status);
+      }
+      setTone("ok");
+      setStatus(
+        saved
+          ? `Updated order ${order.orderId} to ${STATUS_LABEL[saved.status]}.`
+          : `Updated order ${order.orderId}.`,
+      );
+    } catch (error) {
+      setTone("error");
+      setStatus(formatError(error, "Could not update that order."));
+    } finally {
+      setSavingShipment(false);
     }
   };
 
@@ -628,6 +674,40 @@ export function OrdersPanel({
                   </button>
                 ) : null}
               </div>
+              {active.status === "cancelled" || active.status === "manual_cancel" ? null : (
+                <form
+                  className="orders-detail-edit"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    void saveShipment(active);
+                  }}
+                >
+                  <label>
+                    Status
+                    <select
+                      value={draftStatus}
+                      onChange={(event) => setDraftStatus(event.target.value as ManualShipmentStatus)}
+                    >
+                      <option value="shipped">Shipped</option>
+                      <option value="delivered">Delivered</option>
+                      <option value="picked_up">Picked up</option>
+                    </select>
+                  </label>
+                  <label>
+                    Tracking
+                    <input
+                      value={draftTracking}
+                      onChange={(event) => setDraftTracking(event.target.value)}
+                      placeholder="Tracking number"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </label>
+                  <button type="submit" className="btn-secondary" disabled={savingShipment}>
+                    {savingShipment ? "Saving…" : "Save"}
+                  </button>
+                </form>
+              )}
               <dl className="orders-detail-meta">
                 <div>
                   <dt>Profile</dt>

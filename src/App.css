@@ -5105,6 +5105,27 @@ textarea {
   margin-top: 1px;
 }
 
+.orders-detail-edit {
+  display: grid;
+  grid-template-columns: 9.5rem minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  margin-top: 12px;
+}
+
+.orders-detail-edit label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.orders-detail-edit button {
+  height: 32px;
+}
+
 .orders-detail h3 {
   margin: 0 0 4px;
   font-size: 14px;

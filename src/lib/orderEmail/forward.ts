@@ -42,14 +42,16 @@ export function parseLooseEmailDate(value: string): number | undefined {
 export function originalForwardDateMs(subject: string, ...parts: string[]): number | undefined {
   const text = emailPlainText(parts.filter(Boolean).join("\n"));
   if (!hasForwardMarker(subject, text)) return undefined;
+  const markerAt = text.search(FORWARD_MARKER);
+  const scoped = markerAt >= 0 ? text.slice(markerAt) : text;
   const dates: number[] = [];
-  for (const match of text.matchAll(/\b(?:Date|Sent):\s*([^\n\r]{6,120})/gi)) {
+  for (const match of scoped.matchAll(/\b(?:Date|Sent):\s*([^\n\r]{6,120})/gi)) {
     const parsed = parseLooseEmailDate(match[1] ?? "");
     if (parsed) dates.push(parsed);
   }
   if (dates.length > 0) return Math.min(...dates);
-  if (!CONFIRMATION_SUBJECT.test(subject) && !CONFIRMATION_SUBJECT.test(text.slice(0, 600))) return undefined;
-  const orderDate = text.match(/\border\s*date\s*[:\-]?\s*([^\n\r]{6,80})/i);
+  if (!CONFIRMATION_SUBJECT.test(subject) && !CONFIRMATION_SUBJECT.test(scoped.slice(0, 600))) return undefined;
+  const orderDate = scoped.match(/\bdate\s*ordered\s*[:\-]?\s*([^\n\r]{6,80})/i);
   return orderDate ? parseLooseEmailDate(orderDate[1] ?? "") : undefined;
 }
 
